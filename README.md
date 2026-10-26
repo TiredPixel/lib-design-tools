@@ -76,10 +76,10 @@ The test stage copies the whole tree, so the repository's `.dockerignore` keeps 
 
 ### The make targets
 
-`design.mk` gives `build`, `format`, `lint`, `test` and `upgrade`, run through the services. A repository's `Makefile` includes it and adds its own `upgrade-pre`, which moves the submodule to its latest commit and its own submodules to the commits that one records:
+`common.mk` gives `build`, `format`, `lint`, `test` and `upgrade`, run through the services. A repository's `Makefile` includes it and adds its own `upgrade-pre`, which moves the submodule to its latest commit and its own submodules to the commits that one records:
 
 ```make
-include lib/design-tools/design.mk
+include lib/design-tools/common.mk
 
 upgrade-pre:
 	cd lib/design-tools && git checkout latest && git pull && git submodule update --init --recursive
