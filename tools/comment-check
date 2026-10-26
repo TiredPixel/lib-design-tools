@@ -1174,11 +1174,11 @@ def check(
     for offset in sorted(offsets):
         line, column = position(source, offset)
         char = source[offset]
-        name = unicodedata.name(char)
-        message = (
-            f"{char} (U+{ord(char):04X} {name}); "
-            f"write {typewriter(source, offset, extra)}"
-        )
+        # A control character --forbid accepts, such as a tab, has no name, and is
+        # shown by its code point alone, since printed raw it shows nothing.
+        name = unicodedata.name(char, None)
+        shown = f"{char} (U+{ord(char):04X} {name})" if name else f"U+{ord(char):04X}"
+        message = f"{shown}; write {typewriter(source, offset, extra)}"
         problems.append((line, column, message))
     return problems
 

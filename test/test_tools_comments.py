@@ -730,6 +730,20 @@ class MainTest(unittest.TestCase):
             ],
         )
 
+    def test_forbid_reports_a_character_without_a_name(self) -> None:
+        self.write("a.css", "/* a\tb */\n")
+        self.write("b.css", f"/* {EM_DASH} */\n")
+        status, output = self.run_main("--forbid", "\t=space", "a.css", "b.css")
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            output.splitlines(),
+            [
+                "a.css:1:5: U+0009; write space",
+                f"b.css:1:4: {EM_DASH} (U+2014 EM DASH); write --",
+                "checked 2 file(s): 2 problem(s)",
+            ],
+        )
+
     def test_forbid_escapes_pattern_characters(self) -> None:
         self.assertEqual(
             [
