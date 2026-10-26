@@ -2,6 +2,5 @@
 # checkout's settings, not the tree's.
 **/.git
 **/__pycache__
-/.claude/
 /.env
 /tmp/

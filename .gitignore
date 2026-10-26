@@ -1,4 +1,3 @@
-/.claude/*.lock
 /.env*
 /docker-compose.*.yml
 /tmp/
