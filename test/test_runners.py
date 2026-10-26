@@ -1,5 +1,5 @@
-"""bin/format, bin/lint, bin/test and bin/preview, run as a consumer runs them: from
-the root of a fabricated repository whose bin/ links to them."""
+"""bin/format, bin/lint, bin/test and bin/preview, run as another repository runs them:
+from the root of a fabricated repository whose bin/ links to them."""
 
 import os
 import pathlib
@@ -18,8 +18,17 @@ BIN = tools_loader.TOOLS.parent / "bin"
 UNSORTED_YAML = "b: 1\na: 2\n"
 SORTED_YAML = "a: 2\nb: 1\n"
 
+PASSING_TEST = (
+    "import unittest\n\n\nclass A(unittest.TestCase):\n    def test_a(self):\n"
+    "        pass\n"
+)
+SKIPPING_TEST = (
+    "import unittest\n\n\nclass A(unittest.TestCase):\n    def test_a(self):\n"
+    "        self.skipTest('missing')\n"
+)
 
-class Consumer(unittest.TestCase):
+
+class Repository(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -34,8 +43,8 @@ class Consumer(unittest.TestCase):
         path.write_text(textwrap.dedent(text).lstrip())
         return path
 
-    def paths(self, text):
-        self.write("bin/format-paths", "# shellcheck shell=bash\n" + text)
+    def settings(self, text):
+        self.write("bin/settings", "# shellcheck shell=bash\n" + text)
 
     def run_bin(self, runner, *args, env=None):
         return subprocess.run(
@@ -62,51 +71,57 @@ class Consumer(unittest.TestCase):
         ]
 
 
-class PassSelectionTest(Consumer):
+class PassSelectionTest(Repository):
+    def test_nothing_runs_that_the_settings_do_not_name(self):
+        self.settings("")
+        self.write(".env.example", "# B=1\n# A=1\n")
+        self.write("script.sh", "#!/bin/bash\necho $1\n")
+        self.write("a.yml", UNSORTED_YAML)
+        self.write("test/test_a.py", SKIPPING_TEST)
+        for runner in ("format", "lint", "test"):
+            with self.subTest(runner=runner):
+                result = self.run_bin(runner)
+                self.assertPasses(result)
+                self.assertEqual(self.sections(result), [])
+        self.assertEqual((self.root / "a.yml").read_text(), UNSORTED_YAML)
+
     def test_only_the_defined_passes_run(self):
-        self.write("README.md", "# A\n\nOne paragraph.\n")
-        self.paths("function markdown_args { printf '%s\\0' README.md; }\n")
+        self.write("a.html", "<p>a</p>\n")
+        self.settings("function references_args { printf '%s\\0' --root . a.html; }\n")
         result = self.run_bin("lint")
         self.assertPasses(result)
-        self.assertEqual(
-            self.sections(result), ["LINT SHELL", "LINT FILES", "LINT MARKDOWN"]
-        )
-
-    def test_format_with_nothing_defined_runs_no_pass(self):
-        self.paths("")
-        result = self.run_bin("format")
-        self.assertPasses(result)
-        self.assertEqual(self.sections(result), [])
+        self.assertEqual(self.sections(result), ["LINT REFERENCES"])
 
     def test_a_set_naming_nothing_fails(self):
-        self.paths("function python_files { :; }\n")
+        self.settings("function python_files { :; }\n")
         self.assertFails(
-            self.run_bin("lint"), "bin/format-paths: python_files names nothing"
+            self.run_bin("lint"), "bin/settings: python_files names nothing"
         )
 
     def test_a_failing_set_fails_even_after_output(self):
-        self.write("README.md", "# A\n")
-        self.paths("function markdown_args { printf '%s\\0' README.md; false; }\n")
-        self.assertFails(self.run_bin("lint"), "bin/format-paths: markdown_args failed")
+        self.write("a.html", "<p>a</p>\n")
+        self.settings(
+            "function references_args { printf '%s\\0' --root . a.html; false; }\n"
+        )
+        self.assertFails(self.run_bin("lint"), "bin/settings: references_args failed")
 
-    def test_a_shell_problem_in_format_paths_fails(self):
-        self.paths("function yaml_files { echo $1; }\nx=1\n")
+    def test_the_shell_pass_checks_the_settings_and_the_named_files(self):
+        self.write("ok.sh", '# shellcheck shell=bash\necho "$1"\n')
+        self.settings(
+            "function shell_files { printf '%s\\0' ok.sh; }\n"
+            "function yaml_files { echo $1; }\n"
+        )
         self.assertFails(self.run_bin("lint"), "SC2086")
-
-    def test_shell_files_are_linted(self):
-        self.paths("function shell_files { printf '%s\\0' extra.sh; }\n")
+        self.settings("function shell_files { printf '%s\\0' extra.sh; }\n")
         self.write("extra.sh", "# shellcheck shell=bash\necho $1\n")
         self.assertFails(self.run_bin("lint"), "SC2086")
-
-    def test_an_unsorted_env_example_fails(self):
-        self.paths("")
-        self.write(".env.example", "# B=1\n# A=1\n")
-        self.assertFails(self.run_bin("lint"), "disorder")
-        self.write(".env.example", "# A=1\n# B=1\n")
-        self.assertPasses(self.run_bin("lint"))
+        self.write("extra.sh", '# shellcheck shell=bash\necho "$1"\n')
+        result = self.run_bin("lint")
+        self.assertPasses(result)
+        self.assertEqual(self.sections(result), ["LINT SHELL"])
 
 
-class FormatThenLintTest(Consumer):
+class FormatThenLintTest(Repository):
     """Each writing pass: lint fails on the unformatted file, format fixes it, and lint
     then passes."""
 
@@ -120,21 +135,21 @@ class FormatThenLintTest(Consumer):
         self.assertPasses(self.run_bin("lint"))
 
     def test_yaml(self):
-        self.paths("function yaml_files { printf '%s\\0' a.yml; }\n")
+        self.settings("function yaml_files { printf '%s\\0' a.yml; }\n")
         self.assertFormatFixes("a.yml", UNSORTED_YAML, SORTED_YAML, "YAML")
 
     def test_json(self):
-        self.paths("function json_files { printf '%s\\0' a.json; }\n")
+        self.settings("function json_files { printf '%s\\0' a.json; }\n")
         self.assertFormatFixes(
             "a.json", '{"b": 1, "a": "é"}', '{\n  "a": "é",\n  "b": 1\n}\n', "JSON"
         )
 
     def test_python(self):
-        self.paths("function python_files { printf '%s\\0' a.py; }\n")
+        self.settings("function python_files { printf '%s\\0' a.py; }\n")
         self.assertFormatFixes("a.py", "x = ( 1 )\n", "x = 1\n", "PYTHON")
 
     def test_javascript(self):
-        self.paths("function js_files { printf '%s\\0' a.js; }\n")
+        self.settings("function js_files { printf '%s\\0' a.js; }\n")
         self.assertFormatFixes(
             "a.js",
             "const a = 1\nconsole.log(a)\n",
@@ -143,7 +158,7 @@ class FormatThenLintTest(Consumer):
         )
 
     def test_css_and_html(self):
-        self.paths(
+        self.settings(
             "function css_files { printf '%s\\0' a.css; }\n"
             "function html_files { printf '%s\\0' a.html; }\n"
         )
@@ -153,7 +168,7 @@ class FormatThenLintTest(Consumer):
         )
 
     def test_palette(self):
-        self.paths(
+        self.settings(
             "function palette_args {\n"
             "    printf '%s\\0' p.yml --prefix x --json p.json --css p.css\n"
             "}\n"
@@ -166,18 +181,11 @@ class FormatThenLintTest(Consumer):
         self.assertFails(self.run_bin("lint"), "stale: run make format")
 
 
-class CheckingPassTest(Consumer):
-    """The passes that only check: each passes a clean tree and fails a broken one."""
-
-    def test_charset(self):
-        self.paths("function charset_files { printf '%s\\0' a.css; }\n")
-        self.write("a.css", "a {}\n")
-        self.assertFails(self.run_bin("lint"), "a.css")
-        self.write("a.css", '@charset "UTF-8";\na {}\n')
-        self.assertPasses(self.run_bin("lint"))
+class CheckingPassTest(Repository):
+    """The passes that only check: each passes a sound tree and fails a broken one."""
 
     def test_lfs(self):
-        self.paths(
+        self.settings(
             "function lfs_args { printf '%s\\0' --attributes .gitattributes img; }\n"
         )
         self.write(".gitattributes", "*.png filter=lfs -text\n")
@@ -190,37 +198,32 @@ class CheckingPassTest(Consumer):
         self.assertPasses(self.run_bin("lint"))
 
     def test_references(self):
-        self.paths(
+        self.settings(
             "function references_args {\n"
             "    printf '%s\\0' --no-external --root . a.html\n"
             "}\n"
         )
         self.write("a.html", '<link rel="stylesheet" href="gone.css">\n')
         self.assertFails(self.run_bin("lint"), "gone.css")
-        self.write("gone.css", '@charset "UTF-8";\n')
+        self.write("gone.css", "a {}\n")
         self.assertPasses(self.run_bin("lint"))
 
-    def test_markdown(self):
-        self.paths("function markdown_args { printf '%s\\0' a.md; }\n")
-        self.write("a.md", "Wrapped\nparagraph.\n")
-        self.assertFails(self.run_bin("lint"), "a.md")
-        self.write("a.md", "One paragraph.\n")
-        self.assertPasses(self.run_bin("lint"))
-
-    def test_comments(self):
-        self.paths("function comment_files { printf '%s\\0' a.py; }\n")
-        self.write("a.py", "# a — b\n")
-        self.assertFails(self.run_bin("lint"), "a.py")
-        self.write("a.py", "# a -- b\n")
-        self.assertPasses(self.run_bin("lint"))
+    def test_render(self):
+        self.settings("function render_args { printf '%s\\0' --root . a.html; }\n")
+        self.write("a.html", "<!doctype html>\n<script>missing();</script>\n")
+        self.assertFails(self.run_bin("lint"), "a.html")
+        self.write("a.html", "<!doctype html>\n<p>a</p>\n")
+        result = self.run_bin("lint")
+        self.assertPasses(result)
+        self.assertEqual(self.sections(result), ["LINT RENDER"])
 
 
-class TestRunnerTest(Consumer):
-    def setUp(self):
-        super().setUp()
-        self.paths("")
-
-    def test_named_tests_skip_the_lint_and_run_under_the_shared_settings(self):
+class TestRunnerTest(Repository):
+    def test_named_tests_skip_the_lint_and_reach_the_tools(self):
+        self.settings(
+            "function pytest_args { printf '%s\\0' --no-skips; }\n"
+            "function references_args { printf '%s\\0' --root . gone.html; }\n"
+        )
         self.write(
             "test/test_a.py",
             """
@@ -242,45 +245,58 @@ class TestRunnerTest(Consumer):
         self.assertIn("1 passed", result.stdout)
 
     def test_the_whole_gate_lints_first(self):
-        self.write(
-            "test/test_a.py",
-            "import unittest\n\n\nclass A(unittest.TestCase):\n"
-            "    def test_a(self):\n        pass\n",
+        self.write("a.html", "<p>a</p>\n")
+        self.settings(
+            "function pytest_args { printf '%s\\0' --no-skips; }\n"
+            "function references_args { printf '%s\\0' --root . a.html; }\n"
         )
+        self.write("test/test_a.py", PASSING_TEST)
         result = self.run_bin("test")
         self.assertPasses(result)
-        self.assertEqual(
-            self.sections(result), ["LINT SHELL", "LINT FILES", "TEST PYTHON"]
-        )
+        self.assertEqual(self.sections(result), ["LINT REFERENCES", "TEST PYTHON"])
 
-    def test_a_skip_fails_the_gate(self):
-        self.write(
-            "test/test_a.py",
-            "import unittest\n\n\nclass A(unittest.TestCase):\n"
-            "    def test_a(self):\n        self.skipTest('missing')\n",
-        )
+    def test_the_repository_s_own_pytest_configuration_applies(self):
+        self.settings("function pytest_args { :; }\n")
+        self.write("pytest.ini", "[pytest]\npython_files = check_*.py\n")
+        self.write("test/check_a.py", PASSING_TEST)
+        self.write("test/test_ignored.py", "raise SystemExit('collected')\n")
+        result = self.run_bin("test")
+        self.assertPasses(result)
+        self.assertIn("1 passed", result.stdout)
+
+    def test_a_skip_fails_only_with_no_skips(self):
+        self.write("test/test_a.py", SKIPPING_TEST)
+        self.settings("function pytest_args { :; }\n")
+        self.assertPasses(self.run_bin("test", "test/test_a.py"))
+        self.settings("function pytest_args { printf '%s\\0' --no-skips; }\n")
         self.assertFails(
             self.run_bin("test", "test/test_a.py"), "skipped, which --no-skips fails"
         )
 
+    def test_naming_tests_without_pytest_args_fails(self):
+        self.settings("")
+        self.write("test/test_a.py", PASSING_TEST)
+        self.assertFails(
+            self.run_bin("test", "test/test_a.py"), "pytest_args is not set"
+        )
+
     def test_a_worker_count_that_is_not_a_number_fails(self):
+        self.settings("")
         for count in ("0", "two", ""):
             with self.subTest(count=count):
                 self.assertFails(
-                    self.run_bin(
-                        "test", "test", env={"PYTEST_XDIST_AUTO_NUM_WORKERS": count}
-                    ),
+                    self.run_bin("test", env={"PYTEST_XDIST_AUTO_NUM_WORKERS": count}),
                     "not a whole number",
                 )
 
 
-class PreviewTest(Consumer):
+class PreviewTest(Repository):
     def test_refuses_without_an_index(self):
-        self.paths("")
+        self.settings("")
         self.assertFails(self.run_bin("preview"), "preview_index is not set")
 
     def test_serves_every_address_and_redirects_to_the_index(self):
-        self.paths("preview_index=/pages/\n")
+        self.settings("# shellcheck disable=SC2034\npreview_index=/pages/\n")
         self.write("pages/index.html", "<p>page</p>")
         server = subprocess.Popen(
             ["bin/preview"],

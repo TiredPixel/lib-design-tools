@@ -40,9 +40,13 @@ class ReferencesTestCase(unittest.TestCase):
             status = references_check.main(["--root", str(self.root), *map(str, paths)])
         return status, stderr.getvalue()
 
-    def html_problems(self, markup: str) -> list[tuple[int, str]]:
+    def html_problems(
+        self, markup: str, require_integrity: bool = False
+    ) -> list[tuple[int, str]]:
         page = self.write("site/page.html", markup)
-        return references_check.check_html(page, self.root)
+        return references_check.check_html(
+            page, self.root, require_integrity=require_integrity
+        )
 
     def css_problems(self, css: str) -> list[tuple[int, str]]:
         sheet = self.write("site/sheet.css", css)
@@ -150,7 +154,14 @@ class HtmlTest(ReferencesTestCase):
             [(4, "gone.png does not exist"), (8, "missing.png does not exist")],
         )
 
-    def test_external_stylesheet_and_script_need_sri(self) -> None:
+    def test_external_loads_pass_without_require_integrity(self) -> None:
+        markup = (
+            '<link rel="stylesheet" href="https://cdn/b.css">\n'
+            '<script src="//cdn/b.js"></script>\n'
+        )
+        self.assertEqual(self.html_problems(markup), [])
+
+    def test_require_integrity_checks_external_stylesheets_and_scripts(self) -> None:
         markup = (
             f'<link rel="stylesheet" href="https://cdn/a.css" {SRI}>\n'
             f'<script src="https://cdn/a.js" {SRI}></script>\n'
@@ -164,7 +175,7 @@ class HtmlTest(ReferencesTestCase):
             "<script>inline()</script>\n"
         )
         self.assertEqual(
-            self.html_problems(markup),
+            self.html_problems(markup, require_integrity=True),
             [
                 (
                     3,
@@ -180,11 +191,13 @@ class HtmlTest(ReferencesTestCase):
         )
 
     def test_local_script_needs_no_sri(self) -> None:
-        self.assertEqual(self.html_problems('<script src="/top.js"></script>'), [])
+        self.assertEqual(
+            self.html_problems('<script src="/top.js"></script>', True), []
+        )
 
     def test_no_external_refuses_every_load(self) -> None:
         markup = (
-            f'<link rel="stylesheet" href="https://cdn/a.css" {SRI}>\n'
+            '<link rel="stylesheet" href="https://cdn/a.css">\n'
             '<script src="//cdn/a.js"></script>\n'
             '<img src="https://cdn/x.png">\n'
             '<link rel="icon" href="https://cdn/i.ico">\n'
@@ -210,6 +223,13 @@ class HtmlTest(ReferencesTestCase):
                 (7, f"external https://cdn/y.png, {refused}"),
                 (11, "gone.png does not exist"),
             ],
+        )
+        # A load refused outright is not reported again for lacking integrity.
+        self.assertEqual(
+            references_check.check_html(
+                page, self.root, no_external=True, require_integrity=True
+            ),
+            references_check.check_html(page, self.root, no_external=True),
         )
 
 
@@ -289,6 +309,22 @@ class MainTest(ReferencesTestCase):
             f"{page}:1: external https://cdn/x.png, which --no-external refuses\n"
             f"{sheet}:1: external https://cdn/y.svg, which --no-external refuses\n"
             "checked 2 file(s): 2 problem(s)\n",
+        )
+
+    def test_require_integrity_option(self) -> None:
+        page = self.write("site/p.html", '<script src="https://cdn/x.js"></script>')
+        self.assertEqual(self.run_main(page)[0], 0)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            status = references_check.main(
+                ["--root", str(self.root), "--require-integrity", str(page)]
+            )
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            stderr.getvalue(),
+            f"{page}:1: external script https://cdn/x.js lacks integrity and "
+            "crossorigin\n"
+            "checked 1 file(s): 1 problem(s)\n",
         )
 
     def test_runs_as_a_command(self) -> None:

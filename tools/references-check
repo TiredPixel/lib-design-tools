@@ -10,16 +10,16 @@ against ``--root``; neither may leave ``--root``, since nothing outside it is se
 reference to a directory needs an ``index.html`` in it, which is what a static server
 would answer with.
 
-Every external stylesheet and script must also carry ``integrity`` and ``crossorigin``,
-so a changed or compromised CDN file fails to load rather than running. With
-``--no-external``, nothing external may load at all: only an ``a`` and a ``link`` whose
-every ``rel`` loads nothing, such as ``canonical``, may point outside, since following a
-link loads nothing into the page.
+With ``--require-integrity``, every external stylesheet and script must also carry
+``integrity`` and ``crossorigin``, so a changed or compromised CDN file fails to load
+rather than running. With ``--no-external``, nothing external may load at all: only an
+``a`` and a ``link`` whose every ``rel`` loads nothing, such as ``canonical``, may point
+outside, since following a link loads nothing into the page.
 
 Exit status: 0 when every file passes, 1 when a reference does not resolve, an external
-stylesheet or script lacks ``integrity`` or ``crossorigin``, something external loads
-under ``--no-external``, or a file holds a ``<base>`` element or is not valid UTF-8, and
-2 on a usage error.
+stylesheet or script lacks ``integrity`` or ``crossorigin`` under
+``--require-integrity``, something external loads under ``--no-external``, or a file
+holds a ``<base>`` element or is not valid UTF-8, and 2 on a usage error.
 """
 
 from __future__ import annotations
@@ -156,12 +156,17 @@ class _HtmlReferences(html.parser.HTMLParser):
     """Collect ``(line, message)`` problems from one HTML document."""
 
     def __init__(
-        self, path: pathlib.Path, root: pathlib.Path, no_external: bool
+        self,
+        path: pathlib.Path,
+        root: pathlib.Path,
+        no_external: bool,
+        require_integrity: bool,
     ) -> None:
         super().__init__(convert_charrefs=True)
         self._path = path
         self._root = root
         self._no_external = no_external
+        self._require_integrity = require_integrity
         self._style: list[str] | None = None
         self._style_line = 0
         self.problems: list[tuple[int, str]] = []
@@ -232,7 +237,7 @@ class _HtmlReferences(html.parser.HTMLParser):
             loads = _loads(tag, attributes)
             self._check(self._attribute_line(name), attributes[name], loads)
             # Refused outright under --no-external, so not reported twice.
-            if not (self._no_external and loads):
+            if self._require_integrity and not (self._no_external and loads):
                 self._check_integrity(tag, name, attributes)
         if attributes.get("style"):
             self._check_css(self._attribute_line("style"), attributes["style"])
@@ -253,9 +258,12 @@ class _HtmlReferences(html.parser.HTMLParser):
 
 
 def check_html(
-    path: pathlib.Path, root: pathlib.Path, no_external: bool = False
+    path: pathlib.Path,
+    root: pathlib.Path,
+    no_external: bool = False,
+    require_integrity: bool = False,
 ) -> list[tuple[int, str]]:
-    parser = _HtmlReferences(path, root, no_external)
+    parser = _HtmlReferences(path, root, no_external, require_integrity)
     parser.feed(path.read_text(encoding="utf-8"))
     parser.close()
     return parser.problems
@@ -286,7 +294,13 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--no-external",
         action="store_true",
-        help="fail on anything external the files load, not only on SRI lacking",
+        help="fail on anything external the files load",
+    )
+    parser.add_argument(
+        "--require-integrity",
+        action="store_true",
+        help="fail on an external stylesheet or script lacking integrity or "
+        "crossorigin",
     )
     parser.add_argument("files", nargs="+", type=pathlib.Path, metavar="FILE")
     arguments = parser.parse_args(argv)
@@ -306,9 +320,16 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parse_arguments(argv)
     failures = 0
     for path in arguments.files:
-        check = check_html if path.suffix.lower() in HTML_SUFFIXES else check_css
         try:
-            problems = check(path, arguments.root, arguments.no_external)
+            if path.suffix.lower() in HTML_SUFFIXES:
+                problems = check_html(
+                    path,
+                    arguments.root,
+                    arguments.no_external,
+                    arguments.require_integrity,
+                )
+            else:
+                problems = check_css(path, arguments.root, arguments.no_external)
         except UnicodeDecodeError as error:
             print(f"{path}: not valid UTF-8: {error}", file=sys.stderr)
             failures += 1

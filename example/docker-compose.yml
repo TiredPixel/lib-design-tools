@@ -1,5 +1,0 @@
-include:
-  - path: lib/design-tools/compose.gate.yml
-    project_directory: .
-  - path: lib/design-tools/compose.preview.yml
-    project_directory: .

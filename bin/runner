@@ -1,10 +1,10 @@
 # shellcheck shell=bash
 #
 # Sourced by bin/format, bin/lint, bin/test and bin/preview, which run from the
-# root of the repository they check. A consumer's bin/ holds symlinks to them,
-# so this repository is found by resolving the link, and the consumer's own
-# bin/format-paths turns each pass on by defining what it reads (README.md,
-# Configuring the passes).
+# root of the repository they serve. That repository's bin/ holds symlinks to
+# them, so this one is found by resolving the link, and its own bin/settings
+# turns each pass on by defining what the pass reads (README.md, Settings).
+# Nothing runs that bin/settings does not name.
 #
 # Read only by the runners that source this one, so they look unused here.
 # shellcheck disable=SC2034
@@ -12,7 +12,7 @@
 design_tools=$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")
 tools=$design_tools/tools
 
-source bin/format-paths
+source bin/settings
 
 # Read by bin/format and bin/lint alike, so the two cannot disagree.
 json_options=(--indent 2 --sort-keys --no-ensure-ascii)
@@ -23,19 +23,19 @@ function defines {
 
 # Reads the NUL-separated output of the function named by $1 into the array
 # named by $2. The function's status is checked through wait, since a process
-# substitution's own failure would otherwise pass unseen, and an empty result
-# fails too: a set that is defined and names nothing is a mistake, never a
-# clean pass.
+# substitution's own failure would otherwise pass unseen. An empty result fails
+# too, unless $3 is "may-be-empty": a set of files that is defined and names
+# nothing is a mistake, never a clean pass.
 function read_set {
     local -n into=$2
 
     mapfile -t -d '' into < <("$1")
     wait $! || {
-        echo "bin/format-paths: $1 failed" >&2
+        echo "bin/settings: $1 failed" >&2
         exit 1
     }
-    if [ ${#into[@]} -eq 0 ]; then
-        echo "bin/format-paths: $1 names nothing" >&2
+    if [ ${#into[@]} -eq 0 ] && [ "${3:-}" != may-be-empty ]; then
+        echo "bin/settings: $1 names nothing" >&2
         exit 1
     fi
 }

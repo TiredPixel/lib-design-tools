@@ -1,4 +1,4 @@
-"""tools/palette-generate, tools/charset-check and tools/lfs-check, on fabricated input
+"""tools/palette-generate and tools/lfs-check, on fabricated input
 in temporary directories."""
 
 import json
@@ -184,28 +184,6 @@ class PaletteGenerateTest(Workspace):
                 result = run("palette-generate", *args, cwd=self.dir)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("usage:", result.stderr)
-
-
-class CharsetCheckTest(Workspace):
-    def test_passes_a_declared_stylesheet(self):
-        self.write("a.css", '@charset "UTF-8";\nbody {}\n')
-        result = run("charset-check", "a.css", cwd=self.dir)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("checked 1", result.stderr)
-
-    def test_fails_each_undeclared_stylesheet(self):
-        self.write("a.css", '@charset "UTF-8";\n')
-        self.write("b.css", "body {}\n")
-        self.write("c.css", "@charset 'UTF-8';\n")
-        result = run("charset-check", "a.css", "b.css", "c.css", cwd=self.dir)
-        self.assertEqual(result.returncode, 1)
-        self.assertNotIn("a.css", result.stderr.split("checked")[0])
-        self.assertIn("b.css:1", result.stderr)
-        self.assertIn("c.css:1", result.stderr)
-
-    def test_usage_without_files(self):
-        result = run("charset-check", cwd=self.dir)
-        self.assertEqual(result.returncode, 2)
 
 
 class LfsCheckTest(Workspace):

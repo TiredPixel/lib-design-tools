@@ -1,8 +1,8 @@
 """A pytest plugin adding --no-skips, which fails a run in which any test skipped.
 
 For a gate whose image carries every tool its suites look for, where a skip means
-something is missing. A conftest.py loads it with ``pytest_plugins``, this directory
-being on pytest's ``pythonpath``.
+something is missing. bin/test loads it with ``-p``, with this directory on
+``PYTHONPATH``; the option does nothing unless passed.
 """
 
 import pytest

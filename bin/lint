@@ -11,16 +11,14 @@ shopt -s inherit_errexit failglob
 # shellcheck source=bin/runner
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
 
-echo -e "\n=== LINT SHELL\n"
-
-# Named because format-paths carries no shebang, and the content-based sweep
-# reaches only the top level and bin/.
-shell=(bin/format-paths)
 if defines shell_files; then
-    read_set shell_files named
-    shell+=("${named[@]}")
+    echo -e "\n=== LINT SHELL\n"
+
+    # bin/settings is named because it carries no shebang; the sweep finds the
+    # scripts at the top level and in bin/ by content.
+    read_set shell_files shell
+    "$design_tools/lib/shell-common/lint/shell" bin/settings "${shell[@]}"
 fi
-"$design_tools/lib/shell-common/lint/shell" "${shell[@]}"
 
 if defines palette_args; then
     echo -e "\n=== LINT PALETTE\n"
@@ -84,23 +82,11 @@ if defines css_files || defines html_files; then
     prettier --check "${prettied[@]}"
 fi
 
-echo -e "\n=== LINT FILES\n"
-
-if defines charset_files; then
-    read_set charset_files sheets
-    "$tools/charset-check" "${sheets[@]}"
-fi
-
 if defines lfs_args; then
+    echo -e "\n=== LINT LFS\n"
+
     read_set lfs_args lfs
     "$tools/lfs-check" "${lfs[@]}"
-fi
-
-# Sorted, so an added setting has one place to go and a diff against a real
-# .env stays clean.
-if [ -e .env.example ]; then
-    sort -c .env.example
-    echo "checked .env.example is sorted" >&2
 fi
 
 if defines references_args; then
@@ -110,18 +96,11 @@ if defines references_args; then
     "$tools/references-check" "${references[@]}"
 fi
 
-if defines markdown_args; then
-    echo -e "\n=== LINT MARKDOWN\n"
+if defines render_args; then
+    echo -e "\n=== LINT RENDER\n"
 
-    read_set markdown_args markdown
-    "$tools/markdown-lint" "${markdown[@]}"
-fi
-
-if defines comment_files; then
-    echo -e "\n=== LINT COMMENTS\n"
-
-    read_set comment_files commented
-    "$tools/comment-check" "${commented[@]}"
+    read_set render_args render
+    "$tools/render-check" "${render[@]}"
 fi
 
 echo
