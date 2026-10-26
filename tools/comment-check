@@ -6,9 +6,9 @@ into terminals. Each of these characters is reported with the typewriter form th
 replaces it: U+2013 EN DASH (``-`` closed up in a range, ``--`` otherwise), U+2014 EM
 DASH (``--``), U+2026 HORIZONTAL ELLIPSIS (``...``), U+2018 and U+2019 single quotation
 marks (``'``), U+201C and U+201D double quotation marks (``"``), the arrows U+2190 to
-U+21FF (``<-``, ``<->`` or ``->`` by direction), U+2264 and U+2265 (``<=`` and ``>=``)
-and U+0394 GREEK CAPITAL LETTER DELTA (``Delta``). Every other character passes, so
-letters keep their diacritics and their scripts.
+U+21FF (``<-``, ``<->`` or ``->`` by direction), and U+2264 and U+2265 (``<=`` and
+``>=``). Every other character passes, so letters keep their diacritics and their
+scripts.
 
 Languages. A file's language comes from its suffix: ``.py``; ``.css``; ``.js``, ``.mjs``
 and ``.cjs``; ``.yml`` and ``.yaml``; ``.sh`` and ``.bash``. A file with no such suffix
@@ -79,7 +79,6 @@ INTERPRETERS = {
 }
 
 TYPEWRITER = {
-    "\u0394": "Delta",
     "\u2014": "--",
     "\u2018": "'",
     "\u2019": "'",
@@ -93,7 +92,7 @@ TYPEWRITER = {
 EN_DASH = "\u2013"
 
 _FORBIDDEN = re.compile(
-    "[\u0394\u2013\u2014\u2018\u2019\u201c\u201d\u2026\u2190-\u21ff\u2264\u2265]"
+    "[\u2013\u2014\u2018\u2019\u201c\u201d\u2026\u2190-\u21ff\u2264\u2265]"
 )
 _PYTHON = re.compile(r"python(?:3(?:\.\d+)?)?")
 _SHELLCHECK_DIRECTIVE = re.compile(r"#\s*shellcheck\s.*\bshell=(?:bash|sh)\b")

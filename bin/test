@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 #
-# The gate: the lint passes, then the Python tests, which cover tools/ on
-# fabricated input, rendering in headless Chromium. They run under pytest as
-# pytest.ini sets it; README.md, Testing, gives the worker count, its override
-# and how to name tests.
+# The gate: the lint passes, then the Python tests under pytest, as this
+# repository's pytest.ini sets it for every repository using these runners, with
+# tools/ on the path for the importable harness and the --no-skips plugin.
+# README.md, Testing, gives the worker count, its override and how to name
+# tests.
 set -Eeuo pipefail
 shopt -s inherit_errexit failglob
+
+# shellcheck source=bin/runner
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
 
 tests=("$@")
 
@@ -22,11 +26,12 @@ fi
 # a handful of named tests costs far more than the tests do. make lint is the
 # standalone entry point, and CI passes no names.
 if [ ${#tests[@]} -eq 0 ]; then
-    bin/lint
+    "$design_tools/bin/lint"
 fi
 
 echo -e "\n=== TEST PYTHON\n"
 
-pytest --no-skips "${tests[@]}"
+PYTHONPATH=$tools pytest -c "$design_tools/pytest.ini" --rootdir . \
+    -p pytest_no_skips --no-skips "${tests[@]}"
 
 echo

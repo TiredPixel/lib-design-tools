@@ -2,53 +2,126 @@
 #
 # Read-only counterpart to bin/format: every check here reports and fails, and
 # none of them write. Anything that rewrites a file belongs in bin/format.
+#
+# read_set assigns each array through a nameref, which ShellCheck cannot follow.
+# shellcheck disable=SC2154
 set -Eeuo pipefail
 shopt -s inherit_errexit failglob
 
-source bin/format-paths
+# shellcheck source=bin/runner
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
 
 echo -e "\n=== LINT SHELL\n"
 
-mapfile -t -d '' tools_shell < <(tools_shell_files)
+# Named because format-paths carries no shebang, and the content-based sweep
+# reaches only the top level and bin/.
+shell=(bin/format-paths)
+if defines shell_files; then
+    read_set shell_files named
+    shell+=("${named[@]}")
+fi
+"$design_tools/lib/shell-common/lint/shell" "${shell[@]}"
 
-# Named because format-paths carries no shebang and tools/ is outside the
-# content-based sweep.
-lib/shell-common/lint/shell bin/format-paths "${tools_shell[@]}"
+if defines palette_args; then
+    echo -e "\n=== LINT PALETTE\n"
 
-echo -e "\n=== LINT PYTHON\n"
+    read_set palette_args palette
+    "$tools/palette-generate" "${palette[@]}" --check || {
+        echo "The generated palette files are stale: run make format." >&2
+        exit 1
+    }
+fi
 
-mapfile -t -d '' python < <(python_files)
+if defines python_files; then
+    echo -e "\n=== LINT PYTHON\n"
 
-# Counted, so an empty set does not read as a clean one.
-echo "checking ${#python[@]} Python file(s)" >&2
+    read_set python_files python
+    # Counted, so the log shows what the pass covered.
+    echo "checking ${#python[@]} Python file(s)" >&2
+    ruff format --check "${python[@]}"
+    ruff check "${python[@]}"
+fi
 
-ruff format --check "${python[@]}"
-ruff check "${python[@]}"
+if defines yaml_files; then
+    echo -e "\n=== LINT YAML\n"
 
-echo -e "\n=== LINT YAML\n"
+    read_set yaml_files yaml
+    printf '%s\0' "${yaml[@]}" | "$design_tools/lib/shell-common/lint/yaml-keys"
+fi
 
-yaml_paths | lib/shell-common/lint/yaml-keys
+if defines json_files; then
+    echo -e "\n=== LINT JSON\n"
+
+    read_set json_files json
+    status=0
+    for f in "${json[@]}"; do
+        if ! python3 -m json.tool "${json_options[@]}" "$f" | diff -u -- "$f" -; then
+            echo "$f: not formatted: run make format" >&2
+            status=1
+        fi
+    done
+    echo "checked ${#json[@]} JSON file(s)" >&2
+    [ $status -eq 0 ]
+fi
+
+if defines js_files; then
+    echo -e "\n=== LINT JAVASCRIPT\n"
+
+    read_set js_files js
+    semistandard --verbose "${js[@]}" | snazzy
+fi
+
+if defines css_files || defines html_files; then
+    echo -e "\n=== LINT CSS AND HTML\n"
+
+    prettied=()
+    for set in css_files html_files; do
+        if defines "$set"; then
+            read_set "$set" files
+            prettied+=("${files[@]}")
+        fi
+    done
+    prettier --check "${prettied[@]}"
+fi
 
 echo -e "\n=== LINT FILES\n"
 
+if defines charset_files; then
+    read_set charset_files sheets
+    "$tools/charset-check" "${sheets[@]}"
+fi
+
+if defines lfs_args; then
+    read_set lfs_args lfs
+    "$tools/lfs-check" "${lfs[@]}"
+fi
+
 # Sorted, so an added setting has one place to go and a diff against a real
 # .env stays clean.
-sort -c .env.example
+if [ -e .env.example ]; then
+    sort -c .env.example
+    echo "checked .env.example is sorted" >&2
+fi
 
-echo -e "\n=== LINT MARKDOWN\n"
+if defines references_args; then
+    echo -e "\n=== LINT REFERENCES\n"
 
-mapfile -t -d '' markdown < <(markdown_files)
+    read_set references_args references
+    "$tools/references-check" "${references[@]}"
+fi
 
-# The README documents a consumer's paths, which live in the consumer.
-tools/markdown-lint \
-    --ignore-path 'lib/design-tools' \
-    --ignore-path 'lib/design-tools/*' \
-    "${markdown[@]}"
+if defines markdown_args; then
+    echo -e "\n=== LINT MARKDOWN\n"
 
-echo -e "\n=== LINT COMMENTS\n"
+    read_set markdown_args markdown
+    "$tools/markdown-lint" "${markdown[@]}"
+fi
 
-mapfile -t -d '' commented < <(comment_files)
+if defines comment_files; then
+    echo -e "\n=== LINT COMMENTS\n"
 
-tools/comment-check "${commented[@]}"
+    read_set comment_files commented
+    "$tools/comment-check" "${commented[@]}"
+fi
 
 echo

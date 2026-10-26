@@ -1,27 +1,74 @@
 #!/usr/bin/env bash
 #
 # Writing counterpart to bin/lint: every pass here rewrites, and bin/lint checks
-# the same path set for drift afterwards.
+# the same path sets for drift afterwards.
+#
+# read_set assigns each array through a nameref, which ShellCheck cannot follow.
+# shellcheck disable=SC2154
 set -Eeuo pipefail
 shopt -s inherit_errexit failglob
 
-source bin/format-paths
+# shellcheck source=bin/runner
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
 
-echo -e "\n=== FORMAT PYTHON\n"
+if defines palette_args; then
+    echo -e "\n=== FORMAT PALETTE\n"
 
-mapfile -t -d '' python < <(python_files)
+    read_set palette_args palette
+    "$tools/palette-generate" "${palette[@]}"
+fi
 
-echo "formatting ${#python[@]} Python file(s)" >&2
+if defines python_files; then
+    echo -e "\n=== FORMAT PYTHON\n"
 
-ruff check --fix --unsafe-fixes "${python[@]}"
-ruff format "${python[@]}"
+    read_set python_files python
+    echo "formatting ${#python[@]} Python file(s)" >&2
+    ruff check --fix --unsafe-fixes "${python[@]}"
+    ruff format "${python[@]}"
+fi
 
-echo -e "\n=== FORMAT YAML\n"
+if defines yaml_files; then
+    echo -e "\n=== FORMAT YAML\n"
 
-# Named as they are rewritten, so the pass records what it covered.
-while IFS= read -r -d '' f; do
-    yq -i -P 'sort_keys(..)' "$f"
-    echo "  $f" >&2
-done < <(yaml_paths)
+    read_set yaml_files yaml
+    # Named as they are rewritten, so the pass records what it covered.
+    for f in "${yaml[@]}"; do
+        yq -i -P 'sort_keys(..)' "$f"
+        echo "  $f" >&2
+    done
+fi
+
+if defines json_files; then
+    echo -e "\n=== FORMAT JSON\n"
+
+    read_set json_files json
+    # Captured before writing, since redirecting json.tool's output to the file
+    # it reads would truncate it before reading.
+    for f in "${json[@]}"; do
+        formatted=$(python3 -m json.tool "${json_options[@]}" "$f")
+        printf '%s\n' "$formatted" > "$f"
+        echo "  $f" >&2
+    done
+fi
+
+if defines js_files; then
+    echo -e "\n=== FORMAT JAVASCRIPT\n"
+
+    read_set js_files js
+    semistandard --fix "${js[@]}"
+fi
+
+if defines css_files || defines html_files; then
+    echo -e "\n=== FORMAT CSS AND HTML\n"
+
+    prettied=()
+    for set in css_files html_files; do
+        if defines "$set"; then
+            read_set "$set" files
+            prettied+=("${files[@]}")
+        fi
+    done
+    prettier --write "${prettied[@]}"
+fi
 
 echo

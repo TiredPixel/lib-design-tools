@@ -8,9 +8,11 @@
 # $comment naming its source. The CSS holds one custom property per colour leaf
 # (a string #RGB, #RGBA, #RRGGBB or #RRGGBBAA), named --P- and the leaf's full
 # key path, lowercased, with _ as - and list items numbered from 1, in the
-# YAML's order. Two leaves that would share a name fail the run, as does a YAML
-# holding no colour at all. Nothing in either output depends on the clock or the
-# environment, so a rerun on an unchanged YAML changes nothing.
+# YAML's order. Two leaves that would share a name fail the run, as do a name
+# holding anything but ASCII letters and digits, hyphens and non-ASCII
+# characters, which CSS would not read as one name, and a YAML holding no colour
+# at all. Nothing in either output depends on the clock or the environment, so a
+# rerun on an unchanged YAML changes nothing.
 #
 # --check writes nothing: it generates into a temporary directory and fails,
 # with a diff, where either output differs from what is on disk.
@@ -68,6 +70,13 @@ PREFIX=$prefix yq '
 ' "$yaml" > "$out/properties"
 
 [ -s "$out/properties" ] || die "$yaml holds no colour"
+
+# grep exits 1 when every line matches, and 2 on an error of its own.
+status=0
+invalid=$(grep -vP '^  --(?:[a-z0-9-]|[^\x00-\x7F])+: #[0-9A-Fa-f]+;$' \
+    "$out/properties") || status=$?
+[ $status -le 1 ] || die "grep failed reading the generated properties"
+[ -z "$invalid" ] || die "$yaml: keys making names CSS cannot read:"$'\n'"$invalid"
 
 collisions=$(cut -d':' -f1 "$out/properties" | sort | uniq -d)
 [ -z "$collisions" ] || die "$yaml: leaves sharing a name:"$'\n'"$collisions"

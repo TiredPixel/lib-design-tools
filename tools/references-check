@@ -75,9 +75,7 @@ _CSS_IMPORT_STRING = re.compile(r"""@import\s+(?:"([^"]*)"|'([^']*)')""", re.IGN
 
 def _blank_comments(css: str) -> str:
     """Replace CSS comments with spaces, keeping newlines so lines still count."""
-    return _CSS_COMMENT.sub(
-        lambda match: re.sub(r"[^\n]", " ", match.group(0)), css
-    )
+    return _CSS_COMMENT.sub(lambda match: re.sub(r"[^\n]", " ", match.group(0)), css)
 
 
 def css_references(css: str) -> Iterator[tuple[int, str]]:
@@ -110,9 +108,7 @@ def classify(reference: str) -> tuple[str, str]:
     return "local", path
 
 
-def resolve(
-    path: str, referrer: pathlib.Path, root: pathlib.Path
-) -> str | None:
+def resolve(path: str, referrer: pathlib.Path, root: pathlib.Path) -> str | None:
     """Return why a local ``path`` does not resolve, or None when it does."""
     if path.startswith("/"):
         target = root / path.lstrip("/")

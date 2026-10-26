@@ -52,7 +52,6 @@ class PunctuationTest(CheckTestCase):
             ("\u201d", "RIGHT DOUBLE QUOTATION MARK", '"'),
             ("\u2264", "LESS-THAN OR EQUAL TO", "<="),
             ("\u2265", "GREATER-THAN OR EQUAL TO", ">="),
-            ("\u0394", "GREEK CAPITAL LETTER DELTA", "Delta"),
             ("\u2190", "LEFTWARDS ARROW", "<-"),
             ("\u2191", "UPWARDS ARROW", "->"),
             ("\u2192", "RIGHTWARDS ARROW", "->"),
@@ -91,14 +90,13 @@ class PunctuationTest(CheckTestCase):
         self.assertClean("/* \u218f \u2200 */")
 
     def test_letters_are_never_folded(self) -> None:
-        source = (
+        self.assertClean(
             "/* Straße naïve Ångström żółw Dvořák "
-            "tuffieħ два стола görüşmek δέλτα \u0394E */"
+            "tuffieħ два стола görüşmek δέλτα \u0394\u0388\u039b\u03a4\u0391 */"
         )
-        self.assertFlagged(source, [(1, source.index("\u0394") + 1)])
 
     def test_typewriter_punctuation_passes(self) -> None:
-        self.assertClean("/* a -- b ... 'x' \"y\" -> <- <= >= Delta-E 2024-2026 */")
+        self.assertClean("/* a -- b ... 'x' \"y\" -> <- <= >= 2024-2026 */")
 
     def test_code_spans_are_exempt(self) -> None:
         self.assertClean(f"/* `{EM_DASH}` and ``a ` {EM_DASH}`` */")
@@ -176,7 +174,7 @@ class PythonTest(CheckTestCase):
             ")\n"
             'p.add_argument_group(title="\u2192")\n'
             'p.add_subparsers(help="``\u2265``")\n'
-            'p.add_parser("a", usage="\u0394")\n'
+            'p.add_parser("a", usage="\u2018")\n'
             f'p.add_argument("-z", **{{"help": "{EM_DASH}"}})\n'
             f'other(help="{EM_DASH}")\n'
             f'p.method(help="{EM_DASH}")\n'

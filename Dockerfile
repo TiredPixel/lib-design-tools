@@ -5,8 +5,9 @@
 # ARGFREEZE YQ_VERSION github:mikefarah/yq
 #
 # dev copies nothing in, so a repository taking this one as a submodule builds
-# the same image and runs it on its own tree; test adds this tree for the gate.
-# README.md, Building the images, describes both stages.
+# the same image, through a Dockerfile symlinked to this one, and runs it on its
+# own tree; test adds that tree for the gate. README.md, Building the images,
+# describes both stages.
 #===============================================================================
 FROM docker.io/library/debian@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308 AS dev
 

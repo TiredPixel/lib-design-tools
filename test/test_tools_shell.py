@@ -138,6 +138,23 @@ class PaletteGenerateTest(Workspace):
         self.assertEqual(result.returncode, 1)
         self.assertIn("--x-a-b", result.stderr)
 
+    def test_fails_on_a_key_css_cannot_name(self):
+        for key in ("light blue", "a.b", "x/y", "a:b", "a+b"):
+            with self.subTest(key=key):
+                self.write("p.yml", f'ok: "#000000"\n"{key}": "#FFFFFF"\n')
+                result = self.generate()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("names CSS cannot read", result.stderr)
+                self.assertIn(f"--x-{key}", result.stderr)
+                self.assertNotIn("--x-ok", result.stderr)
+                self.assertFalse((self.dir / "p.css").exists())
+
+    def test_keeps_a_non_ascii_key(self):
+        self.write("p.yml", 'grün: "#00FF00"\n')
+        result = self.generate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("  --x-grün: #00FF00;", (self.dir / "p.css").read_text())
+
     def test_fails_on_a_yaml_without_colour(self):
         self.write("p.yml", "a: plain\n")
         result = self.generate()
