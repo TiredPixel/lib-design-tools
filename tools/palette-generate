@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+#
+# Generate a palette's JSON and CSS from its YAML, the one source.
+#
+#   palette-generate YAML --prefix P --json OUT --css OUT [--check]
+#
+# The JSON is the YAML as data, in the YAML's key order, opening with a
+# $comment naming its source. The CSS holds one custom property per colour leaf
+# (a string #RGB, #RGBA, #RRGGBB or #RRGGBBAA), named --P- and the leaf's full
+# key path, lowercased, with _ as - and list items numbered from 1, in the
+# YAML's order. Two leaves that would share a name fail the run, as does a YAML
+# holding no colour at all. Nothing in either output depends on the clock or the
+# environment, so a rerun on an unchanged YAML changes nothing.
+#
+# --check writes nothing: it generates into a temporary directory and fails,
+# with a diff, where either output differs from what is on disk.
+set -Eeuo pipefail
+shopt -s inherit_errexit failglob
+
+usage() {
+    echo "usage: palette-generate YAML --prefix P --json OUT --css OUT [--check]" >&2
+    exit 2
+}
+
+die() {
+    echo "palette-generate: $*" >&2
+    exit 1
+}
+
+yaml=""
+prefix=""
+json=""
+css=""
+check=false
+
+while [ $# -gt 0 ]; do
+    case $1 in
+        --prefix) [ $# -ge 2 ] || usage; prefix=$2; shift 2 ;;
+        --json) [ $# -ge 2 ] || usage; json=$2; shift 2 ;;
+        --css) [ $# -ge 2 ] || usage; css=$2; shift 2 ;;
+        --check) check=true; shift ;;
+        -*) usage ;;
+        *) [ -z "$yaml" ] || usage; yaml=$1; shift ;;
+    esac
+done
+
+if [ -z "$yaml" ] || [ -z "$prefix" ] || [ -z "$json" ] || [ -z "$css" ]; then
+    usage
+fi
+[[ "$prefix" =~ ^[a-z][a-z0-9-]*$ ]] || die "prefix '$prefix' is not a CSS name"
+[ -f "$yaml" ] || die "$yaml: no such file"
+
+out=$(mktemp -d)
+trap 'rm -rf -- "$out"' EXIT
+
+# $comment is the JSON key, written literally, not a shell variable.
+# shellcheck disable=SC2016
+COMMENT="Generated from $yaml, in its key order: edit that file, never this one." \
+    yq -o=json -I2 '{"$comment": strenv(COMMENT)} + .' "$yaml" > "$out/json"
+
+# Lists become maps keyed from 1 first, so a list position and a mapping key
+# both reach the name through the same path.
+PREFIX=$prefix yq '
+    (.. | select(tag == "!!seq")) |= (to_entries | map(.key += 1) | from_entries)
+    | ..
+    | select(tag == "!!str" and test("^#([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"))
+    | "  --" + strenv(PREFIX) + "-" + (path | join("-") | downcase | sub("_"; "-")) + ": " + . + ";"
+' "$yaml" > "$out/properties"
+
+[ -s "$out/properties" ] || die "$yaml holds no colour"
+
+collisions=$(cut -d':' -f1 "$out/properties" | sort | uniq -d)
+[ -z "$collisions" ] || die "$yaml: leaves sharing a name:"$'\n'"$collisions"
+
+{
+    echo '@charset "UTF-8";'
+    echo "/* Generated from $yaml, in its key order, where every colour's"
+    echo "   reasoning lives: edit that file, never this one. */"
+    echo ':root {'
+    cat "$out/properties"
+    echo '}'
+} > "$out/css"
+
+if $check; then
+    status=0
+    diff -u -- "$json" "$out/json" || status=1
+    diff -u -- "$css" "$out/css" || status=1
+    [ $status -eq 0 ] || die "$json or $css is stale against $yaml"
+    exit 0
+fi
+
+cat -- "$out/json" > "$json"
+cat -- "$out/css" > "$css"

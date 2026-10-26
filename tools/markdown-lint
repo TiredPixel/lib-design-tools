@@ -1,0 +1,676 @@
+#!/usr/bin/env python3
+"""Fail on Markdown that breaks the house conventions or points at nothing.
+
+Layout. A prose paragraph is one line: a prose line may not directly follow another
+unless the earlier one ends in a backslash hard break. A list item is one line too,
+nested items sit on lines of their own, and a paragraph continuing an item after a blank
+line starts at the item's content column. Headings, tables, fenced and indented code,
+block quotes, HTML blocks, link reference definitions and front matter keep their own
+structure and are not reflowed.
+
+Links. Every relative link and image, inline or as a reference definition, resolves
+relative to its file; a ``/``-rooted one resolves against the current directory, as
+GitHub resolves it against the repository root. A ``#fragment`` on the same file or
+another local Markdown file must name a heading, by GitHub's slug rule, or an HTML
+``id`` or ``name`` in that file.
+
+Backticked paths. A code span is taken for a repository path only when nothing about it
+says otherwise, because a false alarm costs more than a miss. It must hold no
+whitespace, no option-like leading ``-``, no leading ``/`` (an absolute path is the
+machine's, not the repository's), and none of the characters that mark globs,
+placeholders, URLs or code: ``< > * … ? [ ] { } ( ) $ = : @ , ; ' " ` | \\ # % ! & ^
+~``. It must contain ``/``, since a bare file name is as often a file in another
+repository or directory as one beside the reader, and its first segment must exist
+beside the file or in the current directory, which rules out MIME types and other
+slashed words. A token matching an ``--ignore-path`` glob, compared with ``fnmatch``
+against the token as written, is skipped, for paths that exist only where the document's
+reader works. Any other such token must exist relative to the file or the current
+directory.
+
+Custom properties. A code span holding exactly ``--name`` or ``var(--name)`` must be
+defined in a stylesheet given with ``--css``, but only when some property there shares
+its first segment (``--ink-3`` with ``--ink-1``), since the same shape is a command-line
+option (``--root``) everywhere else, and not when it ends in a hyphen, which names a
+prefix (``--ink-``) rather than a property. Without ``--css`` this check is skipped.
+
+Dashes. Prose outside code may not hold an em dash, or ``--`` standing free between
+spaces as a dash, since the convention is the spaced en dash.
+
+Exit status: 0 when every file is clean, 1 when any is not, 2 on a usage error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import fnmatch
+import functools
+import html
+import pathlib
+import re
+import sys
+import unicodedata
+import urllib.parse
+
+MARKDOWN_SUFFIXES = frozenset({".markdown", ".md"})
+
+EM_DASH = "\u2014"
+
+# Kinds of line whose inline text is prose, and so is checked for links, paths, custom
+# properties and dashes.
+INLINE_KINDS = frozenset({"heading", "item", "prose", "quote", "table"})
+
+_ATX_HEADING = re.compile(r"#{1,6}(?:\s|$)")
+_SETEXT_UNDERLINE = re.compile(r"(?:=+|-+)\s*")
+_THEMATIC_BREAK = re.compile(r"(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})")
+_LIST_ITEM = re.compile(r"( *)([-*+]|\d{1,9}[.)])( +|$)")
+_FENCE_OPEN = re.compile(r"\s*(`{3,}|~{3,})(.*)")
+_TABLE_DELIMITER = re.compile(r"\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*")
+_LINK_DEFINITION = re.compile(r"\s*\[(?!\^)[^\]]+\]:\s*(<[^>]*>|\S+)")
+_BACKTICKS = re.compile(r"`+")
+_ESCAPED_PUNCTUATION = re.compile(r"\\([!-/:-@\[-`{-~])")
+_HTML_COMMENT_START = re.compile(r"<!--")
+_HTML_RAW_START = re.compile(r"<(script|pre|style|textarea)(?:[\s>]|$)", re.IGNORECASE)
+_HTML_OTHER_START = re.compile(r"<[?!]")
+_HTML_BLOCK_TAG = re.compile(r"</?([A-Za-z][A-Za-z0-9]*)(?:[\s/>]|$)")
+_HTML_LONE_TAG = re.compile(
+    r"""</?[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][\w.:-]*"""
+    r"""(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*/?>\s*"""
+)
+_HTML_ANCHOR = re.compile(r"""\b(?:id|name)\s*=\s*["']([^"']+)["']""")
+_INLINE_HTML = re.compile(r"<!--.*?-->|</?[A-Za-z][^>]*>", re.DOTALL)
+_FREE_DOUBLE_HYPHEN = re.compile(r"(?:(?<=\s)|^)--(?=\s|$)")
+_NOT_A_PATH = re.compile(r"""[\s<>*\u2026?\[\]{}()$=:@,;'"`|\\#%!&^~]""")
+_CUSTOM_PROPERTY = re.compile(r"(--[\w-]*\w)|var\((--[\w-]*\w)\)")
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_CSS_DEFINITION = re.compile(r"(?<![\w-])(--[\w-]+)\s*:|@property\s+(--[\w-]+)")
+
+# CommonMark's type 6 HTML block tags: a line opening with one starts an HTML block even
+# in the middle of a paragraph.
+HTML_BLOCK_TAGS = frozenset(
+    [
+        "address",
+        "article",
+        "aside",
+        "base",
+        "basefont",
+        "blockquote",
+        "body",
+        "caption",
+        "center",
+        "col",
+        "colgroup",
+        "dd",
+        "details",
+        "dialog",
+        "dir",
+        "div",
+        "dl",
+        "dt",
+        "fieldset",
+        "figcaption",
+        "figure",
+        "footer",
+        "form",
+        "frame",
+        "frameset",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "head",
+        "header",
+        "hr",
+        "html",
+        "iframe",
+        "legend",
+        "li",
+        "link",
+        "main",
+        "menu",
+        "menuitem",
+        "nav",
+        "noframes",
+        "ol",
+        "optgroup",
+        "option",
+        "p",
+        "param",
+        "search",
+        "section",
+        "summary",
+        "table",
+        "tbody",
+        "td",
+        "tfoot",
+        "th",
+        "thead",
+        "title",
+        "tr",
+        "track",
+        "ul",
+    ]
+)
+
+
+@dataclasses.dataclass
+class Line:
+    """One source line and the block structure it belongs to."""
+
+    number: int
+    text: str
+    kind: str
+
+
+@dataclasses.dataclass
+class Document:
+    """A Markdown file split into classified lines, with layout problems."""
+
+    lines: list[Line]
+    headings: list[str]
+    problems: list[tuple[int, str]]
+
+
+def _indent(text: str) -> int:
+    expanded = text.expandtabs(4)
+    return len(expanded) - len(expanded.lstrip(" "))
+
+
+def _item_content_column(match: re.Match) -> int:
+    """Return the column an item's content starts at, by CommonMark's rule."""
+    marker_end = match.end(2)
+    spacing = len(match.group(3))
+    if spacing == 0 or spacing > 4:
+        return marker_end + 1
+    return marker_end + spacing
+
+
+def _html_block_end(stripped: str, previous: str) -> str | None:
+    """Return how an HTML block opened by ``stripped`` ends, or None if not one.
+
+    The result is ``'-->'``, a closing tag such as ``'</pre>'``, or ``''`` for a block
+    that ends at the next blank line.
+    """
+    if _HTML_COMMENT_START.match(stripped):
+        return "-->"
+    raw = _HTML_RAW_START.match(stripped)
+    if raw:
+        return f"</{raw.group(1).lower()}>"
+    if _HTML_OTHER_START.match(stripped):
+        return ""
+    tag = _HTML_BLOCK_TAG.match(stripped)
+    if tag and tag.group(1).lower() in HTML_BLOCK_TAGS:
+        return ""
+    # A lone open or close tag starts a block too, but cannot interrupt a paragraph.
+    if previous not in ("prose", "item") and _HTML_LONE_TAG.fullmatch(stripped):
+        return ""
+    return None
+
+
+def _front_matter_end(raw: list[str]) -> int:
+    """Return the number of leading lines that are YAML front matter."""
+    if not raw or raw[0].rstrip() != "---":
+        return 0
+    for index in range(1, len(raw)):
+        if raw[index].rstrip() in ("---", "..."):
+            return index + 1
+    return 0
+
+
+def _atx_text(stripped: str) -> str:
+    text = stripped.lstrip("#").strip()
+    return re.sub(r"(?:^|\s+)#+$", "", text).strip()
+
+
+def _starts_table(raw: list[str], index: int) -> bool:
+    """Say whether line ``index`` is a table header over a delimiter row."""
+    if "|" not in raw[index] or index + 1 >= len(raw):
+        return False
+    following = raw[index + 1]
+    return "-" in following and bool(_TABLE_DELIMITER.fullmatch(following))
+
+
+def parse(text: str) -> Document:
+    """Classify each line of ``text`` and report layout problems."""
+    raw = [line.removesuffix("\r") for line in text.split("\n")]
+    if raw and raw[-1] == "" and text.endswith("\n"):
+        raw.pop()
+    lines: list[Line] = []
+    headings: list[str] = []
+    problems: list[tuple[int, str]] = []
+
+    front = _front_matter_end(raw)
+    for index in range(front):
+        lines.append(Line(index + 1, raw[index], "front"))
+
+    fence: tuple[str, int, int] | None = None
+    html_end: str | None = None
+    in_table = False
+    items: list[int] = []
+    previous = "blank"
+    previous_text = ""
+
+    for index in range(front, len(raw)):
+        text = raw[index]
+        number = index + 1
+        stripped = text.strip()
+        indent = _indent(text)
+
+        if fence is not None:
+            char, length, _ = fence
+            closing = re.fullmatch(rf"\s*{re.escape(char)}{{{length},}}\s*", text)
+            kind = "fence" if closing else "code"
+            if closing:
+                fence = None
+            lines.append(Line(number, text, kind))
+            previous, previous_text = kind, text
+            continue
+
+        if html_end is not None:
+            if html_end == "" and not stripped:
+                html_end = None
+                kind = "blank"
+            else:
+                kind = "html"
+                if html_end and html_end in text.lower():
+                    html_end = None
+            lines.append(Line(number, text, kind))
+            previous, previous_text = kind, text
+            continue
+
+        if not stripped:
+            in_table = False
+            lines.append(Line(number, text, "blank"))
+            previous, previous_text = "blank", text
+            continue
+
+        item = _LIST_ITEM.match(text.expandtabs(4))
+        if _THEMATIC_BREAK.fullmatch(stripped) and indent < 4:
+            item = None
+        misaligned = None
+        kind = None
+
+        if item is None and previous == "code" and indent >= 4:
+            kind = "code"
+        elif item is None and previous == "blank":
+            if items and indent >= items[-1] + 4:
+                kind = "code"
+            elif items:
+                while items and indent < items[-1]:
+                    items.pop()
+                column = items[-1] if items else 0
+                if indent != column:
+                    misaligned = column
+            elif indent >= 4:
+                kind = "code"
+
+        if kind is None:
+            opening = _FENCE_OPEN.fullmatch(text)
+            if opening and not (opening.group(1)[0] == "`" and "`" in opening.group(2)):
+                fence = (opening.group(1)[0], len(opening.group(1)), number)
+                kind = "fence"
+            elif item is not None:
+                marker = len(item.group(1))
+                while items and items[-1] > marker:
+                    items.pop()
+                items.append(_item_content_column(item))
+                kind = "item"
+            elif _ATX_HEADING.match(stripped):
+                kind = "heading"
+                headings.append(_atx_text(stripped))
+            elif _SETEXT_UNDERLINE.fullmatch(stripped) and previous == "prose":
+                kind = "heading"
+                lines[-1].kind = "heading"
+                headings.append(previous_text.strip())
+            elif _THEMATIC_BREAK.fullmatch(stripped):
+                kind = "rule"
+            elif stripped.startswith(">"):
+                kind = "quote"
+            elif (end := _html_block_end(stripped, previous)) is not None:
+                kind = "html"
+                if end == "" or end not in text.lower():
+                    html_end = end
+            elif in_table or _starts_table(raw, index):
+                in_table = True
+                kind = "table"
+            elif _LINK_DEFINITION.match(text):
+                kind = "linkdef"
+            else:
+                kind = "prose"
+
+        if kind == "prose":
+            if misaligned is not None:
+                problems.append(
+                    (
+                        number,
+                        (
+                            f"continuation is indented {indent} space(s); align it "
+                            f"with its item's content at {misaligned}"
+                        ),
+                    )
+                )
+            if previous in ("prose", "item"):
+                if previous_text.endswith("\\"):
+                    kind = previous
+                elif previous == "prose":
+                    problems.append(
+                        (
+                            number,
+                            (
+                                "paragraph wraps onto a second line; write one "
+                                "paragraph per line, or end the line with a "
+                                "backslash for a hard break"
+                            ),
+                        )
+                    )
+                else:
+                    problems.append(
+                        (
+                            number,
+                            (
+                                "list item wraps onto a second line; keep each "
+                                "item on one line"
+                            ),
+                        )
+                    )
+
+        lines.append(Line(number, text, kind))
+        previous, previous_text = kind, text
+
+    if fence is not None:
+        problems.append((fence[2], "code fence is never closed"))
+    return Document(lines, headings, problems)
+
+
+def code_spans(text: str) -> list[tuple[int, int, str]]:
+    """Return ``(start, end, content)`` for each inline code span in ``text``.
+
+    A backtick run opens a span only when a run of the same length closes it; an
+    unmatched run is literal text, as in CommonMark.
+    """
+    spans = []
+    position = 0
+    while (opening := _BACKTICKS.search(text, position)) is not None:
+        start = opening.start()
+        if start > 0 and text[start - 1] == "\\":
+            position = opening.end()
+            continue
+        run = opening.group(0)
+        closing = re.compile(rf"(?<!`){run}(?!`)").search(text, opening.end())
+        if closing is None:
+            position = opening.end()
+            continue
+        content = text[opening.end() : closing.start()]
+        if len(content) > 1 and content[0] == content[-1] == " " and content.strip():
+            content = content[1:-1]
+        spans.append((start, closing.end(), content))
+        position = closing.end()
+    return spans
+
+
+def _blank(text: str, start: int, end: int) -> str:
+    return text[:start] + " " * (end - start) + text[end:]
+
+
+def link_destinations(text: str) -> list[tuple[int, int, str]]:
+    """Return ``(start, end, destination)`` for each inline link or image."""
+    found = []
+    for match in re.finditer(r"\]\(", text):
+        start = match.end()
+        position = start
+        while position < len(text) and text[position] in " \t":
+            position += 1
+        if position < len(text) and text[position] == "<":
+            end = text.find(">", position)
+            if end == -1:
+                continue
+            found.append((position, end + 1, text[position + 1 : end]))
+            continue
+        depth = 0
+        end = position
+        while end < len(text):
+            char = text[end]
+            if char == "\\":
+                end += 2
+                continue
+            if char.isspace():
+                break
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                if depth == 0:
+                    break
+                depth -= 1
+            end += 1
+        end = min(end, len(text))
+        if end > position:
+            found.append((position, end, text[position:end]))
+    return found
+
+
+def _plain_heading(text: str) -> str:
+    """Reduce heading Markdown to the text GitHub renders for it."""
+    text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"\[([^\]]*)\]\[[^\]]*\]", r"\1", text)
+    text = _INLINE_HTML.sub("", text)
+    text = re.sub(r"(?<![\w])_+|_+(?![\w])", "", text)
+    return html.unescape(text)
+
+
+def slug(heading: str) -> str:
+    """Return GitHub's anchor for a heading, without the duplicate suffix.
+
+    GitHub lowercases the rendered text, drops everything but letters, marks, numbers,
+    connector punctuation, spaces and hyphens, and turns each space into a hyphen.
+    """
+    kept = []
+    for char in _plain_heading(heading).strip().lower():
+        category = unicodedata.category(char)
+        if char in " -" or category[0] in "LMN" or category == "Pc":
+            kept.append(char)
+    return "".join(kept).replace(" ", "-")
+
+
+def anchors(document: Document) -> set[str]:
+    """Return every fragment that lands somewhere in ``document``, lowercased."""
+    found: set[str] = set()
+    seen: dict[str, int] = {}
+    for heading in document.headings:
+        base = slug(heading)
+        count = seen.get(base, 0)
+        seen[base] = count + 1
+        found.add(base if count == 0 else f"{base}-{count}")
+    for line in document.lines:
+        if line.kind not in ("code", "fence", "front"):
+            found.update(name.lower() for name in _HTML_ANCHOR.findall(line.text))
+    return found
+
+
+@functools.cache
+def file_anchors(path: pathlib.Path) -> frozenset[str]:
+    return frozenset(anchors(parse(path.read_text(encoding="utf-8"))))
+
+
+def check_link(
+    destination: str, path: pathlib.Path, document: Document, cwd: pathlib.Path
+) -> str | None:
+    """Return why a link from ``path`` does not resolve, or None."""
+    destination = _ESCAPED_PUNCTUATION.sub(r"\1", destination)
+    parts = urllib.parse.urlsplit(destination)
+    if parts.scheme or parts.netloc:
+        return None
+    local = urllib.parse.unquote(parts.path)
+    fragment = urllib.parse.unquote(parts.fragment).lower()
+    if not local:
+        if fragment and fragment not in anchors(document):
+            return f"link #{parts.fragment} names no heading or anchor here"
+        return None
+    if local.startswith("/"):
+        target = cwd / local.lstrip("/")
+    else:
+        target = path.parent / local
+    if not target.exists():
+        return f"link target {local} does not exist"
+    if (
+        fragment
+        and target.is_file()
+        and target.suffix.lower() in MARKDOWN_SUFFIXES
+        and fragment not in file_anchors(target.resolve())
+    ):
+        return f"link {destination} names no heading or anchor in {local}"
+    return None
+
+
+def looks_like_path(token: str) -> bool:
+    """Say whether a code span is plainly a repository path; see the docstring."""
+    if not token or _NOT_A_PATH.search(token) or token.startswith(("-", "/")):
+        return False
+    return "/" in token
+
+
+def missing_path(token: str, path: pathlib.Path, cwd: pathlib.Path) -> bool:
+    """Say whether a path-like token exists in neither place it may live."""
+    first = token.split("/", 1)[0]
+    bases = [base for base in (path.parent, cwd) if (base / first).exists()]
+    return bool(bases) and not any((base / token).exists() for base in bases)
+
+
+def ignored_path(token: str, ignore: tuple[str, ...]) -> bool:
+    return any(fnmatch.fnmatchcase(token, pattern) for pattern in ignore)
+
+
+def defined_properties(stylesheets: list[pathlib.Path]) -> set[str]:
+    """Return every custom property the stylesheets define or register."""
+    defined = set()
+    for stylesheet in stylesheets:
+        css = _CSS_COMMENT.sub("", stylesheet.read_text(encoding="utf-8"))
+        for match in _CSS_DEFINITION.finditer(css):
+            defined.add(match.group(1) or match.group(2))
+    return defined
+
+
+def _family(name: str) -> str:
+    return name[2:].split("-", 1)[0]
+
+
+def check_inline(
+    line: Line,
+    path: pathlib.Path,
+    document: Document,
+    cwd: pathlib.Path,
+    properties: set[str] | None,
+    ignore: tuple[str, ...],
+) -> list[str]:
+    """Return the inline problems on one line of prose."""
+    problems = []
+    text = line.text
+    masked = text
+    for start, end, content in code_spans(text):
+        masked = _blank(masked, start, end)
+        token = content.strip()
+        if (
+            looks_like_path(token)
+            and not ignored_path(token, ignore)
+            and missing_path(token, path, cwd)
+        ):
+            problems.append(f"`{token}` names a path that does not exist")
+        custom = _CUSTOM_PROPERTY.fullmatch(token)
+        if custom and properties is not None:
+            name = custom.group(1) or custom.group(2)
+            families = {_family(known) for known in properties}
+            if _family(name) in families and name not in properties:
+                problems.append(f"`{token}` is not defined in any --css stylesheet")
+
+    for start, end, destination in link_destinations(masked):
+        masked = _blank(masked, start, end)
+        problem = check_link(destination, path, document, cwd)
+        if problem is not None:
+            problems.append(problem)
+
+    masked = _INLINE_HTML.sub(lambda match: " " * len(match.group(0)), masked)
+    if line.kind == "table" and _TABLE_DELIMITER.fullmatch(text):
+        return problems
+    if EM_DASH in masked:
+        problems.append("em dash; use a spaced en dash")
+    if _FREE_DOUBLE_HYPHEN.search(masked):
+        problems.append("'--' used as a dash; use a spaced en dash")
+    return problems
+
+
+def lint(
+    path: pathlib.Path,
+    cwd: pathlib.Path,
+    properties: set[str] | None,
+    ignore: tuple[str, ...] = (),
+) -> list[tuple[int, str]]:
+    """Return ``(line, message)`` for every problem in one Markdown file."""
+    document = parse(path.read_text(encoding="utf-8"))
+    problems = list(document.problems)
+    for line in document.lines:
+        if line.kind in INLINE_KINDS:
+            inline = check_inline(line, path, document, cwd, properties, ignore)
+            for message in inline:
+                problems.append((line.number, message))
+        elif line.kind == "linkdef":
+            destination = _LINK_DEFINITION.match(line.text).group(1)
+            problem = check_link(destination.strip("<>"), path, document, cwd)
+            if problem is not None:
+                problems.append((line.number, problem))
+    return sorted(problems, key=lambda problem: problem[0])
+
+
+def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="markdown-lint",
+        description="Fail on Markdown layout, broken links and stale names.",
+    )
+    parser.add_argument(
+        "--css",
+        action="append",
+        type=pathlib.Path,
+        default=[],
+        metavar="FILE",
+        help="stylesheet defining custom properties; repeatable",
+    )
+    parser.add_argument(
+        "--ignore-path",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="fnmatch glob for backticked paths not to check; repeatable",
+    )
+    parser.add_argument("files", nargs="+", type=pathlib.Path, metavar="FILE")
+    arguments = parser.parse_args(argv)
+    for path in [*arguments.css, *arguments.files]:
+        if not path.is_file():
+            parser.error(f"{path} is not a file")
+    return arguments
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parse_arguments(argv)
+    properties = defined_properties(arguments.css) if arguments.css else None
+    cwd = pathlib.Path.cwd()
+    failures = 0
+    for path in arguments.files:
+        try:
+            problems = lint(path, cwd, properties, tuple(arguments.ignore_path))
+        except UnicodeDecodeError as error:
+            print(f"{path}: not valid UTF-8: {error}", file=sys.stderr)
+            failures += 1
+            continue
+        for number, message in problems:
+            print(f"{path}:{number}: {message}", file=sys.stderr)
+            failures += 1
+    print(
+        f"checked {len(arguments.files)} file(s): {failures} problem(s)",
+        file=sys.stderr,
+    )
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

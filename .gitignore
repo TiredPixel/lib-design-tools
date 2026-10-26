@@ -1,0 +1,7 @@
+/.claude/*.lock
+/.env*
+/docker-compose.*.yml
+/tmp/
+__pycache__/
+
+!/.env.example

@@ -1,0 +1,41 @@
+services:
+  # Runs bin/format, whose rewrites have to reach the host tree, which only this
+  # mount carries there. The whole tree is bound rather than file by file, since
+  # a single-file bind pins an inode and goes stale when an editor saves by
+  # rename.
+  format:
+    build:
+      context: .
+      target: dev
+    command:
+      - format
+    init: true
+    network_mode: none
+    profiles:
+      - tools
+    user: ${DC_BIND_USER:-}
+    volumes:
+      - .:/home/x/r
+      # An uninitialised submodule is an existing empty directory, so the guard
+      # is a path inside it: compose stops rather than running without it.
+      - bind:
+          create_host_path: false
+        read_only: true
+        source: ./lib/shell-common/lint
+        target: /home/x/r/lib/shell-common/lint
+        type: bind
+  # Runs bin/lint and bin/test on the tree the test stage copied: no mount, so
+  # what a run checks cannot change under it, and no network, so nothing a test
+  # page loads can come from outside the tree. init, as PID 1, reaps the
+  # Chromium processes a timeout's kill orphans, and passes make test's signals
+  # on, where bin/test as PID 1 would ignore a TERM or INT it sets no trap for.
+  test:
+    build:
+      context: .
+      target: test
+    environment:
+      - PYTEST_XDIST_AUTO_NUM_WORKERS
+    init: true
+    network_mode: none
+    profiles:
+      - tools

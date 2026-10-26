@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+#
+# Read-only counterpart to bin/format: every check here reports and fails, and
+# none of them write. Anything that rewrites a file belongs in bin/format.
+set -Eeuo pipefail
+shopt -s inherit_errexit failglob
+
+source bin/format-paths
+
+echo -e "\n=== LINT SHELL\n"
+
+mapfile -t -d '' tools_shell < <(tools_shell_files)
+
+# Named because format-paths carries no shebang and tools/ is outside the
+# content-based sweep.
+lib/shell-common/lint/shell bin/format-paths "${tools_shell[@]}"
+
+echo -e "\n=== LINT PYTHON\n"
+
+mapfile -t -d '' python < <(python_files)
+
+# Counted, so an empty set does not read as a clean one.
+echo "checking ${#python[@]} Python file(s)" >&2
+
+ruff format --check "${python[@]}"
+ruff check "${python[@]}"
+
+echo -e "\n=== LINT YAML\n"
+
+yaml_paths | lib/shell-common/lint/yaml-keys
+
+echo -e "\n=== LINT FILES\n"
+
+# Sorted, so an added setting has one place to go and a diff against a real
+# .env stays clean.
+sort -c .env.example
+
+echo -e "\n=== LINT MARKDOWN\n"
+
+mapfile -t -d '' markdown < <(markdown_files)
+
+# The README documents a consumer's paths, which live in the consumer.
+tools/markdown-lint \
+    --ignore-path 'lib/design-tools' \
+    --ignore-path 'lib/design-tools/*' \
+    "${markdown[@]}"
+
+echo -e "\n=== LINT COMMENTS\n"
+
+mapfile -t -d '' commented < <(comment_files)
+
+tools/comment-check "${commented[@]}"
+
+echo

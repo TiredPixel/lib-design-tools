@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#
+# The gate: the lint passes, then the Python tests, which cover tools/ on
+# fabricated input, rendering in headless Chromium. They run under pytest as
+# pytest.ini sets it; README.md, Testing, gives the worker count, its override
+# and how to name tests.
+set -Eeuo pipefail
+shopt -s inherit_errexit failglob
+
+tests=("$@")
+
+# xdist only warns at a count it cannot read, and runs on every CPU instead.
+if [ -n "${PYTEST_XDIST_AUTO_NUM_WORKERS+set}" ] &&
+    ! [[ "$PYTEST_XDIST_AUTO_NUM_WORKERS" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'PYTEST_XDIST_AUTO_NUM_WORKERS is %q, not a whole number of' \
+        "$PYTEST_XDIST_AUTO_NUM_WORKERS" >&2
+    printf ' at least 1\n' >&2
+    exit 1
+fi
+
+# Skipped for a targeted run: the lint covers the whole tree, so running it for
+# a handful of named tests costs far more than the tests do. make lint is the
+# standalone entry point, and CI passes no names.
+if [ ${#tests[@]} -eq 0 ]; then
+    bin/lint
+fi
+
+echo -e "\n=== TEST PYTHON\n"
+
+pytest --no-skips "${tests[@]}"
+
+echo
