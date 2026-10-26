@@ -714,6 +714,44 @@ class MainTest(unittest.TestCase):
             "checked 1 file(s): 1 problem(s)\n",
         )
 
+    def test_forbid_adds_characters_and_their_forms(self) -> None:
+        self.write("a.css", "/* ΔE × 2 `Δ` */\n")
+        self.assertEqual(self.run_main("a.css")[0], 0)
+        status, output = self.run_main(
+            "--forbid", "Δ=Delta", "--forbid", "×=x", "a.css"
+        )
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            output.splitlines(),
+            [
+                "a.css:1:4: Δ (U+0394 GREEK CAPITAL LETTER DELTA); write Delta",
+                "a.css:1:7: × (U+00D7 MULTIPLICATION SIGN); write x",
+                "checked 1 file(s): 2 problem(s)",
+            ],
+        )
+
+    def test_forbid_escapes_pattern_characters(self) -> None:
+        self.assertEqual(
+            [
+                (line, column)
+                for line, column, _ in comment_check.check(
+                    "/* a]b ^ \\ */", "css", {"]": "x", "^": "y", "\\": "z"}
+                )
+            ],
+            [(1, 5), (1, 8), (1, 10)],
+        )
+
+    def test_forbid_usage_errors(self) -> None:
+        self.write("a.css", "")
+        for value in ("Δ", "Δ=", "ΔΔ=x", "=x", EM_DASH + "=--"):
+            with self.subTest(value=value):
+                with self.assertRaises(SystemExit) as caught:
+                    self.run_main("--forbid", value, "a.css")
+                self.assertEqual(caught.exception.code, 2)
+        with self.assertRaises(SystemExit) as caught:
+            self.run_main("--forbid", "Δ=a", "--forbid", "Δ=b", "a.css")
+        self.assertEqual(caught.exception.code, 2)
+
     def test_usage_errors(self) -> None:
         self.write("a.css", "")
         self.write("notes.txt", "text\n")

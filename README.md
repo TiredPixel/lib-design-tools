@@ -46,7 +46,7 @@ git submodule add https://github.com/TiredPixel/lib-design-tools.git lib/design-
 
 A design project adds it the same way, so everything below holds for both. The submodule is cloned recursively, since the runners use this repository's own `lib/shell-common`.
 
-The repository then links the image, the services and the runners, and writes its own `bin/format-paths`. This is a design system with a preview page, its Markdown, its stylesheets and a palette; `example/` holds a working one's files to start from (*Booting the example*).
+The repository then links the image and the runners, and holds its own few files. `example/` is a minimal design system with every one of them, which `make example` boots as a repository taking this one would be (*Booting the example*), so copy its files and adapt them.
 
 `Dockerfile`, a symlink:
 
@@ -61,61 +61,14 @@ mkdir -p bin
 for runner in format lint test preview; do ln -s "../lib/design-tools/bin/$runner" "bin/$runner"; done
 ```
 
-`docker-compose.yml`, where `project_directory` resolves every path in the included files against the repository; a repository with no pages to preview leaves out `compose.preview.yml`:
+The repository's own files, as `example/` has them:
 
-```yaml
-include:
-  - path: lib/design-tools/compose.gate.yml
-    project_directory: .
-  - path: lib/design-tools/compose.preview.yml
-    project_directory: .
-```
-
-`Makefile`, whose `upgrade-pre` moves the submodule to its latest commit and its own submodules to the commits that one records; a project moves its design system there too:
-
-```make
-include lib/design-tools/design.mk
-
-upgrade-pre:
-	cd lib/design-tools && git checkout latest && git pull && git submodule update --init --recursive
-```
-
-`bin/format-paths`, sourced by every runner (*Configuring the passes*):
-
-```bash
-# shellcheck shell=bash
-
-preview_index=/preview/
-
-function palette_args {
-    printf '%s\0' src/palettes.yml --prefix x --json src/palettes.json --css src/palettes.css
-}
-
-function css_files {
-    printf '%s\0' preview/*.css src/tokens/*.css
-}
-
-function html_files {
-    printf '%s\0' preview/*.html
-}
-
-function charset_files {
-    printf '%s\0' preview/*.css src/*.css src/tokens/*.css
-}
-
-function markdown_args {
-    printf '%s\0' README.md
-}
-
-function comment_files {
-    printf '%s\0' bin/format-paths
-    charset_files
-}
-```
-
-Tests go in `test/` as `test_*.py` unittest suites, which `bin/test` runs under this repository's `pytest.ini`; a test importing `design_render` renders the repository's pages in headless Chromium.
-
-`.dockerignore` keeps `.git`, `.env` and anything local out of the copy the `test` stage takes, and must not exclude the submodule.
+- [`example/docker-compose.yml`](example/docker-compose.yml) includes the services, with `project_directory` resolving every path in them against the repository; a repository with no pages to preview leaves out `compose.preview.yml`.
+- [`example/Makefile`](example/Makefile) includes `design.mk`, and its `upgrade-pre` moves the submodule to its latest commit and its own submodules to the commits that one records; a design project moves its design system there too.
+- [`example/bin/format-paths`](example/bin/format-paths), sourced by every runner, names what each pass reads (*Configuring the passes*) and the preview's index.
+- [`example/.dockerignore`](example/.dockerignore) keeps `.git`, `.env` and anything local out of the copy the `test` stage takes, and must not exclude the submodule.
+- [`example/.env.example`](example/.env.example) holds the settings `.env` may take.
+- [`example/test/test_preview.py`](example/test/test_preview.py) is a test in `test/`, a `test_*.py` unittest suite, which `bin/test` runs under this repository's `pytest.ini`; importing `design_render`, it renders the repository's page in headless Chromium.
 
 ### Configuring the passes
 
@@ -132,7 +85,7 @@ Every pass in `bin/format` and `bin/lint` runs where `bin/format-paths` defines 
 - `lfs_args` – `tools/lfs-check`'s arguments.
 - `references_args` – `tools/references-check`'s arguments.
 - `markdown_args` – `tools/markdown-lint`'s arguments.
-- `comment_files` – `tools/comment-check`.
+- `comment_files` – `tools/comment-check`, with the options `comment_args` prints where it is defined, such as `--forbid` for a character the repository's own conventions rule out.
 
 `preview_index`, a variable, is the path `/` redirects to in the preview. Lint also checks that `.env.example`, where there is one, is sorted.
 

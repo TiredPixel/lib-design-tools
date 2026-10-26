@@ -214,6 +214,16 @@ class CheckingPassTest(Consumer):
         self.write("a.py", "# a -- b\n")
         self.assertPasses(self.run_bin("lint"))
 
+    def test_comment_args(self):
+        self.write("a.py", "# ΔE\n")
+        self.paths("function comment_files { printf '%s\\0' a.py; }\n")
+        self.assertPasses(self.run_bin("lint"))
+        self.paths(
+            "function comment_files { printf '%s\\0' a.py; }\n"
+            "function comment_args { printf '%s\\0' --forbid 'Δ=Delta'; }\n"
+        )
+        self.assertFails(self.run_bin("lint"), "write Delta")
+
 
 class TestRunnerTest(Consumer):
     def setUp(self):

@@ -120,8 +120,12 @@ fi
 if defines comment_files; then
     echo -e "\n=== LINT COMMENTS\n"
 
+    options=()
+    if defines comment_args; then
+        read_set comment_args options
+    fi
     read_set comment_files commented
-    "$tools/comment-check" "${commented[@]}"
+    "$tools/comment-check" "${options[@]}" "${commented[@]}"
 fi
 
 echo

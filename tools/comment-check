@@ -7,8 +7,9 @@ replaces it: U+2013 EN DASH (``-`` closed up in a range, ``--`` otherwise), U+20
 DASH (``--``), U+2026 HORIZONTAL ELLIPSIS (``...``), U+2018 and U+2019 single quotation
 marks (``'``), U+201C and U+201D double quotation marks (``"``), the arrows U+2190 to
 U+21FF (``<-``, ``<->`` or ``->`` by direction), and U+2264 and U+2265 (``<=`` and
-``>=``). Every other character passes, so letters keep their diacritics and their
-scripts.
+``>=``). ``--forbid CHAR=REPLACEMENT``, repeatable, forbids a further character and
+names its typewriter form, for a repository whose own conventions go further. Every
+other character passes, so letters keep their diacritics and their scripts.
 
 Languages. A file's language comes from its suffix: ``.py``; ``.css``; ``.js``, ``.mjs``
 and ``.cjs``; ``.yml`` and ``.yaml``; ``.sh`` and ``.bash``. A file with no such suffix
@@ -59,6 +60,7 @@ import re
 import sys
 import tokenize
 import unicodedata
+from collections.abc import Mapping
 
 SUFFIXES = {
     ".bash": "shell",
@@ -91,9 +93,7 @@ TYPEWRITER = {
 
 EN_DASH = "\u2013"
 
-_FORBIDDEN = re.compile(
-    "[\u2013\u2014\u2018\u2019\u201c\u201d\u2026\u2190-\u21ff\u2264\u2265]"
-)
+_FORBIDDEN = "\u2013\u2014\u2018\u2019\u201c\u201d\u2026\u2190-\u21ff\u2264\u2265"
 _PYTHON = re.compile(r"python(?:3(?:\.\d+)?)?")
 _SHELLCHECK_DIRECTIVE = re.compile(r"#\s*shellcheck\s.*\bshell=(?:bash|sh)\b")
 _BACKTICKS = re.compile(r"`+")
@@ -128,9 +128,14 @@ class Text:
     spans: bool
 
 
-def typewriter(source: str, offset: int) -> str:
-    """Return the typewriter form of the forbidden character at ``offset``."""
+def typewriter(source: str, offset: int, extra: Mapping[str, str] | None = None) -> str:
+    """Return the typewriter form of the forbidden character at ``offset``.
+
+    ``extra`` maps each character forbidden by ``--forbid`` to its replacement.
+    """
     char = source[offset]
+    if extra and char in extra:
+        return extra[char]
     if char == EN_DASH:
         before = source[offset - 1] if offset else " "
         after = source[offset + 1] if offset + 1 < len(source) else " "
@@ -1146,16 +1151,22 @@ def language(path: pathlib.Path) -> str | None:
     return None
 
 
-def check(source: str, kind: str) -> list[tuple[int, int, str]]:
+def check(
+    source: str, kind: str, extra: Mapping[str, str] | None = None
+) -> list[tuple[int, int, str]]:
     """Return ``(line, column, message)`` for each violation in ``source``.
 
+    ``extra`` maps each character forbidden by ``--forbid`` to its replacement.
     Raises LexError where the lexer for ``kind`` cannot read the source.
     """
+    forbidden = re.compile(
+        "[" + _FORBIDDEN + "".join(re.escape(char) for char in extra or {}) + "]"
+    )
     offsets = set()
     for text in LEXERS[kind](source):
         segment = source[text.start : text.end]
         exempt = code_spans(segment) if text.spans else []
-        for match in _FORBIDDEN.finditer(segment):
+        for match in forbidden.finditer(segment):
             index = match.start()
             if not any(start <= index < end for start, end in exempt):
                 offsets.add(text.start + index)
@@ -1165,7 +1176,8 @@ def check(source: str, kind: str) -> list[tuple[int, int, str]]:
         char = source[offset]
         name = unicodedata.name(char)
         message = (
-            f"{char} (U+{ord(char):04X} {name}); write {typewriter(source, offset)}"
+            f"{char} (U+{ord(char):04X} {name}); "
+            f"write {typewriter(source, offset, extra)}"
         )
         problems.append((line, column, message))
     return problems
@@ -1184,8 +1196,24 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
             "Fail on typographic punctuation in comments, docstrings and usage text."
         ),
     )
+    parser.add_argument(
+        "--forbid",
+        action="append",
+        default=[],
+        metavar="CHAR=REPLACEMENT",
+        help="forbid CHAR as well, naming REPLACEMENT as its typewriter form; repeatable",
+    )
     parser.add_argument("files", nargs="+", type=pathlib.Path, metavar="FILE")
     arguments = parser.parse_args(argv)
+    default = re.compile("[" + _FORBIDDEN + "]")
+    arguments.extra = {}
+    for value in arguments.forbid:
+        char, equals, replacement = value[:1], value[1:2], value[2:]
+        if equals != "=" or not replacement:
+            parser.error(f"--forbid {value!r} is not CHAR=REPLACEMENT")
+        if default.match(char) or char in arguments.extra:
+            parser.error(f"--forbid {value!r}: {char} is already forbidden")
+        arguments.extra[char] = replacement
     for path in arguments.files:
         if not path.is_file():
             parser.error(f"{path} is not a file")
@@ -1206,7 +1234,7 @@ def main(argv: list[str] | None = None) -> int:
             unreadable += 1
             continue
         try:
-            found = check(source, language(path))
+            found = check(source, language(path), arguments.extra)
         except LexError as error:
             line, _ = position(source, error.offset)
             print(f"{path}:{line}: cannot lex: {error.message}", file=sys.stderr)
