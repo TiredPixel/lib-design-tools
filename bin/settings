@@ -7,7 +7,7 @@
 # A proposed workflow waits in .github/workflows.new/ until it is moved into
 # .github/workflows/, so either directory may be empty or absent.
 function yaml_files {
-    printf '%s\0' compose.design.yml docker-compose.yml
+    printf '%s\0' docker-compose.yml
     find .github -path '.github/workflows*/*.yml' -print0 | sort -z
 }
 

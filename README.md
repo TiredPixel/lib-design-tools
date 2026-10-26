@@ -64,11 +64,11 @@ for runner in format lint test preview; do ln -s "../lib/design-tools/bin/$runne
 
 ### The services
 
-`compose.design.yml` holds the `format`, `test` and `preview` services, which run the runners in the image. A repository's `docker-compose.yml` includes it, with `project_directory` resolving every path in it against the repository:
+This repository's `docker-compose.yml` holds the `format`, `test` and `preview` services, which run the runners in the image. A repository's own `docker-compose.yml` includes it, with `project_directory` resolving every path in it against that repository:
 
 ```yaml
 include:
-  - path: lib/design-tools/compose.design.yml
+  - path: lib/design-tools/docker-compose.yml
     project_directory: .
 ```
 
