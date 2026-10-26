@@ -34,6 +34,11 @@ jobs:
       - name: Test
         run: |
           make test
+      # The consumer's route through Docker, which the Test step's container
+      # cannot reach: a symlinked Dockerfile, included services and design.mk.
+      - name: Boot example
+        run: |
+          make example
     # Bounded because GitHub's default runs to hours. Generous, as the first
     # run on a branch with no cached image yet builds from cold.
     timeout-minutes: 15

@@ -1,3 +1,5 @@
 include:
   - path: compose.gate.yml
     project_directory: .
+  - path: compose.preview.yml
+    project_directory: .

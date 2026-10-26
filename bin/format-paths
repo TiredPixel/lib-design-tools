@@ -3,6 +3,11 @@
 # This repository's settings for the runners in bin/, which it uses as any
 # consumer does: each function names what one pass reads, NUL-separated.
 
+# The preview shows the example design system (README.md, Booting the example).
+# Read only by the runners that source this file, so it looks unused here.
+# shellcheck disable=SC2034
+preview_index=/example/preview/
+
 # A proposed workflow waits in .github/workflows.new/ until it is moved into
 # .github/workflows/, so either directory may be empty or absent.
 function yaml_files {

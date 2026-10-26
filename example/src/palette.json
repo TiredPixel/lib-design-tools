@@ -1,0 +1,12 @@
+{
+  "$comment": "Generated from src/palette.yml, in its key order: edit that file, never this one.",
+  "text": [
+    "#1b1b1f",
+    "#4a4a55"
+  ],
+  "surface": "#faf8f5",
+  "accent": {
+    "warm": "#c2410c",
+    "cool": "#0e7490"
+  }
+}

@@ -46,7 +46,7 @@ git submodule add https://github.com/TiredPixel/lib-design-tools.git lib/design-
 
 A design project adds it the same way, so everything below holds for both. The submodule is cloned recursively, since the runners use this repository's own `lib/shell-common`.
 
-The repository then links the image, the services and the runners, and writes its own `bin/format-paths`. This is a design system with a preview page, its Markdown, its stylesheets and a palette.
+The repository then links the image, the services and the runners, and writes its own `bin/format-paths`. This is a design system with a preview page, its Markdown, its stylesheets and a palette; `example/` holds a working one's files to start from (*Booting the example*).
 
 `Dockerfile`, a symlink:
 
@@ -184,6 +184,20 @@ make test TESTS='test/test_runners.py'
 
 ```sh
 make lint
+```
+
+### Booting the example
+
+`example/` holds a minimal design system's own files: a palette, a preview page that renders it, a render test, and its `bin/format-paths`, `Makefile`, `docker-compose.yml`, `.dockerignore` and `.env.example`. `make example` runs on the host and assembles it under `tmp/` with a copy of this tree as its `lib/design-tools`, makes the links *Setting up a repository* gives, runs its `make build` and `make test`, and fetches its page from the preview, removing everything it assembled afterwards:
+
+```sh
+make example
+```
+
+At this repository's root, `docker compose up` serves the tree as *Previewing* describes, with `/` redirecting to the example's page, so an edit to `example/` shows on reload:
+
+```sh
+docker compose up
 ```
 
 ## Formatting

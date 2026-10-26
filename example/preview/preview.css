@@ -1,0 +1,23 @@
+@charset "UTF-8";
+body {
+  margin: 2rem;
+  background: var(--ex-surface);
+  color: var(--ex-text-1);
+  font-family: system-ui, sans-serif;
+}
+#swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 0;
+  list-style: none;
+}
+.swatch {
+  width: 8rem;
+  padding-top: 6rem;
+  border: 1px solid var(--ex-text-2);
+  font-size: 0.875rem;
+}
+.load-error {
+  color: var(--ex-accent-warm);
+}
