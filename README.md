@@ -64,13 +64,13 @@ for runner in format lint test preview; do ln -s "../lib/design-tools/bin/$runne
 
 ### The services
 
-This repository's `docker-compose.yml` holds the `format`, `test` and `preview` services, which run the runners in the image. A repository's own `docker-compose.yml` includes it, with `project_directory` resolving every path in it against that repository:
+This repository's `docker-compose.yml` holds the `format`, `test` and `preview` services, which run the runners in the image. A repository links it, and Compose resolves every path in it, and reads `.env`, against the repository holding the link:
 
-```yaml
-include:
-  - path: lib/design-tools/docker-compose.yml
-    project_directory: .
+```sh
+ln -s lib/design-tools/docker-compose.yml docker-compose.yml
 ```
+
+A repository whose YAML pass would cover `docker-compose.yml` leaves the link out of `yaml_files`, since `bin/format` would rewrite this repository's file through it.
 
 The test stage copies the whole tree, so the repository's `.dockerignore` keeps `.git`, `.env` and anything local out of it, and must not exclude the submodule.
 

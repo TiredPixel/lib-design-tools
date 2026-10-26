@@ -1,7 +1,7 @@
-# The services, which this repository uses itself and another repository
-# includes from its own docker-compose.yml with project_directory: ., so that
-# every path here is that repository's: its tree, and its Dockerfile, a symlink
-# to this one's.
+# The services, which this repository uses itself and another repository links
+# as its own docker-compose.yml. Compose resolves paths against the folder
+# holding the link, so every path here is that repository's: its tree, and its
+# Dockerfile, a link to this one's.
 services:
   # Runs bin/format, whose rewrites have to reach the host tree, which only this
   # mount carries there. The whole tree is bound rather than file by file, since
