@@ -1,4 +1,3 @@
 [submodule "lib/shell-common"]
 	path = lib/shell-common
 	url = https://github.com/TiredPixel/lib-shell-common.git
-	branch = latest
