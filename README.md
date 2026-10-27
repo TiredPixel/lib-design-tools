@@ -26,7 +26,7 @@ Each command prints its usage with `--help`.
 - `tools/palette-generate` – the JSON and the CSS from a palette YAML, one custom property per colour; the check option compares them with the files instead of writing. A property is named `--`, the given prefix and a hyphen, then the full YAML key path, lowercased, with `_` written as `-` and list items numbered from 1, so `greys: {warm: [a, b]}` with prefix `x` gives `--x-greys-warm-1` and `--x-greys-warm-2`; a key that would put anything but letters, digits, hyphens or non-ASCII characters in a name fails the run.
 - `tools/references-check` – every local `href`, `src` and `url()` in HTML and CSS resolves under the root. Options refuse anything external a page loads, or require `integrity` and `crossorigin` on every external stylesheet and script.
 - `tools/render-check` – each page loaded in headless Chromium, failing on an uncaught error, an unhandled rejection, a `console.error`, a failed load, or an element matching the error marker.
-- `tools/lfs-check` – no file matching a `filter=lfs` pattern in the attributes file is an LFS pointer.
+- `tools/lfs-check` – no file under the folders named that matches a `filter=lfs` pattern in the attributes file named with them is an LFS pointer.
 - `tools/preview-serve` – the tree as it is on disk, for previewing while editing: nothing cached, dotfiles refused, directories listed, and `/` redirected to the index path. For development only.
 
 Importable from a repository's own Python tests, with `tools/` on the path, as `bin/test` puts it:

@@ -185,6 +185,14 @@ class PaletteGenerateTest(Workspace):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("usage:", result.stderr)
 
+    def test_help_prints_usage_and_succeeds(self):
+        for flag in ("--help", "-h"):
+            with self.subTest(flag=flag):
+                result = run("palette-generate", "p.yml", flag, cwd=self.dir)
+                self.assertEqual(result.returncode, 0)
+                self.assertTrue(result.stdout.startswith("usage: palette-generate"))
+                self.assertEqual(result.stderr, "")
+
 
 class LfsCheckTest(Workspace):
     ATTRIBUTES = """
@@ -238,11 +246,44 @@ class LfsCheckTest(Workspace):
         self.assertEqual(result.returncode, 1)
         self.assertIn("no such file", result.stderr)
 
+    def test_each_group_checks_its_folders_against_its_own_patterns(self):
+        self.write("own.gitattributes", "*.png filter=lfs -text\n")
+        self.write("sub/.gitattributes", "*.ttf filter=lfs -text\n")
+        self.write("a/x.png", self.POINTER)
+        self.write("sub/y.ttf", self.POINTER)
+        self.write("sub/z.png", self.POINTER)
+        result = run(
+            "lfs-check",
+            *("--attributes", "own.gitattributes", "a"),
+            *("--attributes", "sub/.gitattributes", "sub"),
+            cwd=self.dir,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("a/x.png", result.stderr)
+        self.assertIn("sub/y.ttf", result.stderr)
+        self.assertNotIn("sub/z.png", result.stderr)
+        self.assertIn("checked 2 LFS file(s)", result.stderr)
+
     def test_usage_errors(self):
-        for args in ([], ["--attributes", "x"], ["x", "y", "z"]):
+        for args in (
+            [],
+            ["--attributes", "x"],
+            ["x", "y", "z"],
+            ["--attributes", "x", "--attributes", "y", "d"],
+            ["--attributes", "x", "d", "--attributes", "y"],
+        ):
             with self.subTest(args=args):
                 result = run("lfs-check", *args, cwd=self.dir)
                 self.assertEqual(result.returncode, 2)
+                self.assertIn("usage:", result.stderr)
+
+    def test_help_prints_usage_and_succeeds(self):
+        for flag in ("--help", "-h"):
+            with self.subTest(flag=flag):
+                result = run("lfs-check", flag, cwd=self.dir)
+                self.assertEqual(result.returncode, 0)
+                self.assertTrue(result.stdout.startswith("usage: lfs-check"))
+                self.assertEqual(result.stderr, "")
 
 
 if __name__ == "__main__":

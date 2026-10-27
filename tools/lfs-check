@@ -5,61 +5,91 @@
 # small text file where a font or an image should be, and a browser fails on it
 # quietly.
 #
-#   lfs-check --attributes FILE DIR...
+#   lfs-check --attributes FILE DIR... [--attributes FILE DIR...]...
 #
-# The patterns are the filter=lfs lines of FILE, read as basename globs, which
-# is how every pattern holding no slash matches in .gitattributes.
+# Each group checks its folders against its own attributes file, so a
+# repository can check its own files and a submodule's in one run. The patterns
+# are the filter=lfs lines of FILE, read as basename globs, which is how every
+# pattern holding no slash matches in .gitattributes.
 set -Eeuo pipefail
 shopt -s inherit_errexit failglob
 
+synopsis="usage: lfs-check --attributes FILE DIR... [--attributes FILE DIR...]..."
+
 usage() {
-    echo "usage: lfs-check --attributes FILE DIR..." >&2
+    echo "$synopsis" >&2
     exit 2
 }
+
+if [ "${1:-}" = --help ] || [ "${1:-}" = -h ]; then
+    echo "$synopsis"
+    exit 0
+fi
 
 die() {
     echo "lfs-check: $*" >&2
     exit 1
 }
 
-if [ $# -lt 3 ] || [ "$1" != --attributes ]; then
-    usage
-fi
-attributes=$2
-shift 2
-
-[ -f "$attributes" ] || die "$attributes: no such file"
-
-patterns=()
-while read -r pattern rest; do
-    case " $rest " in
-        *" filter=lfs "*) ;;
-        *) continue ;;
-    esac
-    case $pattern in
-        */*) die "$attributes: '$pattern' holds a slash, which this check does not read" ;;
-    esac
-    patterns+=("$pattern")
-done < "$attributes"
-
-[ ${#patterns[@]} -gt 0 ] || die "$attributes names no filter=lfs pattern"
-
-names=()
-for pattern in "${patterns[@]}"; do
-    names+=(-o -name "$pattern")
+# Every group is read before any is checked, so a usage error stops the run
+# before it reports anything. Group i's folders are dirs[starts[i]] onwards,
+# lengths[i] of them.
+attributes=()
+starts=()
+lengths=()
+dirs=()
+while [ $# -gt 0 ]; do
+    if [ "$1" != --attributes ] || [ $# -lt 3 ]; then
+        usage
+    fi
+    attributes+=("$2")
+    starts+=("${#dirs[@]}")
+    shift 2
+    while [ $# -gt 0 ] && [ "$1" != --attributes ]; do
+        dirs+=("$1")
+        shift
+    done
+    lengths+=($((${#dirs[@]} - ${starts[-1]})))
+    [ "${lengths[-1]}" -gt 0 ] || usage
 done
+[ ${#attributes[@]} -gt 0 ] || usage
 
 pointer='version https://git-lfs.github.com/spec/'
 count=0
 status=0
 
-while IFS= read -r -d '' f; do
-    count=$((count + 1))
-    if cmp -s -n "${#pointer}" -- "$f" <(printf '%s' "$pointer"); then
-        echo "$f: an LFS pointer, not the file it stands for (git lfs pull)" >&2
-        status=1
-    fi
-done < <(find "$@" -name .git -prune -o -type f \( "${names[@]:1}" \) -print0)
+for i in "${!attributes[@]}"; do
+    file=${attributes[$i]}
+    [ -f "$file" ] || die "$file: no such file"
+
+    patterns=()
+    while read -r pattern rest; do
+        case " $rest " in
+            *" filter=lfs "*) ;;
+            *) continue ;;
+        esac
+        case $pattern in
+            */*) die "$file: '$pattern' holds a slash, which this check does not read" ;;
+        esac
+        patterns+=("$pattern")
+    done < "$file"
+
+    [ ${#patterns[@]} -gt 0 ] || die "$file names no filter=lfs pattern"
+
+    names=()
+    for pattern in "${patterns[@]}"; do
+        names+=(-o -name "$pattern")
+    done
+
+    while IFS= read -r -d '' f; do
+        count=$((count + 1))
+        if cmp -s -n "${#pointer}" -- "$f" <(printf '%s' "$pointer"); then
+            echo "$f: an LFS pointer, not the file it stands for (git lfs pull)" >&2
+            status=1
+        fi
+    done < <(find "${dirs[@]:${starts[$i]}:${lengths[$i]}}" -name .git -prune -o \
+        -type f \( "${names[@]:1}" \) -print0)
+done
 
 echo "checked $count LFS file(s)" >&2
 

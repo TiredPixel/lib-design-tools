@@ -19,8 +19,10 @@
 set -Eeuo pipefail
 shopt -s inherit_errexit failglob
 
+synopsis="usage: palette-generate YAML --prefix P --json OUT --css OUT [--check]"
+
 usage() {
-    echo "usage: palette-generate YAML --prefix P --json OUT --css OUT [--check]" >&2
+    echo "$synopsis" >&2
     exit 2
 }
 
@@ -41,6 +43,7 @@ while [ $# -gt 0 ]; do
         --json) [ $# -ge 2 ] || usage; json=$2; shift 2 ;;
         --css) [ $# -ge 2 ] || usage; css=$2; shift 2 ;;
         --check) check=true; shift ;;
+        --help | -h) echo "$synopsis"; exit 0 ;;
         -*) usage ;;
         *) [ -z "$yaml" ] || usage; yaml=$1; shift ;;
     esac
@@ -83,8 +86,7 @@ collisions=$(cut -d':' -f1 "$out/properties" | sort | uniq -d)
 
 {
     echo '@charset "UTF-8";'
-    echo "/* Generated from $yaml, in its key order, where every colour's"
-    echo "   reasoning lives: edit that file, never this one. */"
+    echo "/* Generated from $yaml, in its key order: edit that file, never this one. */"
     echo ':root {'
     cat "$out/properties"
     echo '}'

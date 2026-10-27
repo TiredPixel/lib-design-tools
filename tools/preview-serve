@@ -93,9 +93,13 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
         prog="preview-serve",
         description="Serve a tree as it is on disk, for previewing it.",
     )
-    parser.add_argument("--root", type=pathlib.Path, required=True)
-    parser.add_argument("--address", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument(
+        "--root", type=pathlib.Path, required=True, help="the tree to serve"
+    )
+    parser.add_argument(
+        "--address", default="127.0.0.1", help="the address to listen on"
+    )
+    parser.add_argument("--port", type=int, default=8080, help="the port to listen on")
     parser.add_argument(
         "--index", required=True, help="the path / redirects to, such as /preview/"
     )
