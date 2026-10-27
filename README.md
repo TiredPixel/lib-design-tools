@@ -41,13 +41,14 @@ A repository takes this one at `lib/design-tools`, cloned recursively, since the
 
 ```sh
 git submodule add https://github.com/TiredPixel/lib-design-tools.git lib/design-tools
+git submodule update --init --recursive lib/design-tools
 ```
 
 Each part below is taken on its own. A tool can be called from anywhere, the image needs only its link, and only the parts that run commands in the image depend on others: the services run the runners, and the make targets run the services.
 
 ### The image
 
-`dev` is the toolchain the tools need, headless Chromium included; `test` adds a copy of the repository's tree (*Building the images*). A repository builds it through a `Dockerfile` that links to this one:
+A repository builds it, as *Building the images* describes, through a `Dockerfile` that links to this one:
 
 ```sh
 ln -s lib/design-tools/Dockerfile Dockerfile
@@ -87,6 +88,20 @@ upgrade-pre:
 
 `make upgrade` runs `upgrade-pre`, then builds, formats and tests, so a change that breaks the repository shows before the bump is committed.
 
+`make test` runs `bin/test` in the `test` service, which *Settings* describes; named tests are pytest's arguments, paths from the repository's root:
+
+```sh
+make test TESTS='test/<file>.py'
+```
+
+`make lint` runs the lint alone:
+
+```sh
+make lint
+```
+
+`PYTEST_XDIST_AUTO_NUM_WORKERS` in `.env` sets the worker count for pytest-xdist's `-n auto`, where the repository's pytest configuration uses it.
+
 ### Settings
 
 `bin/settings` is the repository's own, sourced by every runner. Each pass runs only where it defines what the pass reads, so a repository with an empty `bin/settings` gets no pass at all. Each is a function printing NUL-separated paths or arguments; a defined one that fails, or that names no files, fails the run.
@@ -109,7 +124,7 @@ What `bin/lint` checks only:
 
 What `bin/test` runs, after the lint unless tests are named:
 
-- `pytest_args` – pytest's options, which may be none, for the repository's own tests under its own pytest configuration; `--no-skips` fails a run in which a test skipped.
+- `pytest_args` – pytest's options, which may be none, for the repository's own tests under its own pytest configuration; `--no-skips` fails a run in which a test skipped. Unless tests are named, `bin/test` passes pytest no paths, so a configuration that does not confine collection, as `testpaths` does, also collects this repository's own tests from `lib/design-tools`.
 
 And `bin/preview`:
 
@@ -162,19 +177,9 @@ docker compose port preview 8080
 make format test
 ```
 
-The tests run under pytest, side by side on one worker for each CPU the container may use; `PYTEST_XDIST_AUTO_NUM_WORKERS` in `.env` runs fewer. A test that skips fails the run: the image carries everything the tests look for, so a skip means something is missing.
+The tests run under pytest, side by side on one worker for each CPU the container may use, unless `.env` sets the worker count (*The make targets*). A test that skips fails the run: the image carries everything the tests look for, so a skip means something is missing.
 
-Named tests skip the lint and run alone; they are pytest's arguments:
-
-```sh
-make test TESTS='test/test_runners.py'
-```
-
-`make lint` runs the lint alone:
-
-```sh
-make lint
-```
+*The make targets* gives how to name tests and run the lint alone.
 
 ## Formatting
 

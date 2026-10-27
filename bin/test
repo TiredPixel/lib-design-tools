@@ -3,8 +3,8 @@
 # The gate: the lint passes, then the repository's own Python tests, under its
 # own pytest configuration, with tools/ on the path for the importable harness
 # and the --no-skips plugin. The tests run where bin/settings defines
-# pytest_args, the options they take. README.md, Testing, gives the worker count
-# and how to name tests.
+# pytest_args, the options they take. README.md, The make targets, gives the
+# worker count and how to name tests.
 #
 # read_set assigns each array through a nameref, which ShellCheck cannot follow.
 # shellcheck disable=SC2154

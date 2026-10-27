@@ -17,8 +17,7 @@ def load(name: str) -> types.ModuleType:
     loader = importlib.machinery.SourceFileLoader(name.replace("-", "_"), str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
-    # Registered before execution, as an import would, since dataclasses look their
-    # defining module up in sys.modules.
+    # Registered before execution, as an import would.
     sys.modules[loader.name] = module
     loader.exec_module(module)
     return module
