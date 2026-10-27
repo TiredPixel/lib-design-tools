@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+#
+# Writing counterpart to bin/lint: every pass here rewrites, and bin/lint checks
+# the same path sets for drift afterwards.
+#
+# ShellCheck sees no assignment for the names bin/runner sets, since it does not
+# follow bin/runner, nor for the arrays read_set and the readers built on it
+# assign through a nameref, which it cannot follow.
+# shellcheck disable=SC2154
+set -Eeuo pipefail
+shopt -s inherit_errexit failglob
+
+# Not followed, since a repository linking this runner has no bin/runner beside
+# the link for ShellCheck to find; bin/runner is linted on its own.
+# shellcheck source=/dev/null
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
+
+if defines palette_args; then
+    echo -e "\n=== FORMAT PALETTE\n"
+
+    read_set palette_args palette
+    "$tools/palette-generate" "${palette[@]}"
+fi
+
+if defines shell_files; then
+    echo -e "\n=== FORMAT SHELL\n"
+
+    read_files shell_files shell
+    echo "formatting ${#shell[@]} shell file(s)" >&2
+    shfmt "${shfmt_args[@]}" -w "${shell[@]}"
+fi
+
+if defines python_files; then
+    echo -e "\n=== FORMAT PYTHON\n"
+
+    read_files python_files python
+    echo "formatting ${#python[@]} Python file(s)" >&2
+    ruff check --fix "${python[@]}"
+    ruff format "${python[@]}"
+fi
+
+if defines yaml_files; then
+    echo -e "\n=== FORMAT YAML\n"
+
+    read_files yaml_files yaml
+    echo "formatting ${#yaml[@]} YAML file(s)" >&2
+    # -P, since yq otherwise keeps each value's flow or block style and quoting,
+    # so the same data could pass in several layouts; jq gives JSON one layout
+    # by default.
+    for f in "${yaml[@]}"; do
+        yq -i -P 'sort_keys(..)' "$f"
+    done
+fi
+
+if defines json_files; then
+    echo -e "\n=== FORMAT JSON\n"
+
+    read_files json_files json
+    echo "formatting ${#json[@]} JSON file(s)" >&2
+    # Captured before writing, since redirecting jq's output to the file it
+    # reads would truncate it before reading.
+    for f in "${json[@]}"; do
+        formatted=$(jq "${jq_args[@]}" "$f")
+        printf '%s\n' "$formatted" >"$f"
+    done
+fi
+
+if defines js_files; then
+    echo -e "\n=== FORMAT JAVASCRIPT\n"
+
+    read_files js_files js
+    echo "formatting ${#js[@]} JavaScript file(s)" >&2
+    semistandard --fix "${js[@]}"
+fi
+
+if defines css_files || defines html_files; then
+    echo -e "\n=== FORMAT CSS AND HTML\n"
+
+    read_prettier_files prettied
+    echo "formatting ${#prettied[@]} CSS and HTML file(s)" >&2
+    prettier --write "${prettied[@]}"
+fi
+
+echo

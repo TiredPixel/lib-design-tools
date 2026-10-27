@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Fail unless every named page renders in headless Chromium without errors.
+
+A page fails when it records a failed resource load, an uncaught error, an unhandled
+rejection or a console.error call, when an element in its rendered DOM matches the error
+marker, or when Chromium fails or times out on it.
+
+Exit status: 0 when every page is clean, 1 when any page fails, 2 on a usage error or
+when Chromium cannot be found.
+"""
+
+from __future__ import annotations
+
+import argparse
+import pathlib
+import shutil
+import sys
+
+import design_render
+
+
+def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="render-check",
+        description="Render pages in headless Chromium and fail on any error.",
+    )
+    parser.add_argument(
+        "--root",
+        required=True,
+        type=pathlib.Path,
+        help="directory served as the site root; every page must be inside it",
+    )
+    parser.add_argument(
+        "--error-marker",
+        metavar="SELECTOR",
+        help="class selector, such as .load-error, whose presence fails a page",
+    )
+    parser.add_argument(
+        "--chromium",
+        default=design_render.DEFAULT_CHROMIUM,
+        help="Chromium executable (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--budget-ms",
+        type=int,
+        default=design_render.DEFAULT_BUDGET_MS,
+        help="virtual time budget per page, in ms (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--timeout-s",
+        type=float,
+        default=design_render.DEFAULT_TIMEOUT_S,
+        help="wall-clock limit per page, in seconds (default: %(default)s)",
+    )
+    parser.add_argument("files", nargs="+", type=pathlib.Path, metavar="FILE")
+    arguments = parser.parse_args(argv)
+
+    if arguments.error_marker is not None:
+        try:
+            arguments.marker_class = design_render.parse_class_selector(
+                arguments.error_marker
+            )
+        except ValueError as error:
+            parser.error(str(error))
+    else:
+        arguments.marker_class = None
+    if arguments.budget_ms <= 0 or arguments.timeout_s <= 0:
+        parser.error("--budget-ms and --timeout-s must be positive")
+    if not arguments.root.is_dir():
+        parser.error(f"--root {arguments.root} is not a directory")
+    for path in arguments.files:
+        if not path.is_file():
+            parser.error(f"{path} is not a file")
+        try:
+            design_render.served_path(arguments.root, path)
+        except ValueError:
+            parser.error(f"{path} is not inside --root {arguments.root}")
+    if shutil.which(arguments.chromium) is None:
+        parser.error(f"cannot find Chromium executable {arguments.chromium!r}")
+    return arguments
+
+
+def check_page(
+    base_url: str, page: pathlib.Path, arguments: argparse.Namespace
+) -> list[str]:
+    """Return the problems found rendering ``page``, one message each."""
+    url = design_render.page_url(base_url, arguments.root, page)
+    try:
+        result = design_render.render_url(
+            url,
+            chromium=arguments.chromium,
+            budget_ms=arguments.budget_ms,
+            timeout_s=arguments.timeout_s,
+        )
+    except design_render.RenderError as error:
+        return [str(error)]
+    problems = [design_render.describe_error(entry) for entry in result.errors]
+    if arguments.marker_class is not None:
+        for tag, line in design_render.find_marked(result.dom, arguments.marker_class):
+            problems.append(
+                f"rendered <{tag}> matching {arguments.error_marker} "
+                f"(rendered DOM line {line})"
+            )
+    return problems
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parse_arguments(argv)
+    failures = 0
+    with design_render.serve(arguments.root) as base_url:
+        for page in arguments.files:
+            for problem in check_page(base_url, page, arguments):
+                print(f"{page}: {problem}", file=sys.stderr)
+                failures += 1
+    print(
+        f"checked {len(arguments.files)} page(s): {failures} problem(s)",
+        file=sys.stderr,
+    )
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

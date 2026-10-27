@@ -1,0 +1,74 @@
+# shellcheck shell=bash
+#
+# Sourced by bin/format, bin/lint, bin/test and bin/preview, which run from the
+# root of the repository they serve. That repository's bin/ holds symlinks to
+# them, so this one is found by resolving the link, and its own bin/settings
+# turns each pass on by defining what the pass reads (README.md, Settings).
+# Nothing runs that bin/settings does not name.
+#
+# Read only by the runners that source this one, so they look unused here.
+# shellcheck disable=SC2034
+
+design_tools=$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")
+tools=$design_tools/tools
+
+source bin/settings
+
+# Read by bin/format and bin/lint alike, so the two cannot disagree.
+jq_args=(--sort-keys .)
+# Indented by 4 spaces rather than shfmt's default tab, since spaces are the
+# common practice for shell.
+shfmt_args=(-i 4)
+
+function defines {
+    declare -F "$1" >/dev/null || declare -p "$1" >/dev/null 2>&1
+}
+
+# Reads the NUL-separated output of the function named by $1 into the array
+# named by $2. The function's status is checked through wait, since a process
+# substitution's own failure would otherwise pass unseen. An empty result fails
+# too, unless $3 is "may-be-empty": a set of files that is defined and names
+# nothing is a mistake, never a clean pass.
+function read_set {
+    local -n into=$2
+
+    mapfile -t -d '' into < <("$1")
+    wait $! || {
+        echo "bin/settings: $1 failed" >&2
+        exit 1
+    }
+    if [ ${#into[@]} -eq 0 ] && [ "${3:-}" != may-be-empty ]; then
+        echo "bin/settings: $1 names nothing" >&2
+        exit 1
+    fi
+}
+
+# read_set for a set of file names, which the passes put after each tool's
+# options: a name starting with a dash is given as ./-name, so no tool reads it
+# as an option.
+function read_files {
+    local -n read_files_into=$2
+    local i
+
+    read_set "$1" "$2"
+    for i in "${!read_files_into[@]}"; do
+        if [[ ${read_files_into[$i]} == -* ]]; then
+            read_files_into[i]=./${read_files_into[$i]}
+        fi
+    done
+}
+
+# Reads whichever of css_files and html_files are defined into the one array
+# named by $1, since Prettier takes both in one run.
+function read_prettier_files {
+    local -n read_prettier_into=$1
+    local set files
+
+    read_prettier_into=()
+    for set in css_files html_files; do
+        if defines "$set"; then
+            read_files "$set" files
+            read_prettier_into+=("${files[@]}")
+        fi
+    done
+}

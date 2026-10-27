@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+#
+# The gate: the lint passes, then the repository's own Python tests, under its
+# own pytest configuration, with tools/ on the path for the importable harness
+# and the --no-skips plugin. The tests run where bin/settings defines
+# pytest_args, the options they take. README.md, The make targets, gives the
+# worker count and how to name tests.
+#
+# ShellCheck sees no assignment for the names bin/runner sets, since it does not
+# follow bin/runner, nor for the arrays read_set assigns through a nameref,
+# which it cannot follow.
+# shellcheck disable=SC2154
+set -Eeuo pipefail
+shopt -s inherit_errexit failglob
+
+# Not followed, since a repository linking this runner has no bin/runner beside
+# the link for ShellCheck to find; bin/runner is linted on its own.
+# shellcheck source=/dev/null
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
+
+tests=("$@")
+
+# xdist only warns at a count it cannot read, and runs on every CPU instead.
+if [ -n "${PYTEST_XDIST_AUTO_NUM_WORKERS+set}" ] &&
+    ! [[ $PYTEST_XDIST_AUTO_NUM_WORKERS =~ ^[1-9][0-9]*$ ]]; then
+    printf 'PYTEST_XDIST_AUTO_NUM_WORKERS is %q, not a whole number of' \
+        "$PYTEST_XDIST_AUTO_NUM_WORKERS" >&2
+    printf ' at least 1\n' >&2
+    exit 1
+fi
+
+if [ ${#tests[@]} -gt 0 ] && ! defines pytest_args; then
+    echo "bin/settings: pytest_args is not set, so there are no tests to name" >&2
+    exit 1
+fi
+
+# Skipped for a targeted run: the lint covers the whole tree, so running it for
+# a handful of named tests costs far more than the tests do. make lint is the
+# standalone entry point, and CI passes no names.
+if [ ${#tests[@]} -eq 0 ]; then
+    "$design_tools/bin/lint"
+fi
+
+if defines pytest_args; then
+    echo -e "\n=== TEST PYTHON\n"
+
+    read_set pytest_args options may-be-empty
+    # The plugin only adds --no-skips, which does nothing unless passed.
+    PYTHONPATH=$tools pytest -p pytest_no_skips "${options[@]}" "${tests[@]}"
+fi
+
+echo

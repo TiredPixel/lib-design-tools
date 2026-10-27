@@ -1,0 +1,62 @@
+# The services, which this repository uses itself and another repository links
+# as its own docker-compose.yml. Compose resolves paths against the folder
+# holding the link, so every path here is that repository's: its tree, and its
+# Dockerfile, a link to this one's.
+services:
+  # Runs bin/format, whose rewrites have to reach the host tree, which only this
+  # mount carries there. The whole tree is bound rather than file by file, since
+  # a single-file bind pins an inode and goes stale when an editor saves by
+  # rename.
+  format:
+    build:
+      context: .
+      target: dev
+    command:
+      - format
+    init: true
+    network_mode: none
+    profiles:
+      - tools
+    user: ${DC_BIND_USER:-}
+    volumes:
+      - .:/home/x/r
+  # bin/preview on the tree as it is on disk, read-only, so an edit shows on
+  # reload. An init process forwards the stop signal, which Python running as
+  # pid 1 would ignore. The host port is free unless DC_PREVIEW_PORT pins one,
+  # and published on loopback unless DC_PREVIEW_HOST names another address, such
+  # as 0.0.0.0 to reach a VM's preview from its host.
+  preview:
+    build:
+      context: .
+      target: dev
+    command:
+      - preview
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://localhost:8080/")
+    init: true
+    ports:
+      - ${DC_PREVIEW_HOST:-127.0.0.1}:${DC_PREVIEW_PORT:-0}:8080
+    volumes:
+      - read_only: true
+        source: .
+        target: /home/x/r
+        type: bind
+  # Runs bin/lint and bin/test on the tree the test stage copied: no mount, so
+  # what a run checks cannot change under it, and no network, so nothing a page
+  # loads can come from outside the tree. init, as PID 1, reaps the Chromium
+  # processes a timeout's kill orphans, and passes make test's signals on, where
+  # bin/test as PID 1 would ignore a TERM or INT it sets no trap for.
+  test:
+    build:
+      context: .
+      target: test
+    environment:
+      - PYTEST_XDIST_AUTO_NUM_WORKERS
+    init: true
+    network_mode: none
+    profiles:
+      - tools
