@@ -152,8 +152,8 @@ class FormatThenLintTest(Repository):
         self.settings("function shell_files { printf '%s\\0' a.sh; }\n")
         self.assertFormatFixes(
             "a.sh",
-            "#!/bin/bash\nf() {\n  local a=1\n  echo $(( $a + 1 ))\n}\n",
-            "#!/bin/bash\nf() {\n    local a=1\n    echo $((a + 1))\n}\n",
+            "#!/bin/bash\nf() {\n  echo a > /dev/null\n}\n",
+            "#!/bin/bash\nf() {\n    echo a >/dev/null\n}\n",
             "SHELL",
         )
 

@@ -17,8 +17,8 @@ source bin/settings
 # Read by bin/format and bin/lint alike, so the two cannot disagree.
 jq_args=(--sort-keys .)
 # Indented by 4 spaces rather than shfmt's default tab, since spaces are the
-# common practice for shell. -s, since format applies every fix a tool offers.
-shfmt_args=(-i 4 -s)
+# common practice for shell.
+shfmt_args=(-i 4)
 
 function defines {
     declare -F "$1" >/dev/null || declare -p "$1" >/dev/null 2>&1

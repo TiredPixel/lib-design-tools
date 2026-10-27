@@ -35,9 +35,7 @@ if defines python_files; then
 
     read_files python_files python
     echo "formatting ${#python[@]} Python file(s)" >&2
-    # Every fix ruff offers, unsafe ones included, as format applies them all
-    # and leaves its diff and the tests to catch a wrong one.
-    ruff check --fix --unsafe-fixes "${python[@]}"
+    ruff check --fix "${python[@]}"
     ruff format "${python[@]}"
 fi
 
