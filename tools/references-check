@@ -81,13 +81,16 @@ NON_LOADING_RELATIONS = frozenset(
     }
 )
 
-_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+# Matched against CSS whose comments are blanked and whose strings hold only spaces
+# between their quotes, so a quoted group's value is read from the string table.
 _CSS_URL = re.compile(
-    r"""(?<![\w-])url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s"']*))\s*\)""",
+    r"""(?<![\w-])url\(\s*(?:("[^"]*")|('[^']*')|([^)\s"']*))\s*\)""",
     re.IGNORECASE,
 )
-_CSS_IMPORT_STRING = re.compile(r"""@import\s+(?:"([^"]*)"|'([^']*)')""", re.IGNORECASE)
+_CSS_UNQUOTED_URL = re.compile(r"""(?<![\w-])url\(\s*(?=[^\s"'])""", re.IGNORECASE)
+_CSS_IMPORT_STRING = re.compile(r"""@import\s+("[^"]*"|'[^']*')""", re.IGNORECASE)
 _CSS_IMAGE_SET = re.compile(r"(?<![\w-])(?:-webkit-)?image-set\(", re.IGNORECASE)
+_CSS_ESCAPE = re.compile(r"\\(?:([0-9A-Fa-f]{1,6})[ \t\n\r\f]?|(\n)|(.))", re.DOTALL)
 
 # One attribute of a start tag, its value skipped whole, so that a name written inside
 # another attribute's quoted value is never taken for an attribute.
@@ -157,45 +160,102 @@ def refresh_url(content: str) -> str:
     return target
 
 
-def _blank_comments(css: str) -> str:
-    """Replace CSS comments with spaces, keeping newlines so lines still count."""
-    return _CSS_COMMENT.sub(lambda match: re.sub(r"[^\n]", " ", match.group(0)), css)
+def _css_unescape(value: str) -> str:
+    """Return a CSS string's value with its escapes read, as CSS Syntax reads them."""
+
+    def character(match: re.Match) -> str:
+        if match[1] is not None:
+            code = int(match[1], 16)
+            if code == 0 or code > 0x10FFFF or 0xD800 <= code <= 0xDFFF:
+                return "\ufffd"
+            return chr(code)
+        return "" if match[2] is not None else match[3]
+
+    return _CSS_ESCAPE.sub(character, value)
 
 
-def _image_set_strings(css: str) -> Iterator[tuple[int, str]]:
+def _scan_css(css: str) -> tuple[str, dict[int, str]]:
+    """Return ``css`` with its comments blanked and its strings' contents spaces, and
+    each string's value by the offset of its opening quote.
+
+    Newlines are kept, so lines still count, and so is each quote of a closed string.
+    Text inside a string is never read as a comment or a reference, nor a ``/*`` in an
+    unquoted ``url()``, which CSS reads whole. A string a newline ends unclosed is
+    invalid CSS, and is blanked, quote and all, with no value.
+    """
+    masked = list(css)
+    strings: dict[int, str] = {}
+    position, end = 0, len(css)
+
+    def blank(start: int, stop: int) -> None:
+        for index in range(start, stop):
+            if masked[index] != "\n":
+                masked[index] = " "
+
+    while position < end:
+        url = _CSS_UNQUOTED_URL.match(css, position)
+        if url is not None:
+            close = css.find(")", url.end())
+            position = end if close < 0 else close + 1
+        elif css.startswith("/*", position):
+            close = css.find("*/", position + 2)
+            stop = end if close < 0 else close + 2
+            blank(position, stop)
+            position = stop
+        elif css[position] in "\"'":
+            quote, index = css[position], position + 1
+            while index < end and css[index] not in (quote, "\n"):
+                index += 2 if css[index] == "\\" else 1
+            index = min(index, end)
+            if index < end and css[index] == quote:
+                strings[position] = _css_unescape(css[position + 1 : index])
+                blank(position + 1, index)
+                position = index + 1
+            else:
+                blank(position, index)
+                position = index
+        else:
+            position += 1
+    return "".join(masked), strings
+
+
+def _image_set_strings(
+    masked: str, strings: dict[int, str]
+) -> Iterator[tuple[int, str]]:
     """Yield the offset and value of each string written directly in an ``image-set()``.
 
     A string nested deeper, as in ``type("image/avif")``, names no image, and an image
     given by ``url()`` is found as any other ``url()`` is.
     """
-    for match in _CSS_IMAGE_SET.finditer(css):
+    for match in _CSS_IMAGE_SET.finditer(masked):
         position, depth = match.end(), 1
-        while position < len(css) and depth:
-            character = css[position]
-            if character in "\"'":
-                end = css.find(character, position + 1)
-                if end < 0:
-                    break
+        while position < len(masked) and depth:
+            if position in strings:
                 if depth == 1:
-                    yield position, css[position + 1 : end]
-                position = end
-            elif character == "(":
+                    yield position, strings[position]
+            elif masked[position] == "(":
                 depth += 1
-            elif character == ")":
+            elif masked[position] == ")":
                 depth -= 1
             position += 1
 
 
 def css_references(css: str) -> Iterator[tuple[int, str]]:
     """Yield the zero-based line and target of each reference in ``css``."""
-    css = _blank_comments(css)
-    found = [
-        (match.start(), next(group for group in match.groups() if group is not None))
-        for match in (*_CSS_URL.finditer(css), *_CSS_IMPORT_STRING.finditer(css))
-    ]
-    found.extend(_image_set_strings(css))
+    masked, strings = _scan_css(css)
+    found = []
+    for match in (*_CSS_URL.finditer(masked), *_CSS_IMPORT_STRING.finditer(masked)):
+        index = next(
+            i for i, group in enumerate(match.groups(), 1) if group is not None
+        )
+        start = match.start(index)
+        if match[index].startswith(("'", '"')):
+            found.append((start, strings[start]))
+        else:
+            found.append((start, match[index]))
+    found.extend(_image_set_strings(masked, strings))
     for start, target in sorted(found):
-        yield css.count("\n", 0, start), target
+        yield masked.count("\n", 0, start), target
 
 
 def classify(reference: str) -> tuple[str, str]:

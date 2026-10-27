@@ -427,6 +427,52 @@ class CssTest(ReferencesTestCase):
     def test_custom_function_ending_in_url_is_not_a_reference(self) -> None:
         self.assertEqual(self.css_problems(".a { x: my-url(gone.png) }"), [])
 
+    def test_strings_hold_no_references_or_comments(self) -> None:
+        css = (
+            '.a::before { content: "url(gone-1.png)"; }\n'
+            ".b::before { content: '/*'; }\n"
+            ".c { background: url(gone-2.png) }\n"
+            '.d::after { content: "*/"; }\n'
+            ".e::after { content: 'it\\'s url(gone-3.png)'; }\n"
+            ".f::after { content: \"@import 'gone-4.css'\"; }\n"
+            ".g::after { content: \"image-set('gone-5.png' 1x)\"; }\n"
+            ".h { background: url(img/x.png) }\n"
+        )
+        self.assertEqual(self.css_problems(css), [(3, "gone-2.png does not exist")])
+
+    def test_escapes_in_strings_are_read(self) -> None:
+        css = (
+            '.a { background: url("img/\\78.png") }\n'
+            '.b { background: url("gone\\2d 6.png") }\n'
+            ".c { background: url('img/\\\nx.png') }\n"
+            ".d { background: url(gone-7.png) }\n"
+        )
+        self.assertEqual(
+            self.css_problems(css),
+            [(2, "gone-6.png does not exist"), (5, "gone-7.png does not exist")],
+        )
+
+    def test_unreadable_escapes_become_the_replacement_character(self) -> None:
+        for escape in ("\\0", "\\110000", "\\d800"):
+            with self.subTest(escape=escape):
+                self.assertEqual(
+                    references_check._css_unescape(f"a{escape} b"), "a\ufffdb"
+                )
+
+    def test_an_unquoted_url_is_read_whole(self) -> None:
+        css = (
+            ".a { background: url(gone/*x*/.png) }\n"
+            ".b { background: url(gone-8.png) }\n"
+        )
+        self.assertEqual(
+            self.css_problems(css),
+            [(1, "gone/*x*/.png does not exist"), (2, "gone-8.png does not exist")],
+        )
+
+    def test_a_string_a_newline_ends_unclosed_is_dropped(self) -> None:
+        css = ".a { content: 'never closed\n.b { background: url(gone-9.png) }\n"
+        self.assertEqual(self.css_problems(css), [(2, "gone-9.png does not exist")])
+
 
 class MainTest(ReferencesTestCase):
     def test_clean(self) -> None:
