@@ -1,6 +1,11 @@
 concurrency:
   cancel-in-progress: true
   group: ${{ github.workflow }}-${{ github.ref }}
+# Strict as the repository's scripts are: GitHub's default bash for run steps
+# lacks pipefail, -u, inherit_errexit and failglob.
+defaults:
+  run:
+    shell: bash -Eeuo pipefail -O inherit_errexit -O failglob {0}
 jobs:
   build:
     # Packages read only: a pull request runs its branch's Makefile and
