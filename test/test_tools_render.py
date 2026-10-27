@@ -311,8 +311,19 @@ class ServeTest(TempDirTestCase):
         (self.root / "git").symlink_to(".git")
         (self.root / "out.css").symlink_to(pathlib.Path(outside.name) / "x.css")
         (self.root / "alias.css").symlink_to("a.css")
+        (self.root / "secret").mkdir()
+        (self.root / "secret/index.html").symlink_to("../.env")
+        (self.root / "pages").mkdir()
+        (self.root / "pages/index.html").symlink_to("../a.css")
         with design_render.serve(self.root) as base_url:
-            for path in (".env", "%2Egit/config", "public", "git/config", "out.css"):
+            for path in (
+                ".env",
+                "%2Egit/config",
+                "public",
+                "git/config",
+                "out.css",
+                "secret/",
+            ):
                 for method in ("GET", "HEAD"):
                     with self.subTest(path=path, method=method):
                         request = urllib.request.Request(base_url + path, method=method)
@@ -321,6 +332,7 @@ class ServeTest(TempDirTestCase):
                         caught.exception.close()
                         self.assertEqual(caught.exception.code, 404)
             self.assertEqual(self.fetch(base_url + "alias.css")[0], b"a {}")
+            self.assertEqual(self.fetch(base_url + "pages/")[0], b"a {}")
 
     def test_refused(self) -> None:
         self.write("a.css", "")

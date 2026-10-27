@@ -39,6 +39,10 @@ class ServeTest(unittest.TestCase):
         (root / "outside").symlink_to(pathlib.Path(outside.name) / "x.txt")
         (root / "preview/alias.html").symlink_to("index.html")
         (root / "linked").symlink_to("listed")
+        (root / "public").mkdir()
+        (root / "public/index.html").symlink_to("../.env")
+        (root / "away").mkdir()
+        (root / "away/index.htm").symlink_to(pathlib.Path(outside.name) / "x.txt")
         quiet = mock.patch.object(preview_serve.PreviewHandler, "log_message")
         quiet.start()
         self.addCleanup(quiet.stop)
@@ -102,7 +106,13 @@ class ServeTest(unittest.TestCase):
                     self.assertEqual(self.request(path, method).status, 404)
 
     def test_refuses_symlinks_to_dotfiles_or_out_of_the_tree(self) -> None:
-        for path in ("/public-config", "/listed/git/config", "/outside"):
+        for path in (
+            "/public-config",
+            "/listed/git/config",
+            "/outside",
+            "/public/",
+            "/away/",
+        ):
             for method in ("GET", "HEAD"):
                 with self.subTest(path=path, method=method):
                     self.assertEqual(self.request(path, method).status, 404)

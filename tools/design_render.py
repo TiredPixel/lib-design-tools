@@ -120,6 +120,7 @@ CAPTURE_SCRIPT = """<script>(function () {
 _CLASS_SELECTOR = re.compile(r"\.(-?[A-Za-z_][A-Za-z0-9_-]*)")
 
 HTML_SUFFIXES = frozenset({".html", ".htm"})
+_INDEX_NAMES = http.server.SimpleHTTPRequestHandler.index_pages
 
 
 class RenderError(Exception):
@@ -287,13 +288,18 @@ def refused(directory: str, url: str, path: str) -> bool:
 
     The tree served is usually a whole repository, so a segment starting ``.``, as
     ``.git`` and ``.env`` have, is refused in the URL and in the real path, symlinks
-    followed, that the file is reached by, as is a real path outside ``directory``.
+    followed, that the file is reached by, as is a real path outside ``directory``. A
+    directory is judged by the index it would be answered with, where it has one.
     """
     segments = urllib.parse.unquote(urllib.parse.urlsplit(url).path).split("/")
     if any(segment.startswith(".") for segment in segments):
         return True
     root = pathlib.Path(directory).resolve()
-    target = pathlib.Path(path).resolve()
+    served = pathlib.Path(path)
+    if served.is_dir():
+        indexes = (served / name for name in _INDEX_NAMES)
+        served = next((index for index in indexes if index.is_file()), served)
+    target = served.resolve()
     if not target.is_relative_to(root):
         return True
     return any(part.startswith(".") for part in target.relative_to(root).parts)
