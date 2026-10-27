@@ -64,6 +64,8 @@ class ClassifyTest(unittest.TestCase):
             "TEL:123": ("ignore", ""),
             "data:image/png;base64,AA": ("ignore", ""),
             "javascript:void(0)": ("ignore", ""),
+            "about:blank": ("ignore", ""),
+            "blob:https://example.com/0f6e": ("ignore", ""),
             "https://cdn/x.js": ("external", ""),
             "http://cdn/x.js": ("external", ""),
             "//cdn/x.js": ("external", ""),
@@ -158,6 +160,48 @@ class HtmlTest(ReferencesTestCase):
                 (9, "gone-11.png does not exist"),
             ],
         )
+
+    def test_areas_image_srcsets_and_refreshes_are_read(self) -> None:
+        markup = (
+            '<map><area href="gone-1.html"><area href="dir/"></map>\n'
+            '<link rel="preload" imagesrcset="gone-2.png 1x, img/x.png 2x">\n'
+            '<meta http-equiv="Refresh" content="0; url=gone-3.html">\n'
+            '<meta http-equiv="refresh" content="5">\n'
+            '<meta name="description" content="gone.html">\n'
+            '<meta content="0;img/x.png" http-equiv="refresh">\n'
+            '<meta http-equiv="refresh" content="soon; url=gone.html">\n'
+            "<div style=\"background: image-set('gone-4.png' 1x)\"></div>\n"
+        )
+        self.assertEqual(
+            self.html_problems(markup),
+            [
+                (1, "gone-1.html does not exist"),
+                (2, "gone-2.png does not exist"),
+                (3, "gone-3.html does not exist"),
+                (8, "gone-4.png does not exist"),
+            ],
+        )
+
+    def test_refresh_url(self) -> None:
+        cases = {
+            "": "",
+            "5": "",
+            " 5 ; ": "",
+            "0x; url=a.html": "",
+            "soon; url=a.html": "",
+            "0; url=a.html": "a.html",
+            "0;\n URL = 'a b.html' x": "a b.html",
+            '0 "a.html"': "a.html",
+            "0;url='a.html": "a.html",
+            ".5,a.html": "a.html",
+            "1.5.0 a.html": "a.html",
+            "0; uploads/a.html": "uploads/a.html",
+            "0; url a.html": "url a.html",
+            "0; u'a.html'": "u'a.html'",
+        }
+        for content, expected in cases.items():
+            with self.subTest(content=content):
+                self.assertEqual(references_check.refresh_url(content), expected)
 
     def test_srcset_urls(self) -> None:
         cases = {
@@ -293,6 +337,28 @@ class HtmlTest(ReferencesTestCase):
             references_check.check_html(page, self.root, no_external=True),
         )
 
+    def test_no_external_reads_areas_image_srcsets_refreshes_and_image_sets(
+        self,
+    ) -> None:
+        markup = (
+            '<map><area href="https://example.com/"></map>\n'
+            '<meta http-equiv="refresh" content="0; url=https://example.com/">\n'
+            '<link rel="preload" as="image" '
+            'imagesrcset="img/x.png 1x, https://cdn/x2.png 2x">\n'
+            '<iframe src="about:blank"></iframe>\n'
+            '<img src="blob:https://example.com/0f6e">\n'
+            "<p style=\"background: image-set('https://cdn/s.png' 1x)\"></p>\n"
+        )
+        page = self.write("site/page.html", markup)
+        refused = "which --no-external refuses"
+        self.assertEqual(
+            references_check.check_html(page, self.root, no_external=True),
+            [
+                (3, f"external https://cdn/x2.png, {refused}"),
+                (6, f"external https://cdn/s.png, {refused}"),
+            ],
+        )
+
 
 class CssTest(ReferencesTestCase):
     def test_urls_and_imports(self) -> None:
@@ -322,7 +388,8 @@ class CssTest(ReferencesTestCase):
             "site/sheet.css",
             ".c { background: url(https://cdn/x.png) }\n"
             '@import "//cdn/y.css";\n'
-            ".d { background: url(img/x.png) }\n",
+            ".d { background: url(img/x.png) }\n"
+            '.e { background: image-set("https://cdn/z.png" 1x) }\n',
         )
         refused = "which --no-external refuses"
         self.assertEqual(
@@ -330,6 +397,30 @@ class CssTest(ReferencesTestCase):
             [
                 (1, f"external https://cdn/x.png, {refused}"),
                 (2, f"external //cdn/y.css, {refused}"),
+                (4, f"external https://cdn/z.png, {refused}"),
+            ],
+        )
+
+    def test_image_set_strings(self) -> None:
+        css = (
+            ".a { background: image-set('gone-1.png' 1x, \"img/x.png\" 2x) }\n"
+            ".b { background: -webkit-image-set(url(gone-2.png) 1x,"
+            " url('img/x.png') 2x) }\n"
+            ".c { background: IMAGE-SET(\n"
+            "  'img/x.png' type(\"image/avif\"),\n"
+            "  'gone-3.png' type('image/png')) }\n"
+            ".d { content: 'gone.png'; x: my-image-set('gone.png') }\n"
+            "/* image-set('gone.png') */\n"
+            ".e { background: image-set('img/x.png?a)' 1x, 'gone-4.png' 2x) }\n"
+            ".f { background: image-set('never closed }\n"
+        )
+        self.assertEqual(
+            self.css_problems(css),
+            [
+                (1, "gone-1.png does not exist"),
+                (2, "gone-2.png does not exist"),
+                (5, "gone-3.png does not exist"),
+                (8, "gone-4.png does not exist"),
             ],
         )
 

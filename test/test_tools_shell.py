@@ -1,5 +1,4 @@
-"""tools/palette-generate and tools/lfs-check, on fabricated input
-in temporary directories."""
+"""tools/palette-generate, on fabricated input in temporary directories."""
 
 import json
 import pathlib
@@ -49,7 +48,7 @@ class PaletteGenerateTest(Workspace):
           - ["#111111", "#222"]
         Mixed_Case:
           A_B: "#AABBCCDD"
-        not_colour: "#XYZ"
+        not_colour: red
     """
 
     def generate(self, *extra, prefix="x"):
@@ -161,6 +160,56 @@ class PaletteGenerateTest(Workspace):
         self.assertEqual(result.returncode, 1)
         self.assertIn("holds no colour", result.stderr)
 
+    def test_expands_aliases_and_merge_keys_in_both_outputs(self):
+        self.write(
+            "p.yml",
+            """
+            base: &b
+              ink: "#101010"
+              paper: "#FFFFFF"
+            merged:
+              <<: *b
+              paper: "#EEEEEE"
+            link: *b
+            """,
+        )
+        result = self.generate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        document = json.loads((self.dir / "p.json").read_text())
+        self.assertEqual(document["merged"], {"ink": "#101010", "paper": "#EEEEEE"})
+        self.assertEqual(document["link"], {"ink": "#101010", "paper": "#FFFFFF"})
+        css = (self.dir / "p.css").read_text()
+        for line in (
+            "  --x-merged-ink: #101010;",
+            "  --x-merged-paper: #EEEEEE;",
+            "  --x-link-ink: #101010;",
+            "  --x-link-paper: #FFFFFF;",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(line, css)
+        self.assertNotIn("--x-merged-paper: #FFFFFF;", css)
+
+    def test_fails_on_a_string_starting_with_hash_that_is_no_colour(self):
+        for value in ("#12345", "#abc ", "#XYZ", "#1234567"):
+            with self.subTest(value=value):
+                self.write("p.yml", f'ok: "#000000"\ngroup:\n  - "{value}"\n')
+                result = self.generate()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("not a #RGB", result.stderr)
+                self.assertIn(f'  group.1: "{value}"', result.stderr)
+                self.assertNotIn("  ok", result.stderr)
+                self.assertFalse((self.dir / "p.css").exists())
+
+    def test_fails_on_a_leaf_with_no_value(self):
+        for line in ("accent: #abc", "accent: ~", "accent:"):
+            with self.subTest(line=line):
+                self.write("p.yml", f'ok: "#000000"\nset:\n  {line}\n')
+                result = self.generate()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("leaves with no value; quote a colour", result.stderr)
+                self.assertIn("  set.accent", result.stderr)
+                self.assertFalse((self.dir / "p.css").exists())
+
     def test_fails_on_a_missing_yaml(self):
         result = self.generate()
         self.assertEqual(result.returncode, 1)
@@ -191,136 +240,6 @@ class PaletteGenerateTest(Workspace):
                 result = run("palette-generate", "p.yml", flag, cwd=self.dir)
                 self.assertEqual(result.returncode, 0)
                 self.assertTrue(result.stdout.startswith("usage: palette-generate"))
-                self.assertEqual(result.stderr, "")
-
-
-class LfsCheckTest(Workspace):
-    ATTRIBUTES = """
-        *.png  filter=lfs diff=lfs merge=lfs -text
-        *.ttf  filter=lfs diff=lfs merge=lfs -text
-        *.css  linguist-generated
-    """
-    POINTER = "version https://git-lfs.github.com/spec/v1\noid sha256:0\nsize 1\n"
-
-    def test_passes_real_files(self):
-        self.write(".gitattributes", self.ATTRIBUTES)
-        (self.dir / "a").mkdir()
-        (self.dir / "a" / "x.png").write_bytes(b"\x89PNG\r\n\x1a\n")
-        self.write("a/tiny.ttf", "v")
-        self.write("a/y.css", self.POINTER)
-        result = run("lfs-check", "--attributes", ".gitattributes", "a", cwd=self.dir)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("checked 2 LFS file(s)", result.stderr)
-
-    def test_fails_each_pointer(self):
-        self.write(".gitattributes", self.ATTRIBUTES)
-        self.write("a/x.png", self.POINTER)
-        self.write("b/deep/y.ttf", self.POINTER)
-        result = run(
-            "lfs-check", "--attributes", ".gitattributes", "a", "b", cwd=self.dir
-        )
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("a/x.png", result.stderr)
-        self.assertIn("b/deep/y.ttf", result.stderr)
-
-    def test_skips_git_directories(self):
-        self.write(".gitattributes", self.ATTRIBUTES)
-        self.write("a/.git/lfs/x.png", self.POINTER)
-        self.write("a/y.png", "real")
-        result = run("lfs-check", "--attributes", ".gitattributes", "a", cwd=self.dir)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("checked 1 LFS file(s)", result.stderr)
-
-    def test_a_file_that_only_starts_like_a_pointer_is_a_pointer(self):
-        self.write(".gitattributes", self.ATTRIBUTES)
-        self.write("a/x.png", "version https://git-lfs.github.com/spec/")
-        self.write("a/y.png", "version https://git-lfs.github.com/spe")
-        result = run("lfs-check", "--attributes", ".gitattributes", "a", cwd=self.dir)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("a/x.png: an LFS pointer", result.stderr)
-        self.assertNotIn("a/y.png", result.stderr)
-
-    def test_fails_on_a_missing_folder(self):
-        self.write(".gitattributes", self.ATTRIBUTES)
-        self.write("a/x.png", "real")
-        result = run(
-            "lfs-check", "--attributes", ".gitattributes", "a", "nope", cwd=self.dir
-        )
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("find failed in a nope", result.stderr)
-        self.assertNotIn("checked", result.stderr)
-
-    def test_fails_on_a_group_that_matches_nothing(self):
-        self.write(".gitattributes", self.ATTRIBUTES)
-        self.write("a/x.PNG", "real")
-        result = run("lfs-check", "--attributes", ".gitattributes", "a", cwd=self.dir)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn(
-            ".gitattributes: no file in a matches its patterns", result.stderr
-        )
-
-    def test_fails_on_an_unreadable_file(self):
-        self.write(".gitattributes", self.ATTRIBUTES)
-        self.write("a/x.png", "real")
-        (self.dir / "a" / "x.png").chmod(0)
-        result = run("lfs-check", "--attributes", ".gitattributes", "a", cwd=self.dir)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("a/x.png: not readable", result.stderr)
-
-    def test_fails_without_lfs_patterns(self):
-        self.write(".gitattributes", "*.css linguist-generated\n")
-        result = run("lfs-check", "--attributes", ".gitattributes", ".", cwd=self.dir)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("names no filter=lfs pattern", result.stderr)
-
-    def test_refuses_a_pattern_with_a_slash(self):
-        self.write(".gitattributes", "img/*.png filter=lfs -text\n")
-        result = run("lfs-check", "--attributes", ".gitattributes", ".", cwd=self.dir)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("holds a slash", result.stderr)
-
-    def test_fails_on_a_missing_attributes_file(self):
-        result = run("lfs-check", "--attributes", "nope", ".", cwd=self.dir)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("no such file", result.stderr)
-
-    def test_each_group_checks_its_folders_against_its_own_patterns(self):
-        self.write("own.gitattributes", "*.png filter=lfs -text\n")
-        self.write("sub/.gitattributes", "*.ttf filter=lfs -text\n")
-        self.write("a/x.png", self.POINTER)
-        self.write("sub/y.ttf", self.POINTER)
-        self.write("sub/z.png", self.POINTER)
-        result = run(
-            "lfs-check",
-            *("--attributes", "own.gitattributes", "a"),
-            *("--attributes", "sub/.gitattributes", "sub"),
-            cwd=self.dir,
-        )
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("a/x.png", result.stderr)
-        self.assertIn("sub/y.ttf", result.stderr)
-        self.assertNotIn("sub/z.png", result.stderr)
-        self.assertIn("checked 2 LFS file(s)", result.stderr)
-
-    def test_usage_errors(self):
-        for args in (
-            [],
-            ["--attributes", "x"],
-            ["x", "y", "z"],
-            ["--attributes", "x", "--attributes", "y", "d"],
-            ["--attributes", "x", "d", "--attributes", "y"],
-        ):
-            with self.subTest(args=args):
-                result = run("lfs-check", *args, cwd=self.dir)
-                self.assertEqual(result.returncode, 2)
-                self.assertIn("usage:", result.stderr)
-
-    def test_help_prints_usage_and_succeeds(self):
-        for flag in ("--help", "-h"):
-            with self.subTest(flag=flag):
-                result = run("lfs-check", flag, cwd=self.dir)
-                self.assertEqual(result.returncode, 0)
-                self.assertTrue(result.stdout.startswith("usage: lfs-check"))
                 self.assertEqual(result.stderr, "")
 
 

@@ -71,7 +71,9 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     for path in arguments.files:
         if not path.is_file():
             parser.error(f"{path} is not a file")
-        if not path.resolve().is_relative_to(arguments.root.resolve()):
+        try:
+            design_render.served_path(arguments.root, path)
+        except ValueError:
             parser.error(f"{path} is not inside --root {arguments.root}")
     if shutil.which(arguments.chromium) is None:
         parser.error(f"cannot find Chromium executable {arguments.chromium!r}")

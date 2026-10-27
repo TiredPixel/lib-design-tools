@@ -23,10 +23,9 @@ make build
 
 Each command prints its usage with `--help`.
 
-- `tools/palette-generate` – the JSON and the CSS from a palette YAML, one custom property per colour; the check option compares them with the files instead of writing. A property is named `--`, the given prefix and a hyphen, then the full YAML key path, lowercased, with `_` written as `-` and list items numbered from 1, so `greys: {warm: [a, b]}` with prefix `x` gives `--x-greys-warm-1` and `--x-greys-warm-2`; a key that would put anything but letters, digits, hyphens or non-ASCII characters in a name fails the run.
-- `tools/references-check` – every local reference in HTML and CSS resolves under the root: each attribute that loads or links something, such as `href`, `src`, `srcset`, `poster` and `data`, and each `url()` and `@import`. Options refuse anything external a page loads, or require `integrity` and `crossorigin` on every external stylesheet and script.
-- `tools/render-check` – each page loaded in headless Chromium, failing on an uncaught error, an unhandled rejection, a `console.error`, a failed load, or an element matching the error marker.
-- `tools/lfs-check` – no file under the folders named that matches a `filter=lfs` pattern in the attributes file named with them is an LFS pointer. A missing folder, or a group whose patterns match no file, fails the run.
+- `tools/palette-generate` – the JSON and the CSS from a palette YAML, one custom property per colour; the check option compares them with the files instead of writing. A property is named `--`, the given prefix and a hyphen, then the full YAML key path, lowercased, with `_` written as `-` and list items numbered from 1, so `greys: {warm: [a, b]}` with prefix `x` gives `--x-greys-warm-1` and `--x-greys-warm-2`; a key that would put anything but letters, digits, hyphens or non-ASCII characters in a name fails the run, as does a value starting with `#` that is not a `#RGB`, `#RGBA`, `#RRGGBB` or `#RRGGBBAA` colour, or a value left empty, as an unquoted `#` colour is, since YAML reads it as a comment. Aliases and merge keys are expanded in both outputs alike.
+- `tools/references-check` – every local reference in HTML and CSS resolves under the root: each attribute that loads or links something, such as `href`, `src`, `srcset`, `imagesrcset`, `poster` and `data`, a refresh's target, and each `url()`, `@import` and `image-set()` string. Options refuse anything external a page loads, or require `integrity` and `crossorigin` on every external stylesheet and script.
+- `tools/render-check` – each page loaded in headless Chromium, failing on an uncaught error, an unhandled rejection, a `console.error`, a failed load the page or its stylesheets start, such as an image, script, stylesheet, `@import`, font or background image, or an element matching the error marker. A request the page's own script makes, such as `fetch`, is left to the script; the page's icon is not checked, and a load from another origin that does not use CORS counts only where its element reports an error.
 - `tools/preview-serve` – the tree as it is on disk, for previewing while editing: nothing cached, dotfiles refused, directories listed, and `/` redirected to the index path. For development only.
 
 Importable from a repository's own Python tests, with `tools/` on the path, as `bin/test` puts it:
@@ -108,7 +107,7 @@ make lint
 
 What `bin/format` rewrites and `bin/lint` checks for drift, each to the tool's own style:
 
-- `palette_args` – `tools/palette-generate`'s arguments.
+- `palette_args` – `tools/palette-generate`'s arguments. The files it generates belong to this pass alone, so no other set names them: Prettier, for one, lowercases the hex colours the CSS keeps as the YAML writes them, and the JSON pass would sort the keys it keeps in the YAML's order, so format and lint would never agree.
 - `python_files` – ruff, under the repository's own ruff configuration.
 - `yaml_files` – keys sorted with yq.
 - `json_files` – indented by 2 with keys sorted, by Python's `json.tool`.
@@ -118,7 +117,6 @@ What `bin/format` rewrites and `bin/lint` checks for drift, each to the tool's o
 What `bin/lint` checks only:
 
 - `shell_files` – ShellCheck.
-- `lfs_args` – `tools/lfs-check`'s arguments.
 - `references_args` – `tools/references-check`'s arguments.
 - `render_args` – `tools/render-check`'s arguments, such as `--root . pages/*.html`.
 
@@ -139,7 +137,7 @@ A `bin/settings` for a design system with a preview page and a palette:
 preview_index=/preview/
 
 function palette_args {
-    printf '%s\0' src/palette.yml --prefix x --json src/palette.json --css src/palette.css
+    printf '%s\0' palette/palette.yml --prefix x --json palette/palette.json --css palette/palette.css
 }
 
 function css_files {
@@ -157,7 +155,7 @@ function pytest_args {
 
 ### Previewing
 
-`docker compose up` serves the tree read-only with `bin/preview`, on a free host port, or on `DC_PREVIEW_PORT` where `.env` sets one:
+`docker compose up` serves the tree read-only with `bin/preview`, on a free host port, or on `DC_PREVIEW_PORT` where `.env` sets one. The port is published on `127.0.0.1` only; `DC_PREVIEW_HOST` in `.env` publishes it on another address, such as `0.0.0.0` to reach a VM's preview from its host:
 
 ```sh
 docker compose up

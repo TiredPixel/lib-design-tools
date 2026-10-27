@@ -6,7 +6,9 @@
 set -Eeuo pipefail
 shopt -s inherit_errexit failglob
 
-# shellcheck source=bin/runner
+# Not followed, since a repository linking this runner has no bin/runner beside
+# the link for ShellCheck to find; bin/runner is linted on its own.
+# shellcheck source=/dev/null
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
 
 # Unlike the other settings, a variable rather than a function.
@@ -19,5 +21,7 @@ if [ -z "${preview_index:-}" ]; then
     exit 1
 fi
 
+# tools comes from bin/runner, which ShellCheck does not follow.
+# shellcheck disable=SC2154
 exec "$tools/preview-serve" --address=0.0.0.0 --port=8080 --root=. \
     --index="$preview_index"

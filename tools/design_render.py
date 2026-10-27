@@ -20,11 +20,14 @@ import functools
 import html.parser
 import http.server
 import json
+import os
 import pathlib
 import re
+import signal
 import subprocess
 import tempfile
 import threading
+import time
 import urllib.parse
 from collections.abc import Iterator
 
@@ -33,12 +36,27 @@ ERRORS_ATTRIBUTE = "data-render-errors"
 DEFAULT_CHROMIUM = "chromium"
 DEFAULT_BUDGET_MS = 5000
 DEFAULT_TIMEOUT_S = 60
+GROUP_EXIT_TIMEOUT_S = 10
 
 # Installed before anything else on the page runs. The `error` listener is in the
 # capture phase because a failed <link>, <script> or <img> load fires a non-bubbling
 # `error` event at the element, which only a capturing listener on window sees. The
 # attribute is written as `[]` up front so that its absence from the dumped DOM proves
 # the script never ran.
+#
+# Loads a stylesheet starts, such as @font-face fonts, background images and @import,
+# fire no event at the element that needs them, so failed responses are also read from
+# Resource Timing. Initiators whose failures an `error` event already reports, or whose
+# responses the page's own script sees, are skipped there. A failed @import does fire
+# `error` at a <style>, but with no URL, so that event is left to Resource Timing. A
+# no-cors response from another origin reports status 0, so its failure stays unseen. A
+# browser without `responseStatus` is recorded as unable to check, rather than passing
+# pages it could not check.
+#
+# Headless Chromium fetches the page's icon, the one an icon link names or else
+# /favicon.ico, and that fetch shows in the page's Resource Timing, but whether before
+# or after the DOM is dumped varies from run to run, so it is skipped rather than
+# failing a page only some of the time.
 CAPTURE_SCRIPT = """<script>(function () {
   var root = document.documentElement;
   var errors = [];
@@ -55,6 +73,7 @@ CAPTURE_SCRIPT = """<script>(function () {
   window.addEventListener('error', function (event) {
     var target = event.target;
     if (target && target !== window && target.tagName) {
+      if (target.tagName.toLowerCase() === 'style') { return; }
       record({kind: 'resource', tag: target.tagName.toLowerCase(),
               url: target.currentSrc || target.src || target.href || ''});
     } else {
@@ -71,6 +90,31 @@ CAPTURE_SCRIPT = """<script>(function () {
             message: Array.prototype.map.call(arguments, text).join(' ')});
     return consoleError.apply(console, arguments);
   };
+  var reportedElsewhere = {img: true, link: true, script: true,
+                           fetch: true, xmlhttprequest: true, beacon: true};
+  if (!('responseStatus' in PerformanceResourceTiming.prototype)) {
+    record({kind: 'unsupported',
+            message: 'no PerformanceResourceTiming.responseStatus, so failed ' +
+                     'loads started from CSS cannot be seen'});
+    return;
+  }
+  function browserIcon(entry) {
+    if (entry.initiatorType !== 'other') { return false; }
+    if (entry.name === location.origin + '/favicon.ico') { return true; }
+    return Array.prototype.some.call(
+      document.querySelectorAll('link[rel~="icon" i]'),
+      function (link) { return link.href === entry.name; });
+  }
+  new PerformanceObserver(function (list) {
+    list.getEntries().forEach(function (entry) {
+      if (entry.responseStatus >= 400 &&
+          !reportedElsewhere.hasOwnProperty(entry.initiatorType) &&
+          !browserIcon(entry)) {
+        record({kind: 'response', initiator: entry.initiatorType,
+                status: entry.responseStatus, url: entry.name});
+      }
+    });
+  }).observe({type: 'resource', buffered: true});
 })();</script>""".replace("ERRORS_ATTRIBUTE", ERRORS_ATTRIBUTE)
 
 _CLASS_SELECTOR = re.compile(r"\.(-?[A-Za-z_][A-Za-z0-9_-]*)")
@@ -185,6 +229,13 @@ def describe_error(entry: object) -> str:
     kind = entry.get("kind") if isinstance(entry, dict) else None
     if kind == "resource":
         return f"failed to load <{entry.get('tag')}> {entry.get('url')}"
+    if kind == "response":
+        return (
+            f"failed to load {entry.get('url')} "
+            f"(HTTP {entry.get('status')}, started by {entry.get('initiator')})"
+        )
+    if kind == "unsupported":
+        return f"not checked: {entry.get('message')}"
     if kind == "error":
         where = entry.get("source") or ""
         if where:
@@ -258,7 +309,7 @@ class _InjectingHandler(http.server.SimpleHTTPRequestHandler):
 @contextlib.contextmanager
 def serve(root: pathlib.Path) -> Iterator[str]:
     """Serve ``root`` on an ephemeral loopback port; yield its base URL."""
-    handler = functools.partial(_InjectingHandler, directory=str(root))
+    handler = functools.partial(_InjectingHandler, directory=os.path.abspath(root))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -271,14 +322,30 @@ def serve(root: pathlib.Path) -> Iterator[str]:
         thread.join()
 
 
+def served_path(root: pathlib.Path, page: pathlib.Path) -> str:
+    """Return the path ``page`` is served at below ``root``, in POSIX form.
+
+    A symlinked page keeps its own path, so that it is requested where the link is and
+    its relative references resolve beside the link, not its target. Where ``root`` is
+    named through a symlink, or the page through one, their real paths are compared
+    instead. Raises ValueError when ``page`` is not inside ``root``.
+    """
+    page_path = pathlib.Path(os.path.abspath(page))
+    real_root = root.resolve()
+    candidates = (
+        (pathlib.Path(os.path.abspath(root)), page_path),
+        (real_root, page_path),
+        (real_root, page_path.parent.resolve() / page_path.name),
+    )
+    for base, path in candidates:
+        if path.is_relative_to(base):
+            return path.relative_to(base).as_posix()
+    raise ValueError(f"{page} is not inside the served root {root}")
+
+
 def page_url(base_url: str, root: pathlib.Path, page: pathlib.Path) -> str:
     """Return the URL ``page`` has when ``root`` is served at ``base_url``."""
-    resolved_root = root.resolve()
-    resolved_page = page.resolve()
-    if not resolved_page.is_relative_to(resolved_root):
-        raise ValueError(f"{page} is not inside the served root {root}")
-    relative = resolved_page.relative_to(resolved_root).as_posix()
-    return base_url + urllib.parse.quote(relative)
+    return base_url + urllib.parse.quote(served_path(root, page))
 
 
 def _chromium(
@@ -302,23 +369,54 @@ def _chromium(
         url,
     ]
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             command,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout_s,
-            check=False,
+            start_new_session=True,
         )
     except FileNotFoundError as error:
         raise RenderError(f"cannot run {chromium!r}: {error}") from error
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_s)
     except subprocess.TimeoutExpired as error:
         raise RenderError(
             f"{chromium} did not finish {url} within {timeout_s}s"
         ) from error
-    if result.returncode != 0:
-        detail = result.stderr.strip() or "no output on stderr"
-        raise RenderError(f"{chromium} exited {result.returncode} on {url}: {detail}")
-    return result.stdout
+    finally:
+        _end_group(process, chromium)
+    if process.returncode != 0:
+        detail = stderr.strip() or "no output on stderr"
+        raise RenderError(f"{chromium} exited {process.returncode} on {url}: {detail}")
+    return stdout
+
+
+def _end_group(process: subprocess.Popen, chromium: str) -> None:
+    """Kill what is left of the process group ``process`` leads, and wait until it is
+    gone.
+
+    Chromium's renderer, GPU and crashpad processes outlive the browser process, and go
+    on writing to the profile, whose removal would then fail. Once the leader is reaped,
+    the group's other members are reaped by whatever adopts them.
+    """
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGKILL)
+    process.stdout.close()
+    process.stderr.close()
+    process.wait()
+    deadline = time.monotonic() + GROUP_EXIT_TIMEOUT_S
+    while True:
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return
+        if time.monotonic() > deadline:
+            raise RenderError(
+                f"processes {chromium} started survived SIGKILL for "
+                f"{GROUP_EXIT_TIMEOUT_S}s"
+            )
+        time.sleep(0.05)
 
 
 def dump_dom(

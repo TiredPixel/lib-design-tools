@@ -18,6 +18,11 @@ def pytest_addoption(parser):
     )
 
 
+# Several sessions can run in one process, as pytest.main called twice does.
+def pytest_sessionstart(session):
+    _skipped.clear()
+
+
 def pytest_runtest_logreport(report):
     if report.skipped and not hasattr(report, "wasxfail"):
         _skipped.append(report.nodeid)
@@ -36,7 +41,13 @@ def pytest_sessionfinish(session, exitstatus):
     # run's.
     if hasattr(session.config, "workerinput"):
         return
-    if session.config.getoption("--no-skips") and _skipped:
+    # A run whose every module skipped collects nothing; any other status already
+    # fails the run, and says why.
+    if (
+        session.config.getoption("--no-skips")
+        and _skipped
+        and exitstatus in (pytest.ExitCode.OK, pytest.ExitCode.NO_TESTS_COLLECTED)
+    ):
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 

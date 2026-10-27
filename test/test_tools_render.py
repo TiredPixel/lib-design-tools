@@ -10,13 +10,17 @@ import contextlib
 import html
 import io
 import json
+import os
 import pathlib
+import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.request
 
@@ -26,6 +30,32 @@ import tools_loader
 render_check = tools_loader.load("render-check")
 
 CLEAN_DOM = '<html data-render-errors="[]"><head></head><body></body></html>'
+
+# For a fake Chromium: start a child in its process group that keeps writing files
+# into the profile, as Chromium's renderer and crashpad processes do, and record its
+# pid beside the fake once it has started writing.
+SPAWN_PROFILE_WRITER = """
+profile = next(
+    a for a in sys.argv[1:] if a.startswith("--user-data-dir=")
+).split("=", 1)[1]
+writer = (
+    "import itertools, pathlib, sys, time\\n"
+    "directory = pathlib.Path(sys.argv[1]) / 'Default'\\n"
+    "directory.mkdir()\\n"
+    "for n in itertools.count():\\n"
+    "    (directory / str(n)).write_text('x')\\n"
+    "    time.sleep(0.001)\\n"
+)
+import subprocess
+child = subprocess.Popen(
+    [sys.executable, "-c", writer, profile],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
+while not (pathlib.Path(profile) / "Default").is_dir():
+    time.sleep(0.01)
+pathlib.Path(sys.argv[0]).with_name("child.pid").write_text(str(child.pid))
+"""
 
 
 def errors_dom(entries: list, body: str = "") -> str:
@@ -63,6 +93,11 @@ class TempDirTestCase(unittest.TestCase):
 
     def printing_chromium(self, dom: str) -> str:
         return self.fake_chromium(f"sys.stdout.write({dom!r})\n")
+
+    def assert_writer_gone(self) -> None:
+        pid = int((self.root / "bin" / "child.pid").read_text())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
 
 
 class InjectCaptureTest(unittest.TestCase):
@@ -149,6 +184,24 @@ class DescribeErrorTest(unittest.TestCase):
         entry = {"kind": "resource", "tag": "img", "url": "http://x/a.png"}
         self.assertEqual(
             design_render.describe_error(entry), "failed to load <img> http://x/a.png"
+        )
+
+    def test_response(self) -> None:
+        entry = {
+            "kind": "response",
+            "initiator": "css",
+            "status": 404,
+            "url": "http://x/f.woff2",
+        }
+        self.assertEqual(
+            design_render.describe_error(entry),
+            "failed to load http://x/f.woff2 (HTTP 404, started by css)",
+        )
+
+    def test_unsupported(self) -> None:
+        entry = {"kind": "unsupported", "message": "no responseStatus"}
+        self.assertEqual(
+            design_render.describe_error(entry), "not checked: no responseStatus"
         )
 
     def test_error_with_source(self) -> None:
@@ -252,6 +305,71 @@ class ServeTest(TempDirTestCase):
             design_render.page_url("http://h/", self.root / "sub", self.root / "a.html")
 
 
+class ServedPathTest(TempDirTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.site = self.root / "site"
+        self.write("site/src/index.html", "<p>i</p>")
+        (self.site / "pages").mkdir()
+
+    def link(self, path: pathlib.Path, target: str) -> pathlib.Path:
+        path.symlink_to(target)
+        return path
+
+    def test_symlinked_page_keeps_its_own_path(self) -> None:
+        page = self.link(self.site / "pages/index.html", "../src/index.html")
+        self.assertEqual(
+            design_render.page_url("http://h/", self.site, page),
+            "http://h/pages/index.html",
+        )
+
+    def test_symlinked_directory_keeps_its_own_path(self) -> None:
+        directory = self.link(self.site / "docs", "src")
+        self.assertEqual(
+            design_render.served_path(self.site, directory / "index.html"),
+            "docs/index.html",
+        )
+
+    def test_root_named_through_symlink(self) -> None:
+        root = self.link(self.root / "alias", "site")
+        for page in (root / "src/index.html", self.site / "src/index.html"):
+            with self.subTest(page=page):
+                self.assertEqual(
+                    design_render.served_path(root, page), "src/index.html"
+                )
+
+    def test_page_named_through_symlinked_ancestor(self) -> None:
+        alias = self.link(self.root / "alias", "site")
+        self.assertEqual(
+            design_render.served_path(self.site, alias / "src/index.html"),
+            "src/index.html",
+        )
+
+    def test_relative_paths(self) -> None:
+        page = self.link(self.site / "pages/index.html", "../src/index.html")
+        self.assertEqual(
+            design_render.served_path(
+                pathlib.Path(os.path.relpath(self.site)),
+                pathlib.Path(os.path.relpath(page)),
+            ),
+            "pages/index.html",
+        )
+
+    def test_outside_root_refused(self) -> None:
+        outside = self.write("outside.html", "<p>o</p>")
+        cases = {
+            "file": outside,
+            "dot-dot": self.site / "pages/../../outside.html",
+            "link to inside": self.link(self.root / "link.html", "site/src/index.html"),
+        }
+        for name, page in cases.items():
+            with (
+                self.subTest(name=name),
+                self.assertRaisesRegex(ValueError, "not inside the served root"),
+            ):
+                design_render.served_path(self.site, page)
+
+
 class DumpDomTest(TempDirTestCase):
     def test_passes_flags_and_returns_stdout(self) -> None:
         chromium = self.fake_chromium(
@@ -300,6 +418,38 @@ class DumpDomTest(TempDirTestCase):
     def test_missing_executable(self) -> None:
         with self.assertRaisesRegex(design_render.RenderError, "cannot run"):
             design_render.dump_dom("http://x/", chromium=str(self.root / "none"))
+
+    def test_timeout_kills_the_whole_group(self) -> None:
+        chromium = self.fake_chromium(SPAWN_PROFILE_WRITER + "time.sleep(60)\n")
+        with self.assertRaisesRegex(design_render.RenderError, "within 3s"):
+            design_render.dump_dom("http://x/", chromium=chromium, timeout_s=3)
+        self.assert_writer_gone()
+
+    def test_kills_children_left_after_exit(self) -> None:
+        chromium = self.fake_chromium(
+            SPAWN_PROFILE_WRITER + f"sys.stdout.write({CLEAN_DOM!r})\n"
+        )
+        dom = design_render.dump_dom("http://x/", chromium=chromium)
+        self.assertEqual(dom, CLEAN_DOM)
+        self.assert_writer_gone()
+
+    def test_group_surviving_sigkill_fails(self) -> None:
+        killpg = os.killpg
+
+        def never_empty(pgid: int, number: int) -> None:
+            if number:
+                killpg(pgid, number)
+
+        chromium = self.printing_chromium(CLEAN_DOM)
+        with (
+            unittest.mock.patch.object(design_render, "GROUP_EXIT_TIMEOUT_S", 0),
+            unittest.mock.patch.object(
+                design_render.os, "killpg", side_effect=never_empty
+            ) as patched,
+            self.assertRaisesRegex(design_render.RenderError, "survived SIGKILL"),
+        ):
+            design_render.dump_dom("http://x/", chromium=chromium)
+        self.assertEqual(patched.call_args_list[0].args[1], signal.SIGKILL)
 
 
 class PrintPdfTest(TempDirTestCase):
@@ -467,6 +617,51 @@ class RenderCheckTest(TempDirTestCase):
         self.assertEqual(status, 1)
         self.assertIn("within 0.5s", output)
 
+    def test_timeout_leaves_no_process_and_checks_the_rest(self) -> None:
+        hangs = self.write("hangs.html", "<p>h</p>")
+        clean = self.write("clean.html", "<p>c</p>")
+        chromium = self.fake_chromium(
+            'if sys.argv[-1].endswith("/hangs.html"):\n'
+            + textwrap.indent(SPAWN_PROFILE_WRITER + "time.sleep(60)\n", "    ")
+            + f"sys.stdout.write({CLEAN_DOM!r})\n"
+        )
+        status, output = self.run_main(
+            "--root",
+            str(self.root),
+            "--chromium",
+            chromium,
+            "--timeout-s",
+            "3",
+            str(hangs),
+            str(clean),
+        )
+        self.assertEqual(status, 1)
+        self.assertRegex(
+            output,
+            "^"
+            + re.escape(f"{hangs}: {chromium} did not finish http://127.0.0.1:")
+            + r"\d+"
+            + re.escape("/hangs.html within 3.0s\nchecked 2 page(s): 1 problem(s)\n")
+            + "$",
+        )
+        self.assert_writer_gone()
+
+    def test_symlinked_page_inside_root(self) -> None:
+        self.write("src/index.html", "<p>i</p>")
+        page = self.root / "pages/index.html"
+        page.parent.mkdir()
+        page.symlink_to("../src/index.html")
+        chromium = self.fake_chromium(
+            f"""
+            assert sys.argv[-1].endswith("/pages/index.html"), sys.argv[-1]
+            sys.stdout.write({CLEAN_DOM!r})
+            """
+        )
+        status, output = self.run_main(
+            "--root", str(self.root), "--chromium", chromium, str(page)
+        )
+        self.assertEqual(status, 0, output)
+
     def test_missing_capture_fails_page(self) -> None:
         page = self.write("a.html", "<p>a</p>")
         chromium = self.printing_chromium("<html><body></body></html>")
@@ -553,6 +748,72 @@ class RealChromiumTest(TempDirTestCase):
         self.assertEqual(
             sorted(entry["tag"] for entry in result.errors), ["img", "link", "script"]
         )
+
+    def test_failed_loads_started_from_css(self) -> None:
+        cases = {
+            "font": "@font-face { font-family: f; src: url(missing.woff2) }"
+            " body { font-family: f }",
+            "background": "body { background-image: url(missing.png) }",
+            "import": "@import url(missing.css);",
+        }
+        for name, css in cases.items():
+            with self.subTest(name=name):
+                result = self.render("<p>text</p>", head=f"<style>{css}</style>")
+                self.assertEqual(self.kinds(result), ["response"], result.errors)
+                entry = result.errors[0]
+                self.assertEqual((entry["initiator"], entry["status"]), ("css", 404))
+                self.assertRegex(entry["url"], r"^http://127\.0\.0\.1:\d+/missing\.")
+
+    def test_failed_import_in_a_linked_stylesheet(self) -> None:
+        self.write("linked.css", "@import url(missing.css);")
+        result = self.render(
+            "<p>text</p>", head='<link rel="stylesheet" href="linked.css">'
+        )
+        self.assertEqual(
+            sorted(
+                (entry["kind"], entry["url"].rsplit("/", 1)[1])
+                for entry in result.errors
+            ),
+            [("resource", "linked.css"), ("response", "missing.css")],
+        )
+
+    def test_clean_page_with_loads_started_from_css(self) -> None:
+        self.write(
+            "dot.svg", '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'
+        )
+        self.write("imported.css", "p { color: black }")
+        result = self.render(
+            "<p>text</p>",
+            head="<style>@import url(imported.css);"
+            " body { background-image: url(dot.svg) }</style>",
+        )
+        self.assertEqual(result.errors, [])
+
+    def test_failed_fetch_is_left_to_the_script(self) -> None:
+        result = self.render(
+            "<script>fetch('missing.json').then(function (r) {"
+            " document.body.dataset.status = r.status; });</script>"
+        )
+        self.assertEqual(result.errors, [])
+        self.assertIn('data-status="404"', result.dom)
+
+    def test_symlinked_page_loads_beside_the_link(self) -> None:
+        self.write(
+            "src/index.html",
+            '<!DOCTYPE html>\n<html><head><link rel="stylesheet" href="style.css">'
+            "</head><body></body></html>\n",
+        )
+        self.write("pages/style.css", "body { color: black }")
+        page = self.root / "pages/index.html"
+        page.symlink_to("../src/index.html")
+        result = design_render.render(self.root, page)
+        self.assertEqual(result.errors, [])
+        self.assertTrue(result.url.endswith("/pages/index.html"))
+
+    def test_missing_icons_are_not_reported(self) -> None:
+        for head in ("", '<link rel="shortcut icon" href="i.ico">'):
+            with self.subTest(head=head):
+                self.assertEqual(self.render("<p>x</p>", head=head).errors, [])
 
     def test_script_errors(self) -> None:
         cases = {

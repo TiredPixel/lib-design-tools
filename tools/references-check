@@ -3,9 +3,10 @@
 
 HTML is read by element and attribute, never by pattern, so that a ``data-src`` or other
 ``data-*`` attribute is never taken for a reference: ``REFERENCE_ATTRIBUTES`` lists the
-attributes read on each element, ``srcset`` included, and ``src`` on ``input`` only
-where it is an image. CSS, whether a stylesheet, a
-``<style>`` element or a ``style`` attribute, is read for ``url(...)`` and ``@import``.
+attributes read on each element, ``srcset`` and ``imagesrcset`` included, ``src`` on
+``input`` only where it is an image, and ``content`` on ``meta`` only where it is a
+refresh. CSS, whether a stylesheet, a ``<style>`` element or a ``style`` attribute, is
+read for ``url(...)``, ``@import`` and each string in ``image-set()``.
 A relative reference resolves against the referencing file and a ``/``-rooted one
 against ``--root``; neither may leave ``--root``, since nothing outside it is served. A
 reference to a directory needs an ``index.html`` in it, which is what a static server
@@ -14,8 +15,8 @@ would answer with.
 With ``--require-integrity``, every external stylesheet and script must also carry
 ``integrity`` and ``crossorigin``, so a changed or compromised CDN file fails to load
 rather than running. With ``--no-external``, nothing external may load at all: only an
-``a`` and a ``link`` whose every ``rel`` loads nothing, such as ``canonical``, may point
-outside, since following a link loads nothing into the page.
+``a``, an ``area``, a refresh and a ``link`` whose every ``rel`` loads nothing, such as
+``canonical``, may point outside, since following a link loads nothing into the page.
 
 Exit status: 0 when every file passes, 1 when a reference does not resolve, an external
 stylesheet or script lacks ``integrity`` or ``crossorigin`` under
@@ -38,13 +39,15 @@ CSS_SUFFIXES = frozenset({".css"})
 
 REFERENCE_ATTRIBUTES = {
     "a": ("href",),
+    "area": ("href",),
     "audio": ("src",),
     "embed": ("src",),
     "iframe": ("src",),
     "image": ("href", "xlink:href"),
     "img": ("src", "srcset"),
     "input": ("src",),
-    "link": ("href",),
+    "link": ("href", "imagesrcset"),
+    "meta": ("content",),
     "object": ("data",),
     "script": ("src",),
     "source": ("src", "srcset"),
@@ -53,7 +56,11 @@ REFERENCE_ATTRIBUTES = {
     "video": ("src", "poster"),
 }
 
-IGNORED_SCHEMES = frozenset({"data", "javascript", "mailto", "tel"})
+SRCSET_ATTRIBUTES = frozenset({"imagesrcset", "srcset"})
+
+# Schemes whose target is never fetched from a server: the page itself, an object the
+# page holds, inline data, script, or a handler outside the browser.
+IGNORED_SCHEMES = frozenset({"about", "blob", "data", "javascript", "mailto", "tel"})
 
 # Listed rather than their complement, so that a relation missing from here counts as a
 # load and fails --no-external instead of passing it.
@@ -80,6 +87,7 @@ _CSS_URL = re.compile(
     re.IGNORECASE,
 )
 _CSS_IMPORT_STRING = re.compile(r"""@import\s+(?:"([^"]*)"|'([^']*)')""", re.IGNORECASE)
+_CSS_IMAGE_SET = re.compile(r"(?<![\w-])(?:-webkit-)?image-set\(", re.IGNORECASE)
 
 # One attribute of a start tag, its value skipped whole, so that a name written inside
 # another attribute's quoted value is never taken for an attribute.
@@ -87,6 +95,14 @@ _TAG_NAME = re.compile(r"<[^\s/>]+")
 _TAG_ATTRIBUTE = re.compile(r"""([^\s"'>/=]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?""")
 
 _SRCSET_SPACE = " \t\n\r\f"
+
+# A refresh's time, then a separator and its target, as the HTML standard parses them.
+_REFRESH = re.compile(
+    r"[\t\n\f\r ]*(?:\d|(?=\.))[\d.]*(?=[\t\n\f\r ;,]|\Z)"
+    r"[\t\n\f\r ]*[;,]?[\t\n\f\r ]*(.*)",
+    re.DOTALL,
+)
+_REFRESH_KEYWORD = re.compile(r"url[\t\n\f\r ]*=[\t\n\f\r ]*", re.IGNORECASE)
 
 
 def srcset_urls(srcset: str) -> Iterator[str]:
@@ -121,18 +137,65 @@ def srcset_urls(srcset: str) -> Iterator[str]:
             position += 1
 
 
+def refresh_url(content: str) -> str:
+    """Return the target of a refresh's ``content``, as the HTML standard reads it.
+
+    Empty where it names none, or is invalid and so ignored. A target may follow
+    ``url=`` and sit in quotes; one starting with ``u`` but not ``url=`` is taken whole.
+    """
+    match = _REFRESH.fullmatch(content)
+    if match is None:
+        return ""
+    target = match.group(1)
+    keyword = _REFRESH_KEYWORD.match(target)
+    if keyword is not None:
+        target = target[keyword.end() :]
+    elif target[:1] in ("u", "U"):
+        return target
+    if target[:1] in ('"', "'"):
+        target = target[1:].split(target[0], 1)[0]
+    return target
+
+
 def _blank_comments(css: str) -> str:
     """Replace CSS comments with spaces, keeping newlines so lines still count."""
     return _CSS_COMMENT.sub(lambda match: re.sub(r"[^\n]", " ", match.group(0)), css)
 
 
+def _image_set_strings(css: str) -> Iterator[tuple[int, str]]:
+    """Yield the offset and value of each string written directly in an ``image-set()``.
+
+    A string nested deeper, as in ``type("image/avif")``, names no image, and an image
+    given by ``url()`` is found as any other ``url()`` is.
+    """
+    for match in _CSS_IMAGE_SET.finditer(css):
+        position, depth = match.end(), 1
+        while position < len(css) and depth:
+            character = css[position]
+            if character in "\"'":
+                end = css.find(character, position + 1)
+                if end < 0:
+                    break
+                if depth == 1:
+                    yield position, css[position + 1 : end]
+                position = end
+            elif character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+            position += 1
+
+
 def css_references(css: str) -> Iterator[tuple[int, str]]:
     """Yield the zero-based line and target of each reference in ``css``."""
     css = _blank_comments(css)
-    matches = [*_CSS_URL.finditer(css), *_CSS_IMPORT_STRING.finditer(css)]
-    for match in sorted(matches, key=lambda found: found.start()):
-        target = next(group for group in match.groups() if group is not None)
-        yield css.count("\n", 0, match.start()), target
+    found = [
+        (match.start(), next(group for group in match.groups() if group is not None))
+        for match in (*_CSS_URL.finditer(css), *_CSS_IMPORT_STRING.finditer(css))
+    ]
+    found.extend(_image_set_strings(css))
+    for start, target in sorted(found):
+        yield css.count("\n", 0, start), target
 
 
 def classify(reference: str) -> tuple[str, str]:
@@ -192,7 +255,8 @@ def _problem(
 
 def _loads(tag: str, attributes: dict[str, str | None]) -> bool:
     """Whether the element's reference loads something into the page."""
-    if tag == "a":
+    # A refresh navigates away, as following a link does.
+    if tag in ("a", "area", "meta"):
         return False
     if tag == "link":
         relations = (attributes.get("rel") or "").lower().split()
@@ -292,8 +356,12 @@ class _HtmlReferences(html.parser.HTMLParser):
             # A browser reads src on an input only where it is an image button.
             if tag == "input" and (attributes.get("type") or "").lower() != "image":
                 continue
+            if tag == "meta":
+                if (attributes.get("http-equiv") or "").lower() != "refresh":
+                    continue
+                value = refresh_url(value)
             line = self._attribute_line(name)
-            references = srcset_urls(value) if name == "srcset" else (value,)
+            references = srcset_urls(value) if name in SRCSET_ATTRIBUTES else (value,)
             for reference in references:
                 self._check(line, reference, loads)
             # Refused outright under --no-external, so not reported twice.

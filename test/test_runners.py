@@ -125,6 +125,12 @@ class PassSelectionTest(Repository):
         self.settings("function shell_files { printf '%s\\0' unnamed.sh; }\n")
         self.assertFails(self.run_bin("lint"), "SC2086")
 
+    def test_the_linked_runners_lint_clean_with_no_bin_runner_beside_them(self):
+        self.settings("function shell_files { printf '%s\\0' bin/*; }\n")
+        result = self.run_bin("lint")
+        self.assertPasses(result)
+        self.assertIn("checking 5 shell file(s)", result.stderr)
+
 
 class FormatThenLintTest(Repository):
     """Each writing pass: lint fails on the unformatted file, format fixes it, and lint
@@ -203,19 +209,6 @@ class FormatThenLintTest(Repository):
 
 class CheckingPassTest(Repository):
     """The passes that only check: each passes a sound tree and fails a broken one."""
-
-    def test_lfs(self):
-        self.settings(
-            "function lfs_args { printf '%s\\0' --attributes .gitattributes img; }\n"
-        )
-        self.write(".gitattributes", "*.png filter=lfs -text\n")
-        self.write(
-            "img/a.png",
-            "version https://git-lfs.github.com/spec/v1\noid sha256:0\nsize 1\n",
-        )
-        self.assertFails(self.run_bin("lint"), "img/a.png")
-        (self.root / "img/a.png").write_bytes(b"\x89PNG\r\n")
-        self.assertPasses(self.run_bin("lint"))
 
     def test_references(self):
         self.settings(
