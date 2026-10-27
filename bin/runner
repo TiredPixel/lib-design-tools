@@ -39,3 +39,18 @@ function read_set {
         exit 1
     fi
 }
+
+# read_set for a set of file names, which the passes put after each tool's
+# options: a name starting with a dash is given as ./-name, so no tool reads it
+# as an option.
+function read_files {
+    local -n read_files_into=$2
+    local i
+
+    read_set "$1" "$2"
+    for i in "${!read_files_into[@]}"; do
+        if [[ ${read_files_into[$i]} == -* ]]; then
+            read_files_into[i]=./${read_files_into[$i]}
+        fi
+    done
+}

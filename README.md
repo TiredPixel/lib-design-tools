@@ -102,7 +102,7 @@ What `bin/format` rewrites and `bin/lint` checks for drift, each to the tool's o
 
 What `bin/lint` checks only:
 
-- `shell_files` – ShellCheck on these, on `bin/settings`, and on the scripts at the top level and in `bin/`.
+- `shell_files` – ShellCheck.
 - `lfs_args` – `tools/lfs-check`'s arguments.
 - `references_args` – `tools/references-check`'s arguments.
 - `render_args` – `tools/render-check`'s arguments, such as `--root . pages/*.html`.

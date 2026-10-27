@@ -105,20 +105,25 @@ class PassSelectionTest(Repository):
         )
         self.assertFails(self.run_bin("lint"), "bin/settings: references_args failed")
 
-    def test_the_shell_pass_checks_the_settings_and_the_named_files(self):
+    def test_the_shell_pass_checks_only_the_named_files(self):
         self.write("ok.sh", '# shellcheck shell=bash\necho "$1"\n')
+        self.write("unnamed.sh", "#!/bin/bash\necho $1\n")
+        self.write("bin/unnamed", "#!/bin/bash\necho $1\n")
         self.settings(
             "function shell_files { printf '%s\\0' ok.sh; }\n"
-            "function yaml_files { echo $1; }\n"
+            "function helper { echo $1; }\n"
         )
-        self.assertFails(self.run_bin("lint"), "SC2086")
-        self.settings("function shell_files { printf '%s\\0' extra.sh; }\n")
-        self.write("extra.sh", "# shellcheck shell=bash\necho $1\n")
-        self.assertFails(self.run_bin("lint"), "SC2086")
-        self.write("extra.sh", '# shellcheck shell=bash\necho "$1"\n')
         result = self.run_bin("lint")
         self.assertPasses(result)
         self.assertEqual(self.sections(result), ["LINT SHELL"])
+        self.assertIn("checking 1 shell file(s)", result.stderr)
+        self.settings(
+            "function shell_files { printf '%s\\0' ok.sh bin/settings; }\n"
+            "function helper { echo $1; }\n"
+        )
+        self.assertFails(self.run_bin("lint"), "SC2086")
+        self.settings("function shell_files { printf '%s\\0' unnamed.sh; }\n")
+        self.assertFails(self.run_bin("lint"), "SC2086")
 
 
 class FormatThenLintTest(Repository):
@@ -131,12 +136,21 @@ class FormatThenLintTest(Repository):
         result = self.run_bin("format")
         self.assertPasses(result)
         self.assertIn(f"FORMAT {section}", self.sections(result))
+        self.assertRegex(result.stderr, r"formatting [12] .* file\(s\)")
         self.assertEqual((self.root / name).read_text(), after)
-        self.assertPasses(self.run_bin("lint"))
+        result = self.run_bin("lint")
+        self.assertPasses(result)
+        self.assertRegex(result.stderr, r"checking [12] .* file\(s\)")
 
     def test_yaml(self):
         self.settings("function yaml_files { printf '%s\\0' a.yml; }\n")
         self.assertFormatFixes("a.yml", UNSORTED_YAML, SORTED_YAML, "YAML")
+
+    def test_a_file_name_starting_with_a_dash_is_not_read_as_an_option(self):
+        self.settings("function yaml_files { printf '%s\\0' -a.yml; }\n")
+        self.assertFormatFixes("-a.yml", UNSORTED_YAML, SORTED_YAML, "YAML")
+        self.settings("function json_files { printf '%s\\0' -a.json; }\n")
+        self.assertFormatFixes("-a.json", '{"b": 1}', '{\n  "b": 1\n}\n', "JSON")
 
     def test_json(self):
         self.settings("function json_files { printf '%s\\0' a.json; }\n")
@@ -178,7 +192,7 @@ class FormatThenLintTest(Repository):
         self.assertIn("--x-a: #000000;", (self.root / "p.css").read_text())
         self.assertPasses(self.run_bin("lint"))
         self.write("p.yml", 'a: "#FFFFFF"\n')
-        self.assertFails(self.run_bin("lint"), "stale: run make format")
+        self.assertFails(self.run_bin("lint"), "palette files are stale.")
 
 
 class CheckingPassTest(Repository):

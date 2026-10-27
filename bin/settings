@@ -30,11 +30,11 @@ function python_files {
     printf '%s\0' tools/*.py test/*.py
 }
 
-# The shell in tools/, and bin/runner, which carries no shebang since it is
-# sourced.
+# The shell in tools/, and all of bin/: the runners, and bin/runner and this
+# file, which carry no shebang since they are sourced.
 function shell_files {
     tools_by_shebang bash
-    printf '%s\0' bin/runner
+    printf '%s\0' bin/*
 }
 
 function pytest_args {
