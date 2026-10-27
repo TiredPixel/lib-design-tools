@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+#
+# Writing counterpart to bin/lint: every pass here rewrites, and bin/lint checks
+# the same path sets for drift afterwards.
+#
+# read_set and the readers built on it assign each array through a nameref,
+# which ShellCheck cannot follow.
+# shellcheck disable=SC2154
+set -Eeuo pipefail
+shopt -s inherit_errexit failglob
+
+# shellcheck source=bin/runner
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
+
+if defines palette_args; then
+    echo -e "\n=== FORMAT PALETTE\n"
+
+    read_set palette_args palette
+    "$tools/palette-generate" "${palette[@]}"
+fi
+
+if defines python_files; then
+    echo -e "\n=== FORMAT PYTHON\n"
+
+    read_files python_files python
+    echo "formatting ${#python[@]} Python file(s)" >&2
+    ruff check --fix --unsafe-fixes "${python[@]}"
+    ruff format "${python[@]}"
+fi
+
+if defines yaml_files; then
+    echo -e "\n=== FORMAT YAML\n"
+
+    read_files yaml_files yaml
+    echo "formatting ${#yaml[@]} YAML file(s)" >&2
+    for f in "${yaml[@]}"; do
+        yq -i -P 'sort_keys(..)' "$f"
+    done
+fi
+
+if defines json_files; then
+    echo -e "\n=== FORMAT JSON\n"
+
+    read_files json_files json
+    echo "formatting ${#json[@]} JSON file(s)" >&2
+    # Captured before writing, since redirecting json.tool's output to the file
+    # it reads would truncate it before reading.
+    for f in "${json[@]}"; do
+        formatted=$(python3 -m json.tool "${json_options[@]}" "$f")
+        printf '%s\n' "$formatted" > "$f"
+    done
+fi
+
+if defines js_files; then
+    echo -e "\n=== FORMAT JAVASCRIPT\n"
+
+    read_files js_files js
+    echo "formatting ${#js[@]} JavaScript file(s)" >&2
+    semistandard --fix "${js[@]}"
+fi
+
+if defines css_files || defines html_files; then
+    echo -e "\n=== FORMAT CSS AND HTML\n"
+
+    read_prettier_files prettied
+    echo "formatting ${#prettied[@]} CSS and HTML file(s)" >&2
+    prettier --write "${prettied[@]}"
+fi
+
+echo

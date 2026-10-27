@@ -1,0 +1,42 @@
+# shellcheck shell=bash
+#
+# This repository's settings for the runners in bin/, which it uses as any
+# other repository does: each function names what one pass reads,
+# NUL-separated.
+
+# A proposed workflow waits in .github/workflows.new/ until it is moved into
+# .github/workflows/, so either directory may be empty or absent.
+function yaml_files {
+    printf '%s\0' docker-compose.yml
+    find .github -path '.github/workflows*/*.yml' -print0 | sort -z
+}
+
+# By shebang, since the commands in tools/ carry no suffix.
+function tools_by_shebang {
+    local f first
+    local pattern="^#!.*[/[:space:]]$1([[:space:]]|\$)"
+
+    for f in tools/*; do
+        [ -f "$f" ] || continue
+        first=$(head -n 1 -- "$f")
+        if [[ $first =~ $pattern ]]; then
+            printf '%s\0' "$f"
+        fi
+    done
+}
+
+function python_files {
+    tools_by_shebang python3
+    printf '%s\0' tools/*.py test/*.py
+}
+
+# The shell in tools/, and all of bin/: the runners, and bin/runner and this
+# file, which carry no shebang since they are sourced.
+function shell_files {
+    tools_by_shebang bash
+    printf '%s\0' bin/*
+}
+
+function pytest_args {
+    printf '%s\0' --no-skips
+}

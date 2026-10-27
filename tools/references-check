@@ -1,0 +1,407 @@
+#!/usr/bin/env python3
+"""Fail unless every local reference in the named HTML and CSS files resolves.
+
+HTML is read by element and attribute, never by pattern, so that a ``data-src`` or other
+``data-*`` attribute is never taken for a reference: ``REFERENCE_ATTRIBUTES`` lists the
+attributes read on each element, ``srcset`` included, and ``src`` on ``input`` only
+where it is an image. CSS, whether a stylesheet, a
+``<style>`` element or a ``style`` attribute, is read for ``url(...)`` and ``@import``.
+A relative reference resolves against the referencing file and a ``/``-rooted one
+against ``--root``; neither may leave ``--root``, since nothing outside it is served. A
+reference to a directory needs an ``index.html`` in it, which is what a static server
+would answer with.
+
+With ``--require-integrity``, every external stylesheet and script must also carry
+``integrity`` and ``crossorigin``, so a changed or compromised CDN file fails to load
+rather than running. With ``--no-external``, nothing external may load at all: only an
+``a`` and a ``link`` whose every ``rel`` loads nothing, such as ``canonical``, may point
+outside, since following a link loads nothing into the page.
+
+Exit status: 0 when every file passes, 1 when a reference does not resolve, an external
+stylesheet or script lacks ``integrity`` or ``crossorigin`` under
+``--require-integrity``, something external loads under ``--no-external``, or a file
+holds a ``<base>`` element or is not valid UTF-8, and 2 on a usage error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import html.parser
+import pathlib
+import re
+import sys
+import urllib.parse
+from collections.abc import Iterator
+
+HTML_SUFFIXES = frozenset({".html", ".htm"})
+CSS_SUFFIXES = frozenset({".css"})
+
+REFERENCE_ATTRIBUTES = {
+    "a": ("href",),
+    "audio": ("src",),
+    "embed": ("src",),
+    "iframe": ("src",),
+    "image": ("href", "xlink:href"),
+    "img": ("src", "srcset"),
+    "input": ("src",),
+    "link": ("href",),
+    "object": ("data",),
+    "script": ("src",),
+    "source": ("src", "srcset"),
+    "track": ("src",),
+    "use": ("href", "xlink:href"),
+    "video": ("src", "poster"),
+}
+
+IGNORED_SCHEMES = frozenset({"data", "javascript", "mailto", "tel"})
+
+# Listed rather than their complement, so that a relation missing from here counts as a
+# load and fails --no-external instead of passing it.
+NON_LOADING_RELATIONS = frozenset(
+    {
+        "alternate",
+        "author",
+        "bookmark",
+        "canonical",
+        "help",
+        "license",
+        "me",
+        "next",
+        "prev",
+        "privacy-policy",
+        "search",
+        "terms-of-service",
+    }
+)
+
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_CSS_URL = re.compile(
+    r"""(?<![\w-])url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s"']*))\s*\)""",
+    re.IGNORECASE,
+)
+_CSS_IMPORT_STRING = re.compile(r"""@import\s+(?:"([^"]*)"|'([^']*)')""", re.IGNORECASE)
+
+# One attribute of a start tag, its value skipped whole, so that a name written inside
+# another attribute's quoted value is never taken for an attribute.
+_TAG_NAME = re.compile(r"<[^\s/>]+")
+_TAG_ATTRIBUTE = re.compile(r"""([^\s"'>/=]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?""")
+
+_SRCSET_SPACE = " \t\n\r\f"
+
+
+def srcset_urls(srcset: str) -> Iterator[str]:
+    """Yield each candidate URL of a ``srcset``, as the HTML standard splits it.
+
+    A URL runs to the next whitespace and may itself hold commas, as a ``data:`` URL
+    does; trailing commas end a candidate that has no descriptors.
+    """
+    position, end = 0, len(srcset)
+    while True:
+        while position < end and srcset[position] in _SRCSET_SPACE + ",":
+            position += 1
+        if position >= end:
+            return
+        start = position
+        while position < end and srcset[position] not in _SRCSET_SPACE:
+            position += 1
+        url = srcset[start:position]
+        if url.endswith(","):
+            yield url.rstrip(",")
+            continue
+        yield url
+        depth = 0
+        while position < end:
+            character = srcset[position]
+            if character == "(":
+                depth += 1
+            elif character == ")" and depth:
+                depth -= 1
+            elif character == "," and not depth:
+                break
+            position += 1
+
+
+def _blank_comments(css: str) -> str:
+    """Replace CSS comments with spaces, keeping newlines so lines still count."""
+    return _CSS_COMMENT.sub(lambda match: re.sub(r"[^\n]", " ", match.group(0)), css)
+
+
+def css_references(css: str) -> Iterator[tuple[int, str]]:
+    """Yield the zero-based line and target of each reference in ``css``."""
+    css = _blank_comments(css)
+    matches = [*_CSS_URL.finditer(css), *_CSS_IMPORT_STRING.finditer(css)]
+    for match in sorted(matches, key=lambda found: found.start()):
+        target = next(group for group in match.groups() if group is not None)
+        yield css.count("\n", 0, match.start()), target
+
+
+def classify(reference: str) -> tuple[str, str]:
+    """Return ``('ignore'|'external'|'local', path)`` for a reference.
+
+    The path is the decoded local path, stripped of query and fragment; it is empty for
+    anything that is not local.
+    """
+    reference = reference.strip()
+    if not reference or reference.startswith("#"):
+        return "ignore", ""
+    parts = urllib.parse.urlsplit(reference)
+    scheme = parts.scheme.lower()
+    if scheme in IGNORED_SCHEMES:
+        return "ignore", ""
+    if scheme or parts.netloc:
+        return "external", ""
+    path = urllib.parse.unquote(parts.path)
+    if not path:
+        return "ignore", ""
+    return "local", path
+
+
+def resolve(path: str, referrer: pathlib.Path, root: pathlib.Path) -> str | None:
+    """Return why a local ``path`` does not resolve, or None when it does."""
+    if path.startswith("/"):
+        target = root / path.lstrip("/")
+    else:
+        target = referrer.parent / path
+    target = target.resolve()
+    if not target.is_relative_to(root.resolve()):
+        return f"{path} resolves outside --root"
+    if target.is_dir():
+        if not (target / "index.html").is_file():
+            return f"{path} is a directory with no index.html"
+        return None
+    if not target.is_file():
+        return f"{path} does not exist"
+    return None
+
+
+def _problem(
+    reference: str,
+    referrer: pathlib.Path,
+    root: pathlib.Path,
+    refuse_external: bool,
+) -> str | None:
+    """Return why ``reference`` fails, else None: a local one that does not resolve, or
+    an external one where ``refuse_external`` is set."""
+    kind, path = classify(reference)
+    if kind == "external" and refuse_external:
+        return f"external {reference}, which --no-external refuses"
+    if kind != "local":
+        return None
+    return resolve(path, referrer, root)
+
+
+def _loads(tag: str, attributes: dict[str, str | None]) -> bool:
+    """Whether the element's reference loads something into the page."""
+    if tag == "a":
+        return False
+    if tag == "link":
+        relations = (attributes.get("rel") or "").lower().split()
+        return not relations or not set(relations) <= NON_LOADING_RELATIONS
+    return True
+
+
+class _HtmlReferences(html.parser.HTMLParser):
+    """Collect ``(line, message)`` problems from one HTML document."""
+
+    def __init__(
+        self,
+        path: pathlib.Path,
+        root: pathlib.Path,
+        no_external: bool,
+        require_integrity: bool,
+    ) -> None:
+        super().__init__(convert_charrefs=True)
+        self._path = path
+        self._root = root
+        self._no_external = no_external
+        self._require_integrity = require_integrity
+        self._style: list[str] | None = None
+        self._style_line = 0
+        self.problems: list[tuple[int, str]] = []
+
+    def _attribute_line(self, name: str) -> int:
+        """Return the line holding attribute ``name`` of the current tag.
+
+        Only called for an attribute the parser read a value for, so the tag's text
+        always holds it. A repeated attribute takes its last occurrence, whose value
+        the parser keeps.
+        """
+        tag = self.get_starttag_text()
+        start = 0
+        for match in _TAG_ATTRIBUTE.finditer(tag, _TAG_NAME.match(tag).end()):
+            if match.group(1).lower() == name:
+                start = match.start()
+        return self.getpos()[0] + tag.count("\n", 0, start)
+
+    def _check(self, line: int, reference: str, loads: bool) -> None:
+        problem = _problem(
+            reference, self._path, self._root, self._no_external and loads
+        )
+        if problem is not None:
+            self.problems.append((line, problem))
+
+    def _check_css(self, first_line: int, css: str) -> None:
+        for offset, reference in css_references(css):
+            self._check(first_line + offset, reference, True)
+
+    def _check_integrity(
+        self, tag: str, name: str, attributes: dict[str, str | None]
+    ) -> None:
+        if tag == "link":
+            relations = (attributes.get("rel") or "").lower().split()
+            if "stylesheet" not in relations:
+                return
+            what = "stylesheet"
+        elif tag == "script":
+            what = "script"
+        else:
+            return
+        reference = attributes[name]
+        if classify(reference)[0] != "external":
+            return
+        missing = []
+        if not attributes.get("integrity"):
+            missing.append("integrity")
+        if "crossorigin" not in attributes:
+            missing.append("crossorigin")
+        if missing:
+            self.problems.append(
+                (
+                    self._attribute_line(name),
+                    f"external {what} {reference} lacks {' and '.join(missing)}",
+                )
+            )
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        attributes = dict(attrs)
+        if tag == "base":
+            self.problems.append(
+                (
+                    self.getpos()[0],
+                    (
+                        "<base> changes how every reference resolves, which this "
+                        "check does not model"
+                    ),
+                )
+            )
+        loads = _loads(tag, attributes)
+        for name in REFERENCE_ATTRIBUTES.get(tag, ()):
+            value = attributes.get(name)
+            if value is None:
+                continue
+            # A browser reads src on an input only where it is an image button.
+            if tag == "input" and (attributes.get("type") or "").lower() != "image":
+                continue
+            line = self._attribute_line(name)
+            references = srcset_urls(value) if name == "srcset" else (value,)
+            for reference in references:
+                self._check(line, reference, loads)
+            # Refused outright under --no-external, so not reported twice.
+            if self._require_integrity and not (self._no_external and loads):
+                self._check_integrity(tag, name, attributes)
+        if attributes.get("style"):
+            self._check_css(self._attribute_line("style"), attributes["style"])
+        if tag == "style":
+            self._style = []
+
+    def handle_data(self, data: str) -> None:
+        if self._style is not None:
+            if not self._style:
+                self._style_line = self.getpos()[0]
+            self._style.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "style" and self._style is not None:
+            self._check_css(self._style_line, "".join(self._style))
+            self._style = None
+
+
+def check_html(
+    path: pathlib.Path,
+    root: pathlib.Path,
+    no_external: bool = False,
+    require_integrity: bool = False,
+) -> list[tuple[int, str]]:
+    parser = _HtmlReferences(path, root, no_external, require_integrity)
+    parser.feed(path.read_text(encoding="utf-8"))
+    parser.close()
+    return parser.problems
+
+
+def check_css(
+    path: pathlib.Path, root: pathlib.Path, no_external: bool = False
+) -> list[tuple[int, str]]:
+    problems = []
+    for offset, reference in css_references(path.read_text(encoding="utf-8")):
+        problem = _problem(reference, path, root, no_external)
+        if problem is not None:
+            problems.append((offset + 1, problem))
+    return problems
+
+
+def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="references-check",
+        description="Fail on local references in HTML and CSS that do not resolve.",
+    )
+    parser.add_argument(
+        "--root",
+        required=True,
+        type=pathlib.Path,
+        help="site root that /-rooted references resolve against",
+    )
+    parser.add_argument(
+        "--no-external",
+        action="store_true",
+        help="fail on anything external the files load",
+    )
+    parser.add_argument(
+        "--require-integrity",
+        action="store_true",
+        help="fail on an external stylesheet or script lacking integrity or "
+        "crossorigin",
+    )
+    parser.add_argument("files", nargs="+", type=pathlib.Path, metavar="FILE")
+    arguments = parser.parse_args(argv)
+    if not arguments.root.is_dir():
+        parser.error(f"--root {arguments.root} is not a directory")
+    for path in arguments.files:
+        if not path.is_file():
+            parser.error(f"{path} is not a file")
+        if path.suffix.lower() not in HTML_SUFFIXES | CSS_SUFFIXES:
+            parser.error(f"{path} is neither HTML nor CSS")
+        if not path.resolve().is_relative_to(arguments.root.resolve()):
+            parser.error(f"{path} is not inside --root {arguments.root}")
+    return arguments
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parse_arguments(argv)
+    failures = 0
+    for path in arguments.files:
+        try:
+            if path.suffix.lower() in HTML_SUFFIXES:
+                problems = check_html(
+                    path,
+                    arguments.root,
+                    arguments.no_external,
+                    arguments.require_integrity,
+                )
+            else:
+                problems = check_css(path, arguments.root, arguments.no_external)
+        except UnicodeDecodeError as error:
+            print(f"{path}: not valid UTF-8: {error}", file=sys.stderr)
+            failures += 1
+            continue
+        for line, message in problems:
+            print(f"{path}:{line}: {message}", file=sys.stderr)
+        failures += len(problems)
+    print(
+        f"checked {len(arguments.files)} file(s): {failures} problem(s)",
+        file=sys.stderr,
+    )
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

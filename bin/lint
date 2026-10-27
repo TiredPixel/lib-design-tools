@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+#
+# Read-only counterpart to bin/format: every check here reports and fails, and
+# none of them write. Anything that rewrites a file belongs in bin/format.
+#
+# read_set and the readers built on it assign each array through a nameref,
+# which ShellCheck cannot follow.
+# shellcheck disable=SC2154
+set -Eeuo pipefail
+shopt -s inherit_errexit failglob
+
+# shellcheck source=bin/runner
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
+
+if defines shell_files; then
+    echo -e "\n=== LINT SHELL\n"
+
+    read_files shell_files shell
+    echo "checking ${#shell[@]} shell file(s)" >&2
+    shellcheck -x "${shell[@]}"
+fi
+
+if defines palette_args; then
+    echo -e "\n=== LINT PALETTE\n"
+
+    read_set palette_args palette
+    "$tools/palette-generate" "${palette[@]}" --check || {
+        echo "The generated palette files are stale." >&2
+        exit 1
+    }
+fi
+
+if defines python_files; then
+    echo -e "\n=== LINT PYTHON\n"
+
+    read_files python_files python
+    echo "checking ${#python[@]} Python file(s)" >&2
+    ruff format --check "${python[@]}"
+    ruff check "${python[@]}"
+fi
+
+if defines yaml_files; then
+    echo -e "\n=== LINT YAML\n"
+
+    read_files yaml_files yaml
+    echo "checking ${#yaml[@]} YAML file(s)" >&2
+    printf '%s\0' "${yaml[@]}" | "$design_tools/lib/shell-common/lint/yaml-keys"
+fi
+
+if defines json_files; then
+    echo -e "\n=== LINT JSON\n"
+
+    read_files json_files json
+    echo "checking ${#json[@]} JSON file(s)" >&2
+    status=0
+    for f in "${json[@]}"; do
+        if ! python3 -m json.tool "${json_options[@]}" "$f" | diff -u -- "$f" -; then
+            echo "$f: not formatted" >&2
+            status=1
+        fi
+    done
+    [ $status -eq 0 ]
+fi
+
+if defines js_files; then
+    echo -e "\n=== LINT JAVASCRIPT\n"
+
+    read_files js_files js
+    echo "checking ${#js[@]} JavaScript file(s)" >&2
+    semistandard --verbose "${js[@]}" | snazzy
+fi
+
+if defines css_files || defines html_files; then
+    echo -e "\n=== LINT CSS AND HTML\n"
+
+    read_prettier_files prettied
+    echo "checking ${#prettied[@]} CSS and HTML file(s)" >&2
+    prettier --check "${prettied[@]}"
+fi
+
+if defines lfs_args; then
+    echo -e "\n=== LINT LFS\n"
+
+    read_set lfs_args lfs
+    "$tools/lfs-check" "${lfs[@]}"
+fi
+
+if defines references_args; then
+    echo -e "\n=== LINT REFERENCES\n"
+
+    read_set references_args references
+    "$tools/references-check" "${references[@]}"
+fi
+
+if defines render_args; then
+    echo -e "\n=== LINT RENDER\n"
+
+    read_set render_args render
+    "$tools/render-check" "${render[@]}"
+fi
+
+echo

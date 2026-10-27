@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+#
+# Serves the tree with tools/preview-serve on every address, so the port the
+# preview service publishes reaches it from the host. / redirects to the
+# preview_index bin/settings sets.
+set -Eeuo pipefail
+shopt -s inherit_errexit failglob
+
+# shellcheck source=bin/runner
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
+
+# Unlike the other settings, a variable rather than a function.
+if declare -F preview_index > /dev/null; then
+    echo "bin/settings: preview_index must be a variable, not a function" >&2
+    exit 1
+fi
+if [ -z "${preview_index:-}" ]; then
+    echo "bin/settings: preview_index is not set" >&2
+    exit 1
+fi
+
+exec "$tools/preview-serve" --address=0.0.0.0 --port=8080 --root=. \
+    --index="$preview_index"

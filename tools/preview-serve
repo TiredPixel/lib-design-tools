@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""Serve a tree as it is on disk, for previewing it while it is edited.
+
+Every response carries ``Cache-Control: no-store``, so a reload always shows the file as
+saved. A directory without an ``index.html`` is listed. ``/`` is redirected to
+``--index``. Any path with a segment starting ``.`` is refused, since the tree served is
+usually a whole repository, ``.git`` included. ``.webmanifest`` is served as
+``application/manifest+json``, which a browser needs to read a web app manifest rather
+than download it.
+
+For development only: the server is Python's standard one, threaded, with no TLS and no
+access control.
+
+Exit status: 0 when stopped, 2 on a usage error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import functools
+import http.server
+import pathlib
+import sys
+import urllib.parse
+from typing import ClassVar
+
+EXTRA_TYPES = {".webmanifest": "application/manifest+json"}
+
+
+class PreviewHandler(http.server.SimpleHTTPRequestHandler):
+    """Serves ``directory`` with the rules above; ``index`` is where ``/`` goes."""
+
+    extensions_map: ClassVar[dict[str, str]] = {
+        **http.server.SimpleHTTPRequestHandler.extensions_map,
+        **EXTRA_TYPES,
+    }
+
+    def __init__(self, *args, index: str, **kwargs):
+        self.index = index
+        super().__init__(*args, **kwargs)
+
+    def end_headers(self) -> None:
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+    def _refused(self) -> bool:
+        path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
+        return any(segment.startswith(".") for segment in path.split("/"))
+
+    def _route(self) -> bool:
+        """Answer the redirect and refusals; return True when answered."""
+        if urllib.parse.urlsplit(self.path).path == "/":
+            self.send_response(302)
+            self.send_header("Location", self.index)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return True
+        if self._refused():
+            self.send_error(404)
+            return True
+        return False
+
+    def do_GET(self) -> None:
+        if not self._route():
+            super().do_GET()
+
+    def do_HEAD(self) -> None:
+        if not self._route():
+            super().do_HEAD()
+
+    def guess_type(self, path) -> str:
+        guessed = super().guess_type(path)
+        if guessed.startswith("text/") or guessed in (
+            "application/javascript",
+            "application/json",
+            "application/manifest+json",
+            "image/svg+xml",
+        ):
+            return f"{guessed}; charset=utf-8"
+        return guessed
+
+
+def make_server(
+    root: pathlib.Path, address: str, port: int, index: str
+) -> http.server.ThreadingHTTPServer:
+    """A server for ``root`` bound to ``address`` and ``port`` (0 picks one)."""
+    handler = functools.partial(PreviewHandler, directory=str(root), index=index)
+    return http.server.ThreadingHTTPServer((address, port), handler)
+
+
+def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="preview-serve",
+        description="Serve a tree as it is on disk, for previewing it.",
+    )
+    parser.add_argument(
+        "--root", type=pathlib.Path, required=True, help="the tree to serve"
+    )
+    parser.add_argument(
+        "--address", default="127.0.0.1", help="the address to listen on"
+    )
+    parser.add_argument("--port", type=int, default=8080, help="the port to listen on")
+    parser.add_argument(
+        "--index", required=True, help="the path / redirects to, such as /preview/"
+    )
+    arguments = parser.parse_args(argv)
+    if not arguments.root.is_dir():
+        parser.error(f"--root {arguments.root} is not a directory")
+    if not arguments.index.startswith("/"):
+        parser.error(f"--index {arguments.index} is not a /-rooted path")
+    if not 0 <= arguments.port <= 65535:
+        parser.error(f"--port {arguments.port} is not a port")
+    return arguments
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parse_arguments(argv)
+    server = make_server(
+        arguments.root.resolve(), arguments.address, arguments.port, arguments.index
+    )
+    host, port = server.server_address[:2]
+    print(f"preview-serve: {arguments.root} at http://{host}:{port}/", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
