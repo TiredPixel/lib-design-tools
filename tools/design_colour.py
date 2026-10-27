@@ -9,6 +9,7 @@ Nothing here reads a file.
 import itertools
 import math
 import re
+from collections.abc import Iterable
 
 _HEX = re.compile(r"#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})")
 
@@ -105,7 +106,7 @@ def hue_gap(a: float, b: float) -> float:
     return min(gap, 360 - gap)
 
 
-def hue_spread(colours) -> float:
+def hue_spread(colours: Iterable[str]) -> float:
     """The widest hue gap between any two of COLOURS."""
     pairs = itertools.combinations(colours, 2)
     return max(hue_gap(hue(a), hue(b)) for a, b in pairs)

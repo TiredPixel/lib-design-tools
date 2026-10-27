@@ -96,7 +96,7 @@ def _offset(starts: list[int], position: tuple[int, int]) -> int:
     return starts[line - 1] + column
 
 
-def line_starts(text: str) -> list[int]:
+def _line_starts(text: str) -> list[int]:
     """Return the offset of the first character of each line of ``text``."""
     return [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
 
@@ -110,7 +110,7 @@ class _InsertionPoint(html.parser.HTMLParser):
 
     def __init__(self, text: str) -> None:
         super().__init__(convert_charrefs=True)
-        self._starts = line_starts(text)
+        self._starts = _line_starts(text)
         self.after_head: int | None = None
         self.after_html: int | None = None
         self.after_doctype: int | None = None
