@@ -1,0 +1,3 @@
+[lint]
+# The performance rules, on top of ruff's defaults.
+extend-select = ["PERF"]
