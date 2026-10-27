@@ -194,3 +194,7 @@ The image builds two stages. `dev` is the formatting, linting and test toolchain
 The `format` service runs `bin/format` from `dev` on the tree mounted read-write, since its rewrites must reach it, and the `preview` service `bin/preview` on the tree mounted read-only. The `test` service runs the gates on its own copy, with no mount and no network.
 
 Base images are pinned by digest, and tools from outside Debian's repositories by `ARG`; in this repository, `make upgrade` re-pins each pin the `Dockerfile` names on a `FROMFREEZE` or `ARGFREEZE` line.
+
+## Licence
+
+Copyright © [Nicolas Williams](https://tiredpixel.com). It is free software, released under the BSD 3-Clause licence, and may be redistributed under the terms specified in `LICENSE`.
