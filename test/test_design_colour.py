@@ -99,11 +99,7 @@ class HueTest(unittest.TestCase):
     def test_hue_spread_is_the_widest_gap(self):
         red, yellow, blue = "#FF0000", "#FFFF00", "#0000FF"
         self.assertAlmostEqual(
-            design_colour.hue_spread([red, yellow, blue]),
-            max(
-                design_colour.hue_gap(design_colour.hue(a), design_colour.hue(b))
-                for a, b in ((red, yellow), (red, blue), (yellow, blue))
-            ),
+            design_colour.hue_spread([red, yellow, blue]), 156.57, places=2
         )
         with self.assertRaises(ValueError):
             design_colour.hue_spread([red])

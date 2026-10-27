@@ -64,9 +64,9 @@ class NoSkipsTest(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = pathlib.Path(directory.name)
-        (root / "pytest.ini").write_text("[pytest]\n")
+        (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
         for name, content in files.items():
-            (root / name).write_text(textwrap.dedent(content))
+            (root / name).write_text(textwrap.dedent(content), encoding="utf-8")
         environment = {**os.environ, "PYTHONPATH": str(tools_loader.TOOLS)}
         return subprocess.run(
             [sys.executable, *args],

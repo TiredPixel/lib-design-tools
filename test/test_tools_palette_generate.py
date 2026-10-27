@@ -10,9 +10,9 @@ import unittest
 import tools_loader
 
 
-def run(tool, *args, cwd):
+def run(*args, cwd):
     return subprocess.run(
-        [str(tools_loader.TOOLS / tool), *args],
+        [str(tools_loader.TOOLS / "palette-generate"), *args],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -24,12 +24,12 @@ class Workspace(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        self.dir = pathlib.Path(directory.name)
+        self.root = pathlib.Path(directory.name)
 
     def write(self, name, text):
-        path = self.dir / name
+        path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(textwrap.dedent(text).lstrip())
+        path.write_text(textwrap.dedent(text).lstrip(), encoding="utf-8")
         return path
 
 
@@ -53,7 +53,6 @@ class PaletteGenerateTest(Workspace):
 
     def generate(self, *extra, prefix="x"):
         return run(
-            "palette-generate",
             "p.yml",
             "--prefix",
             prefix,
@@ -62,14 +61,14 @@ class PaletteGenerateTest(Workspace):
             "--css",
             "p.css",
             *extra,
-            cwd=self.dir,
+            cwd=self.root,
         )
 
     def test_writes_css_by_the_naming_rule_in_yaml_order(self):
         self.write("p.yml", self.YAML)
         result = self.generate()
         self.assertEqual(result.returncode, 0, result.stderr)
-        css = (self.dir / "p.css").read_text().splitlines()
+        css = (self.root / "p.css").read_text(encoding="utf-8").splitlines()
         self.assertEqual(css[0], '@charset "UTF-8";')
         properties = [line.strip() for line in css if line.startswith("  --")]
         self.assertEqual(
@@ -89,7 +88,7 @@ class PaletteGenerateTest(Workspace):
     def test_writes_json_in_yaml_order_with_comment_first(self):
         self.write("p.yml", self.YAML)
         self.assertEqual(self.generate().returncode, 0)
-        document = json.loads((self.dir / "p.json").read_text())
+        document = json.loads((self.root / "p.json").read_text(encoding="utf-8"))
         self.assertEqual(
             list(document),
             [
@@ -109,9 +108,9 @@ class PaletteGenerateTest(Workspace):
     def test_rerun_changes_nothing(self):
         self.write("p.yml", self.YAML)
         self.generate()
-        first = [(self.dir / f).read_bytes() for f in ("p.json", "p.css")]
+        first = [(self.root / f).read_bytes() for f in ("p.json", "p.css")]
         self.generate()
-        second = [(self.dir / f).read_bytes() for f in ("p.json", "p.css")]
+        second = [(self.root / f).read_bytes() for f in ("p.json", "p.css")]
         self.assertEqual(first, second)
 
     def test_check_passes_on_current_output(self):
@@ -124,12 +123,12 @@ class PaletteGenerateTest(Workspace):
         self.write("p.yml", self.YAML)
         self.generate()
         self.write("p.yml", self.YAML.replace("#101010", "#000000"))
-        before = (self.dir / "p.css").read_text()
+        before = (self.root / "p.css").read_text(encoding="utf-8")
         result = self.generate("--check")
         self.assertEqual(result.returncode, 1)
         self.assertIn("stale", result.stderr)
         self.assertIn("#000000", result.stdout)
-        self.assertEqual((self.dir / "p.css").read_text(), before)
+        self.assertEqual((self.root / "p.css").read_text(encoding="utf-8"), before)
 
     def test_fails_on_a_name_collision(self):
         self.write("p.yml", 'a_b: "#000000"\na-b: "#FFFFFF"\n')
@@ -146,13 +145,15 @@ class PaletteGenerateTest(Workspace):
                 self.assertIn("names CSS cannot read", result.stderr)
                 self.assertIn(f"--x-{key}", result.stderr)
                 self.assertNotIn("--x-ok", result.stderr)
-                self.assertFalse((self.dir / "p.css").exists())
+                self.assertFalse((self.root / "p.css").exists())
 
     def test_keeps_a_non_ascii_key(self):
         self.write("p.yml", 'grün: "#00FF00"\n')
         result = self.generate()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("  --x-grün: #00FF00;", (self.dir / "p.css").read_text())
+        self.assertIn(
+            "  --x-grün: #00FF00;", (self.root / "p.css").read_text(encoding="utf-8")
+        )
 
     def test_fails_on_a_yaml_without_colour(self):
         self.write("p.yml", "a: plain\n")
@@ -175,10 +176,10 @@ class PaletteGenerateTest(Workspace):
         )
         result = self.generate()
         self.assertEqual(result.returncode, 0, result.stderr)
-        document = json.loads((self.dir / "p.json").read_text())
+        document = json.loads((self.root / "p.json").read_text(encoding="utf-8"))
         self.assertEqual(document["merged"], {"ink": "#101010", "paper": "#EEEEEE"})
         self.assertEqual(document["link"], {"ink": "#101010", "paper": "#FFFFFF"})
-        css = (self.dir / "p.css").read_text()
+        css = (self.root / "p.css").read_text(encoding="utf-8")
         for line in (
             "  --x-merged-ink: #101010;",
             "  --x-merged-paper: #EEEEEE;",
@@ -198,7 +199,7 @@ class PaletteGenerateTest(Workspace):
                 self.assertIn("not a #RGB", result.stderr)
                 self.assertIn(f'  group.1: "{value}"', result.stderr)
                 self.assertNotIn("  ok", result.stderr)
-                self.assertFalse((self.dir / "p.css").exists())
+                self.assertFalse((self.root / "p.css").exists())
 
     def test_fails_on_a_leaf_with_no_value(self):
         for line in ("accent: #abc", "accent: ~", "accent:"):
@@ -208,7 +209,7 @@ class PaletteGenerateTest(Workspace):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("leaves with no value; quote a colour", result.stderr)
                 self.assertIn("  set.accent", result.stderr)
-                self.assertFalse((self.dir / "p.css").exists())
+                self.assertFalse((self.root / "p.css").exists())
 
     def test_fails_on_a_missing_yaml(self):
         result = self.generate()
@@ -230,14 +231,14 @@ class PaletteGenerateTest(Workspace):
             ["p.yml", "--bogus"],
         ):
             with self.subTest(args=args):
-                result = run("palette-generate", *args, cwd=self.dir)
+                result = run(*args, cwd=self.root)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("usage:", result.stderr)
 
     def test_help_prints_usage_and_succeeds(self):
         for flag in ("--help", "-h"):
             with self.subTest(flag=flag):
-                result = run("palette-generate", "p.yml", flag, cwd=self.dir)
+                result = run("p.yml", flag, cwd=self.root)
                 self.assertEqual(result.returncode, 0)
                 self.assertTrue(result.stdout.startswith("usage: palette-generate"))
                 self.assertEqual(result.stderr, "")

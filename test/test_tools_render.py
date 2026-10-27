@@ -25,6 +25,7 @@ import urllib.error
 import urllib.request
 
 import design_render
+import temp_tree
 import tools_loader
 
 render_check = tools_loader.load("render-check")
@@ -43,7 +44,7 @@ writer = (
     "directory = pathlib.Path(sys.argv[1]) / 'Default'\\n"
     "directory.mkdir()\\n"
     "for n in itertools.count():\\n"
-    "    (directory / str(n)).write_text('x')\\n"
+    "    (directory / str(n)).write_text('x', encoding='utf-8')\\n"
     "    time.sleep(0.001)\\n"
 )
 import subprocess
@@ -54,7 +55,7 @@ child = subprocess.Popen(
 )
 while not (pathlib.Path(profile) / "Default").is_dir():
     time.sleep(0.01)
-pathlib.Path(sys.argv[0]).with_name("child.pid").write_text(str(child.pid))
+pathlib.Path(sys.argv[0]).with_name("child.pid").write_text(str(child.pid), encoding="utf-8")
 """
 
 
@@ -63,24 +64,13 @@ def errors_dom(entries: list, body: str = "") -> str:
     return f'<html data-render-errors="{value}"><body>{body}</body></html>'
 
 
-class TempDirTestCase(unittest.TestCase):
-    def setUp(self) -> None:
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.root = pathlib.Path(directory.name)
-
-    def write(self, name: str, content: str | bytes) -> pathlib.Path:
-        path = self.root / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if isinstance(content, bytes):
-            path.write_bytes(content)
-        else:
-            path.write_text(content, encoding="utf-8")
-        return path
+class TempDirTestCase(temp_tree.TempTreeTestCase):
+    def beside_fake(self, name: str) -> pathlib.Path:
+        return self.root / "bin" / name
 
     def fake_chromium(self, body: str) -> str:
         """Write an executable standing in for Chromium; return its path."""
-        path = self.root / "bin" / "fake-chromium"
+        path = self.beside_fake("fake-chromium")
         path.parent.mkdir(exist_ok=True)
         path.write_text(
             f"#!{sys.executable}\n"
@@ -95,9 +85,15 @@ class TempDirTestCase(unittest.TestCase):
         return self.fake_chromium(f"sys.stdout.write({dom!r})\n")
 
     def assert_writer_gone(self) -> None:
-        pid = int((self.root / "bin" / "child.pid").read_text())
+        pid = int(self.beside_fake("child.pid").read_text(encoding="utf-8"))
         with self.assertRaises(ProcessLookupError):
             os.kill(pid, 0)
+
+    def run_main(self, *arguments: str) -> tuple[int, str]:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            status = render_check.main(list(arguments))
+        return status, stderr.getvalue()
 
 
 class InjectCaptureTest(unittest.TestCase):
@@ -232,7 +228,7 @@ class DescribeErrorTest(unittest.TestCase):
         )
 
 
-class ClassSelectorTest(unittest.TestCase):
+class ParseClassSelectorTest(unittest.TestCase):
     def test_simple_class(self) -> None:
         self.assertEqual(
             design_render.parse_class_selector(".load-error"), "load-error"
@@ -270,6 +266,13 @@ class ServeTest(TempDirTestCase):
         with urllib.request.urlopen(url, timeout=10) as response:
             return response.read(), response.headers["Content-Type"]
 
+    def assert_not_found(self, url: str, method: str = "GET") -> None:
+        request = urllib.request.Request(url, method=method)
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=10)
+        caught.exception.close()
+        self.assertEqual(caught.exception.code, 404)
+
     def test_injects_into_html_only(self) -> None:
         self.write("pages/a b.html", "<html><head></head><body>é</body></html>")
         self.write("style.css", "a { color: red }")
@@ -288,10 +291,7 @@ class ServeTest(TempDirTestCase):
             self.assertEqual(content_type, "text/html; charset=utf-8")
             css, _ = self.fetch(base_url + "style.css")
             self.assertEqual(css, b"a { color: red }")
-            with self.assertRaises(urllib.error.HTTPError) as caught:
-                self.fetch(base_url + "missing.html")
-            caught.exception.close()
-            self.assertEqual(caught.exception.code, 404)
+            self.assert_not_found(base_url + "missing.html")
 
     def test_bytes_that_are_not_utf8_pass_through(self) -> None:
         self.write("latin.htm", b"<head></head><p>\xe9</p>")
@@ -326,11 +326,7 @@ class ServeTest(TempDirTestCase):
             ):
                 for method in ("GET", "HEAD"):
                     with self.subTest(path=path, method=method):
-                        request = urllib.request.Request(base_url + path, method=method)
-                        with self.assertRaises(urllib.error.HTTPError) as caught:
-                            urllib.request.urlopen(request, timeout=10)
-                        caught.exception.close()
-                        self.assertEqual(caught.exception.code, 404)
+                        self.assert_not_found(base_url + path, method)
             self.assertEqual(self.fetch(base_url + "alias.css")[0], b"a {}")
             self.assertEqual(self.fetch(base_url + "pages/")[0], b"a {}")
 
@@ -347,10 +343,6 @@ class ServeTest(TempDirTestCase):
         for (url, path), expected in cases.items():
             with self.subTest(url=url):
                 self.assertEqual(design_render.refused(root, url, str(path)), expected)
-
-    def test_page_outside_root(self) -> None:
-        with self.assertRaisesRegex(ValueError, "not inside the served root"):
-            design_render.page_url("http://h/", self.root / "sub", self.root / "a.html")
 
 
 class ServedPathTest(TempDirTestCase):
@@ -417,6 +409,10 @@ class ServedPathTest(TempDirTestCase):
             ):
                 design_render.served_path(self.site, page)
 
+    def test_page_outside_root(self) -> None:
+        with self.assertRaisesRegex(ValueError, "not inside the served root"):
+            design_render.page_url("http://h/", self.root / "sub", self.root / "a.html")
+
 
 class DumpDomTest(TempDirTestCase):
     def test_passes_flags_and_returns_stdout(self) -> None:
@@ -427,7 +423,7 @@ class DumpDomTest(TempDirTestCase):
             record = {"arguments": arguments,
                       "profile_exists": os.path.isdir(profile.split("=", 1)[1])}
             pathlib.Path(sys.argv[0]).with_name("record.json").write_text(
-                json.dumps(record))
+                json.dumps(record), encoding="utf-8")
             sys.stdout.write("<html>dom</html>")
             """
         )
@@ -435,7 +431,7 @@ class DumpDomTest(TempDirTestCase):
             "http://x/p.html", chromium=chromium, budget_ms=1234
         )
         self.assertEqual(dom, "<html>dom</html>")
-        record = json.loads((self.root / "bin" / "record.json").read_text())
+        record = json.loads(self.beside_fake("record.json").read_text(encoding="utf-8"))
         self.assertTrue(record["profile_exists"])
         arguments = record["arguments"]
         self.assertEqual(
@@ -506,14 +502,16 @@ class PrintPdfTest(TempDirTestCase):
             """
             arguments = sys.argv[1:]
             pathlib.Path(sys.argv[0]).with_name("record.json").write_text(
-                json.dumps(arguments))
+                json.dumps(arguments), encoding="utf-8")
             out = next(a for a in arguments if a.startswith("--print-to-pdf="))
             pathlib.Path(out.split("=", 1)[1]).write_bytes(b"%PDF-1.4 fake")
             """
         )
         pdf = design_render.print_pdf("http://x/p.html", chromium=chromium)
         self.assertEqual(pdf, b"%PDF-1.4 fake")
-        arguments = json.loads((self.root / "bin" / "record.json").read_text())
+        arguments = json.loads(
+            self.beside_fake("record.json").read_text(encoding="utf-8")
+        )
         self.assertIn("--no-pdf-header-footer", arguments)
         self.assertEqual(arguments[-1], "http://x/p.html")
 
@@ -560,12 +558,6 @@ class RenderTest(TempDirTestCase):
 
 
 class RenderCheckTest(TempDirTestCase):
-    def run_main(self, *arguments: str) -> tuple[int, str]:
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            status = render_check.main(list(arguments))
-        return status, stderr.getvalue()
-
     def run_usage_error(self, *arguments: str) -> str:
         stderr = io.StringIO()
         with (
@@ -725,24 +717,35 @@ class RenderCheckTest(TempDirTestCase):
         chromium = self.printing_chromium(CLEAN_DOM)
         root = str(self.root)
         cases = {
-            "unsupported selector": ["--error-marker", "div"],
-            "must be positive": ["--budget-ms", "0"],
-            "is not a directory": ["--root", str(page)],
-            "is not a file": [str(self.root / "missing.html")],
-            "is not inside --root": [outside.name],
-            "cannot find Chromium": ["--chromium", str(self.root / "none")],
+            "unsupported selector": [
+                *("--root", root, "--chromium", chromium, str(page)),
+                *("--error-marker", "div"),
+            ],
+            "must be positive": [
+                *("--root", root, "--chromium", chromium, str(page)),
+                *("--budget-ms", "0"),
+            ],
+            "is not a directory": [
+                *("--root", root, "--chromium", chromium, str(page)),
+                *("--root", str(page)),
+            ],
+            "is not a file": [
+                *("--root", root, "--chromium", chromium, str(page)),
+                str(self.root / "missing.html"),
+            ],
+            "is not inside --root": [
+                *("--root", root, "--chromium", chromium, str(page)),
+                outside.name,
+            ],
+            "cannot find Chromium": [
+                *("--root", root, "--chromium", chromium, str(page)),
+                *("--chromium", str(self.root / "none")),
+            ],
+            "FILE": ["--root", root],
         }
-        for message, extra in cases.items():
+        for message, arguments in cases.items():
             with self.subTest(message=message):
-                arguments = ["--root", root, "--chromium", chromium, str(page)]
-                if extra[0].startswith("--"):
-                    arguments += extra
-                else:
-                    arguments.append(extra[0])
                 self.assertIn(message, self.run_usage_error(*arguments))
-
-    def test_requires_files(self) -> None:
-        self.assertIn("FILE", self.run_usage_error("--root", str(self.root)))
 
     def test_runs_as_a_command(self) -> None:
         page = self.write("a.html", "<p>a</p>")
@@ -877,13 +880,11 @@ class RealChromiumTest(TempDirTestCase):
 
     def test_render_check_marker(self) -> None:
         page = self.write("m.html", '<html><body><p class="load-error">x</p>')
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            status = render_check.main(
-                ["--root", str(self.root), "--error-marker", ".load-error", str(page)]
-            )
+        status, output = self.run_main(
+            "--root", str(self.root), "--error-marker", ".load-error", str(page)
+        )
         self.assertEqual(status, 1)
-        self.assertIn("matching .load-error", stderr.getvalue())
+        self.assertIn("matching .load-error", output)
 
 
 if __name__ == "__main__":

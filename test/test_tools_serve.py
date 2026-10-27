@@ -16,7 +16,7 @@ import tools_loader
 preview_serve = tools_loader.load("preview-serve")
 
 
-class ServeTest(unittest.TestCase):
+class PreviewServeTest(unittest.TestCase):
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -49,6 +49,7 @@ class ServeTest(unittest.TestCase):
         server = preview_serve.make_server(root, "127.0.0.1", 0, "/preview/")
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
+        self.addCleanup(thread.join)
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         self.port = server.server_address[1]
@@ -134,7 +135,7 @@ class ArgumentsTest(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.root = directory.name
 
-    def usage_error(self, *arguments: str) -> str:
+    def run_usage_error(self, *arguments: str) -> str:
         stderr = io.StringIO()
         with (
             contextlib.redirect_stderr(stderr),
@@ -152,17 +153,20 @@ class ArgumentsTest(unittest.TestCase):
 
     def test_usage_errors(self) -> None:
         self.assertIn(
-            "is not a directory", self.usage_error("--root", "/no/such", "--index", "/")
+            "is not a directory",
+            self.run_usage_error("--root", "/no/such", "--index", "/"),
         )
         self.assertIn(
             "is not a /-rooted path",
-            self.usage_error("--root", self.root, "--index", "p/"),
+            self.run_usage_error("--root", self.root, "--index", "p/"),
         )
         self.assertIn(
             "is not a port",
-            self.usage_error("--root", self.root, "--index", "/", "--port", "70000"),
+            self.run_usage_error(
+                "--root", self.root, "--index", "/", "--port", "70000"
+            ),
         )
-        self.assertIn("required", self.usage_error("--index", "/"))
+        self.assertIn("required", self.run_usage_error("--index", "/"))
 
     def test_main_serves_until_interrupted(self) -> None:
         server = mock.Mock(server_address=("0.0.0.0", 1234))
