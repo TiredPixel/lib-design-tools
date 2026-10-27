@@ -3,12 +3,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
 jobs:
   build:
-    # Tests only: a consumer builds the dev image from its own submodule, so
-    # the one thing pushed is that image, as the layer cache the next run
-    # builds from.
+    # Packages read only: a pull request runs its branch's Makefile and
+    # lib/shell-common, which whoever opens it can change; cache, run on a
+    # person's push, writes.
     permissions:
       contents: read
-      packages: write
+      packages: read
     runs-on: ubuntu-latest
     steps:
       # No app token: the submodules are public, cloned over HTTPS with no
@@ -22,20 +22,44 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
           registry: ghcr.io
           username: ${{ github.actor }}
-      # build-dev-latest builds dev from the branch's and latest's cached
-      # images and pushes the branch's; the Compose build then reuses those
-      # layers on the same daemon.
+      # Takes its layers from latest.dev, which cache pushes, for make build to
+      # reuse on the same daemon.
       - name: Build dev
         run: |
-          lib/shell-common/docker/build-dev-latest
+          lib/shell-common/docker/build-dev-latest-nopush
           make build
       # Not a Lint step as well: bin/test runs the lint passes first, so a
       # second one would repeat them in a second container.
       - name: Test
         run: |
           make test
-    # Bounded because GitHub's default runs to hours. Generous, as the first
-    # run on a branch with no cached image yet builds from cold.
+    # Bounded because GitHub's default runs to hours. Generous, as a run with
+    # no cached image yet builds from cold.
+    timeout-minutes: 15
+  # Pushes the dev image as the layer cache build takes, which nothing deploys.
+  # Only on a person's push, never an app's, whose tree would otherwise run here
+  # with this write.
+  cache:
+    if: github.event_name == 'push' && github.event.sender.type == 'User'
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: docker/login-action@v4
+        with:
+          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+      - name: Push dev
+        run: |
+          lib/shell-common/docker/build-dev-latest
+    # Bounded as build is, whose limit covers this same image build and the
+    # suite besides.
     timeout-minutes: 15
 name: Build
 on:
