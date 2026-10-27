@@ -531,7 +531,9 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
             parser.error(f"{path} is not a file")
         if path.suffix.lower() not in design_render.HTML_SUFFIXES | CSS_SUFFIXES:
             parser.error(f"{path} is neither HTML nor CSS")
-        if not path.resolve().is_relative_to(arguments.root.resolve()):
+        try:
+            design_render.served_path(arguments.root, path)
+        except ValueError:
             parser.error(f"{path} is not inside --root {arguments.root}")
     return arguments
 

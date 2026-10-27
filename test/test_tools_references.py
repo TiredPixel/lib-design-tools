@@ -624,6 +624,34 @@ class MainTest(ReferencesTestCase):
         self.assertIn(f"{page}: not valid UTF-8", output)
         self.assertIn("1 problem(s)", output)
 
+    def test_a_file_linked_into_the_root_from_outside_it_is_checked(self) -> None:
+        outside = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (outside / "clean.html").write_text('<a href="a.css">a</a>', encoding="utf-8")
+        (outside / "broken.html").write_text('<img src="gone.png">', encoding="utf-8")
+        clean = self.root / "site/clean.html"
+        clean.symlink_to(outside / "clean.html")
+        broken = self.root / "site/broken.html"
+        broken.symlink_to(outside / "broken.html")
+        self.assertEqual(
+            self.run_main("--root", str(self.root), str(clean)),
+            (0, "checked 1 file(s): 0 problem(s)\n"),
+        )
+        status, output = self.run_main("--root", str(self.root), str(broken))
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            output,
+            f"{broken}:1: gone.png does not exist\nchecked 1 file(s): 1 problem(s)\n",
+        )
+
+    def test_a_link_outside_the_root_to_a_page_inside_it_is_refused(self) -> None:
+        page = self.write("site/p.html", "")
+        outside = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (outside / "link.html").symlink_to(page)
+        self.assertIn(
+            "is not inside --root",
+            self.run_usage_error("--root", str(self.root), str(outside / "link.html")),
+        )
+
     def test_usage_errors(self) -> None:
         text = self.write("site/notes.txt", "")
         outside = self.enterContext(tempfile.NamedTemporaryFile(suffix=".html"))
