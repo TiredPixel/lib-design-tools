@@ -105,7 +105,18 @@ class PassSelectionTest(Repository):
         self.settings(
             "function references_args { printf '%s\\0' --root . a.html; false; }\n"
         )
-        self.assertFails(self.run_bin("lint"), "bin/settings: references_args failed")
+        self.assertFails(
+            self.run_bin("lint"), "bin/settings: references_args failed (1)"
+        )
+
+    def test_a_failing_set_fails_even_before_its_last_command(self):
+        self.write("a.html", "<p>a</p>\n")
+        self.settings(
+            "function references_args { false; printf '%s\\0' --root . a.html; }\n"
+        )
+        self.assertFails(
+            self.run_bin("lint"), "bin/settings: references_args failed (1)"
+        )
 
     def test_the_shell_pass_checks_only_the_named_files(self):
         self.write("ok.sh", '# shellcheck shell=bash\necho "$1"\n')

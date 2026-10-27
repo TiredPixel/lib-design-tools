@@ -25,19 +25,27 @@ function defines {
 }
 
 # Reads the NUL-separated output of the function named by $1 into the array
-# named by $2. The function's status is checked through wait, since a process
-# substitution's own failure would otherwise pass unseen. An empty result fails
-# too, unless $3 is "may-be-empty": a set of files that is defined and names
-# nothing is a mistake, never a clean pass.
+# named by $2. The function runs as a background job into a file and its status
+# is checked through wait: bash can lose a process substitution's status, and
+# under || or in a pipeline errexit would be off inside the function, so a
+# failure before its last command would pass unseen. An empty result fails too,
+# unless $3 is "may-be-empty": a set of files that is defined and names nothing
+# is a mistake, never a clean pass.
 function read_set {
-    local -n into=$2
+    local -n read_set_into=$2
+    local read_set_out read_set_status
 
-    mapfile -t -d '' into < <("$1")
+    read_set_out=$(mktemp)
+    "$1" >"$read_set_out" &
     wait $! || {
-        echo "bin/settings: $1 failed" >&2
+        read_set_status=$?
+        rm -- "$read_set_out"
+        echo "bin/settings: $1 failed ($read_set_status)" >&2
         exit 1
     }
-    if [ ${#into[@]} -eq 0 ] && [ "${3:-}" != may-be-empty ]; then
+    mapfile -t -d '' read_set_into <"$read_set_out"
+    rm -- "$read_set_out"
+    if [ ${#read_set_into[@]} -eq 0 ] && [ "${3:-}" != may-be-empty ]; then
         echo "bin/settings: $1 names nothing" >&2
         exit 1
     fi
@@ -48,12 +56,12 @@ function read_set {
 # as an option.
 function read_files {
     local -n read_files_into=$2
-    local i
+    local read_files_i
 
     read_set "$1" "$2"
-    for i in "${!read_files_into[@]}"; do
-        if [[ ${read_files_into[$i]} == -* ]]; then
-            read_files_into[i]=./${read_files_into[$i]}
+    for read_files_i in "${!read_files_into[@]}"; do
+        if [[ ${read_files_into[$read_files_i]} == -* ]]; then
+            read_files_into[read_files_i]=./${read_files_into[$read_files_i]}
         fi
     done
 }
@@ -62,13 +70,13 @@ function read_files {
 # named by $1, since Prettier takes both in one run.
 function read_prettier_files {
     local -n read_prettier_into=$1
-    local set files
+    local read_prettier_set read_prettier_files_set
 
     read_prettier_into=()
-    for set in css_files html_files; do
-        if defines "$set"; then
-            read_files "$set" files
-            read_prettier_into+=("${files[@]}")
+    for read_prettier_set in css_files html_files; do
+        if defines "$read_prettier_set"; then
+            read_files "$read_prettier_set" read_prettier_files_set
+            read_prettier_into+=("${read_prettier_files_set[@]}")
         fi
     done
 }
