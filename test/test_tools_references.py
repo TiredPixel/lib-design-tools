@@ -469,6 +469,32 @@ class CssTest(ReferencesTestCase):
             [(1, "gone/*x*/.png does not exist"), (2, "gone-8.png does not exist")],
         )
 
+    def test_escapes_in_unquoted_urls_are_read(self) -> None:
+        self.write("site/img/a b.png", "")
+        self.write("site/img/a).png", "")
+        css = (
+            ".a { background: url(img/\\78.png) }\n"
+            ".b { background: url(img/a\\ b.png) }\n"
+            ".c { background: url(img/a\\).png) }\n"
+            ".d { background: url(  gone\\ 10.png  ) }\n"
+            '.e { background: url(gone-11\\".png) }\n'
+        )
+        self.assertEqual(
+            self.css_problems(css),
+            [(4, "gone 10.png does not exist"), (5, 'gone-11".png does not exist')],
+        )
+
+    def test_an_invalid_unquoted_url_is_dropped_whole(self) -> None:
+        css = (
+            ".a { background: url(gone a.png) }\n"
+            ".b { background: url(gone'b.png) }\n"
+            ".c { background: url(gone(c.png) }\n"
+            ".d { background: url(gone\\\nd.png) }\n"
+            ".e { background: url(gone-12.png) }\n"
+            ".f { background: url(gone-13.png"
+        )
+        self.assertEqual(self.css_problems(css), [(6, "gone-12.png does not exist")])
+
     def test_a_string_a_newline_ends_unclosed_is_dropped(self) -> None:
         css = ".a { content: 'never closed\n.b { background: url(gone-9.png) }\n"
         self.assertEqual(self.css_problems(css), [(2, "gone-9.png does not exist")])
