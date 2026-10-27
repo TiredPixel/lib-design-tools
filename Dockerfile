@@ -6,8 +6,8 @@
 #
 # dev copies nothing in, so a repository taking this one as a submodule builds
 # the same image, through a Dockerfile symlinked to this one, and runs it on its
-# own tree; test adds that tree for the gate. README.md, Building the images,
-# describes both stages.
+# own tree; test adds that tree for the gate. README.md, Building, describes
+# both stages.
 #===============================================================================
 FROM docker.io/library/debian@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308 AS dev
 

@@ -2,7 +2,9 @@
 
 Tools for working on a design system, or on a design built on one: generating a palette's CSS and JSON, checking that pages load and render, colour maths for a design's own tests, a preview server, and a container image to run them in. A repository takes the parts it wants as a submodule and calls them; nothing here checks, rewrites or tests a repository that has not asked for it, and nothing holds an opinion about how that repository is written.
 
-## Prerequisites
+## Requirements
+
+Working on this repository needs:
 
 - Docker Engine or Docker Desktop with Compose v2
 - `git` with submodule support
@@ -10,16 +12,15 @@ Tools for working on a design system, or on a design built on one: generating a 
 
 ## Installation
 
-The repository uses git submodules. Clone it with them, then build the images:
+Clone the repository with its submodules, and copy `.env.example` to `.env`, which sets local options for Compose. Set `DC_BIND_USER=0:0` in `.env` where Docker is rootless or the host user's uid is not 1000, so that `make format` can write to the tree:
 
 ```sh
 git clone --recurse-submodules https://github.com/TiredPixel/lib-design-tools.git
 cd lib-design-tools
 cp .env.example .env
-make build
 ```
 
-## The tools
+## Tools
 
 Each command prints its usage with `--help`.
 
@@ -34,7 +35,7 @@ Importable from a repository's own Python tests, with `tools/` on the path, as `
 - `tools/design_render.py` – the harness under `render-check`: serving a tree, rendering a page or printing it to PDF in headless Chromium, and reading what it reports.
 - `tools/pytest_no_skips.py` – a pytest plugin adding `--no-skips`, which fails a run in which any test skipped.
 
-## Using it from another repository
+## Usage
 
 A repository takes this one at `lib/design-tools`, cloned recursively, since the runners use its own `lib/shell-common`:
 
@@ -47,7 +48,7 @@ Each part below is taken on its own. A tool needs nothing else here and can be c
 
 ### The image
 
-A repository builds it, as *Building the images* describes, through a `Dockerfile` that links to this one:
+A repository builds it, as *Building* describes, through a `Dockerfile` that links to this one:
 
 ```sh
 ln -s lib/design-tools/Dockerfile Dockerfile
@@ -64,7 +65,7 @@ for runner in format lint test preview; do ln -s "../lib/design-tools/bin/$runne
 
 ### The services
 
-This repository's `docker-compose.yml` holds the `format`, `test` and `preview` services, which run the runners in the image. A repository links it, and Compose resolves every path in it, and reads `.env`, against the repository holding the link:
+This repository's `docker-compose.yml` holds the `design`, `design_test` and `preview` services, which run the runners in the image. A repository links it, and Compose resolves every path in it, and reads `.env`, against the repository holding the link:
 
 ```sh
 ln -s lib/design-tools/docker-compose.yml docker-compose.yml
@@ -85,9 +86,9 @@ upgrade-pre:
 	cd lib/design-tools && git checkout latest && git pull && git submodule update --init --recursive
 ```
 
-`make upgrade` runs `upgrade-pre`, then builds, formats and tests, so a change that breaks the repository shows before the bump is committed.
+`make upgrade` runs `upgrade-pre`, then builds and tests, so a change that breaks the repository shows before the bump is committed.
 
-`make test` runs `bin/test` in the `test` service, which *Settings* describes; named tests are pytest's arguments, paths from the repository's root:
+`make test` runs `bin/test` in the `design_test` service, which *Settings* describes; named tests are pytest's arguments, paths from the repository's root:
 
 ```sh
 make test TESTS='test/<file>.py'
@@ -169,10 +170,10 @@ docker compose port preview 8080
 
 ## Testing
 
-`make test` runs this repository's lint, then its tests, in the `test` container (*Building the images*). The lint fails where anything is unformatted, so format first:
+`make test` runs this repository's lint, then its tests, in the `design_test` container (*Building*). The lint fails where anything is unformatted; `make format` (*Formatting*) fixes it.
 
 ```sh
-make format test
+make test
 ```
 
 The tests run under pytest, side by side on one worker for each CPU the container may use, unless `.env` sets the worker count (*The make targets*). A test that skips fails the run: the image carries everything the tests look for, so a skip means something is missing.
@@ -187,13 +188,25 @@ The tests run under pytest, side by side on one worker for each CPU the containe
 make format
 ```
 
-## Building the images
+## Building
 
 The image builds two stages. `dev` is the formatting, linting and test toolchain, headless Chromium included, running as the unprivileged user `x`; it copies nothing in, so a repository builds it through its symlinked `Dockerfile` and runs it on its own tree. `test` adds a copy of the repository's tree to it.
 
-The `format` service runs `bin/format` from `dev` on the tree mounted read-write, since its rewrites must reach it, and the `preview` service `bin/preview` on the tree mounted read-only. The `test` service runs the gates on its own copy, with no mount and no network.
+The `design` and `design_test` services sit under the `test` profile, which every make target that runs Compose passes, so `docker compose up` starts only `preview`. The `design` service runs `bin/format` from `dev` on the tree mounted read-write, since its rewrites must reach it, and the `preview` service `bin/preview` on the tree mounted read-only. The `design_test` service runs the gates from `test` on its own copy, with no mount and no network.
 
-Base images are pinned by digest, and tools from outside Debian's repositories by `ARG`; in this repository, `make upgrade` re-pins each pin the `Dockerfile` names on a `FROMFREEZE` or `ARGFREEZE` line.
+`make build` builds both stages:
+
+```sh
+make build
+```
+
+## Upgrading
+
+Base images are pinned by digest, and tools from outside Debian's repositories by `ARG`. `make upgrade` moves `lib/shell-common` to its latest commit and runs its `docker/upgrade` to re-pin each pin the `Dockerfile` names on a `FROMFREEZE` or `ARGFREEZE` line, then builds and tests, so a bump that breaks the repository shows before it is committed:
+
+```sh
+make upgrade
+```
 
 ## Licence
 
