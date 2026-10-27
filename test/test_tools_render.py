@@ -132,6 +132,16 @@ class InjectCaptureTest(unittest.TestCase):
             "<!doctype html>" + design_render.CAPTURE_SCRIPT + "\n<p>hello</p>",
         )
 
+    def test_without_html_goes_after_the_first_doctype(self) -> None:
+        page = "<!DOCTYPE html><!doctype x>\n<p>hello</p>"
+        result = design_render.inject_capture(page)
+        self.assertEqual(
+            result,
+            "<!DOCTYPE html>"
+            + design_render.CAPTURE_SCRIPT
+            + "<!doctype x>\n<p>hello</p>",
+        )
+
     def test_bare_fragment_gets_it_first(self) -> None:
         result = design_render.inject_capture("<p>hello</p>")
         self.assertEqual(result, design_render.CAPTURE_SCRIPT + "<p>hello</p>")
@@ -292,6 +302,15 @@ class ServeTest(TempDirTestCase):
             css, _ = self.fetch(base_url + "style.css")
             self.assertEqual(css, b"a { color: red }")
             self.assert_not_found(base_url + "missing.html")
+
+    def test_head_of_a_file_that_is_not_html_has_no_body(self) -> None:
+        self.write("style.css", "a { color: red }")
+        with design_render.serve(self.root) as base_url:
+            request = urllib.request.Request(base_url + "style.css", method="HEAD")
+            with urllib.request.urlopen(request, timeout=10) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers["Content-Length"], "16")
+                self.assertEqual(response.read(), b"")
 
     def test_bytes_that_are_not_utf8_pass_through(self) -> None:
         self.write("latin.htm", b"<head></head><p>\xe9</p>")

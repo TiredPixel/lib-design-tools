@@ -79,6 +79,16 @@ class PreviewServeTest(unittest.TestCase):
         self.assertEqual(response.getheader("Cache-Control"), "no-store")
         self.assertEqual(response.getheader("Content-Type"), "text/html; charset=utf-8")
 
+    def test_head_of_a_file_sends_its_headers_without_a_body(self) -> None:
+        response = self.request("/preview/logo.svg", "HEAD")
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.body, b"")
+        self.assertEqual(response.getheader("Content-Length"), "6")
+        self.assertEqual(response.getheader("Cache-Control"), "no-store")
+        self.assertEqual(
+            response.getheader("Content-Type"), "image/svg+xml; charset=utf-8"
+        )
+
     def test_errors_are_uncached_too(self) -> None:
         response = self.request("/missing")
         self.assertEqual(response.status, 404)

@@ -296,6 +296,25 @@ class HtmlTest(ReferencesTestCase):
             [(4, "gone.png does not exist"), (8, "missing.png does not exist")],
         )
 
+    def test_style_element_text_in_several_chunks(self) -> None:
+        # CPython delivers <style> text whole, so the chunks are fed by hand.
+        css = "\n  @import 'gone.css';\n  .x { background: url(\"missing.png\"); }\n"
+        whole = self.html_problems(f"<style>{css}</style>")
+        parser = references_check._HtmlReferences(
+            self.root / "site/page.html", self.root, False, False
+        )
+        parser.feed("<style>")
+        split = css.index("missing") + 3
+        parser.handle_data(css[:split])
+        parser.handle_data(css[split:])
+        parser.feed("</style>")
+        parser.close()
+        self.assertEqual(parser.problems, whole)
+        self.assertEqual(
+            whole,
+            [(2, "gone.css does not exist"), (3, "missing.png does not exist")],
+        )
+
     def test_external_loads_pass_without_require_integrity(self) -> None:
         markup = (
             '<link rel="stylesheet" href="https://cdn/b.css">\n'
