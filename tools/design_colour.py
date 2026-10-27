@@ -32,7 +32,8 @@ def channels(hex_colour: str) -> tuple[int, int, int]:
     digits = match.group(1)
     if len(digits) == 3:
         digits = "".join(digit * 2 for digit in digits)
-    return tuple(int(digits[i : i + 2], 16) for i in (0, 2, 4))
+    red, green, blue = (int(digits[i : i + 2], 16) for i in (0, 2, 4))
+    return red, green, blue
 
 
 def linear(channel: int) -> float:

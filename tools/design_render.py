@@ -163,7 +163,7 @@ class _InsertionPoint(html.parser.HTMLParser):
     def _end_of_tag(self) -> int:
         return _offset(self._starts, self.getpos()) + len(self.get_starttag_text())
 
-    def handle_starttag(self, tag: str, attrs: list) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "head" and self.after_head is None:
             self.after_head = self._end_of_tag()
         elif tag == "html" and self.after_html is None:
@@ -196,7 +196,7 @@ class _HtmlAttributes(html.parser.HTMLParser):
         super().__init__(convert_charrefs=True)
         self.attributes: dict[str, str | None] | None = None
 
-    def handle_starttag(self, tag: str, attrs: list) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "html" and self.attributes is None:
             self.attributes = dict(attrs)
 
@@ -267,7 +267,7 @@ class _ClassFinder(html.parser.HTMLParser):
         self._class_name = class_name
         self.matches: list[tuple[str, int]] = []
 
-    def handle_starttag(self, tag: str, attrs: list) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         for name, value in attrs:
             if name == "class" and value and self._class_name in value.split():
                 self.matches.append((tag, self.getpos()[0]))
@@ -319,10 +319,6 @@ class _InjectingHandler(http.server.SimpleHTTPRequestHandler):
             return True
         return False
 
-    def do_HEAD(self) -> None:
-        if not self._refuse():
-            super().do_HEAD()
-
     def do_GET(self) -> None:
         if self._refuse():
             return
@@ -338,6 +334,10 @@ class _InjectingHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def do_HEAD(self) -> None:
+        if not self._refuse():
+            super().do_HEAD()
 
     def log_message(self, format: str, *args: object) -> None:
         """Keep request logs off stderr, where findings go."""

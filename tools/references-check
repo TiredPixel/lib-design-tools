@@ -37,7 +37,6 @@ from collections.abc import Iterator
 
 import design_render
 
-HTML_SUFFIXES = frozenset({".html", ".htm"})
 CSS_SUFFIXES = frozenset({".css"})
 
 REFERENCE_ATTRIBUTES = {
@@ -232,10 +231,8 @@ def _scan_css(css: str) -> tuple[str, dict[int, str], dict[int, str]]:
             blank(position, stop)
             position = stop
         elif css[position] in "\"'":
-            quote, index = css[position], position + 1
-            while index < end and css[index] not in (quote, "\n"):
-                index += 2 if css[index] == "\\" else 1
-            index = min(index, end)
+            quote = css[position]
+            index = skip(position + 1, quote + "\n")
             if index < end and css[index] == quote:
                 strings[position] = _css_unescape(css[position + 1 : index])
                 blank(position + 1, index)
@@ -345,13 +342,17 @@ def _problem(
     return resolve(path, referrer, root)
 
 
+def _relations(attributes: dict[str, str | None]) -> list[str]:
+    return (attributes.get("rel") or "").lower().split()
+
+
 def _loads(tag: str, attributes: dict[str, str | None]) -> bool:
     """Whether the element's reference loads something into the page."""
     # A refresh navigates away, as following a link does.
     if tag in ("a", "area", "meta"):
         return False
     if tag == "link":
-        relations = (attributes.get("rel") or "").lower().split()
+        relations = _relations(attributes)
         return not relations or not set(relations) <= NON_LOADING_RELATIONS
     return True
 
@@ -404,7 +405,7 @@ class _HtmlReferences(html.parser.HTMLParser):
         self, tag: str, name: str, attributes: dict[str, str | None]
     ) -> None:
         if tag == "link":
-            relations = (attributes.get("rel") or "").lower().split()
+            relations = _relations(attributes)
             if "stylesheet" not in relations:
                 return
             what = "stylesheet"
@@ -428,7 +429,7 @@ class _HtmlReferences(html.parser.HTMLParser):
                 )
             )
 
-    def handle_starttag(self, tag: str, attrs: list) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
         if tag == "base":
             self.problems.append(
@@ -528,7 +529,7 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     for path in arguments.files:
         if not path.is_file():
             parser.error(f"{path} is not a file")
-        if path.suffix.lower() not in HTML_SUFFIXES | CSS_SUFFIXES:
+        if path.suffix.lower() not in design_render.HTML_SUFFIXES | CSS_SUFFIXES:
             parser.error(f"{path} is neither HTML nor CSS")
         if not path.resolve().is_relative_to(arguments.root.resolve()):
             parser.error(f"{path} is not inside --root {arguments.root}")
@@ -540,7 +541,7 @@ def main(argv: list[str] | None = None) -> int:
     failures = 0
     for path in arguments.files:
         try:
-            if path.suffix.lower() in HTML_SUFFIXES:
+            if path.suffix.lower() in design_render.HTML_SUFFIXES:
                 problems = check_html(
                     path,
                     arguments.root,

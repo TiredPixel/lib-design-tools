@@ -25,7 +25,8 @@ from typing import ClassVar
 
 import design_render
 
-EXTRA_TYPES = {".webmanifest": "application/manifest+json"}
+MANIFEST_TYPE = "application/manifest+json"
+EXTRA_TYPES = {".webmanifest": MANIFEST_TYPE}
 
 
 class PreviewHandler(http.server.SimpleHTTPRequestHandler):
@@ -72,7 +73,7 @@ class PreviewHandler(http.server.SimpleHTTPRequestHandler):
         if guessed.startswith("text/") or guessed in (
             "application/javascript",
             "application/json",
-            "application/manifest+json",
+            MANIFEST_TYPE,
             "image/svg+xml",
         ):
             return f"{guessed}; charset=utf-8"
