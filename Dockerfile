@@ -56,7 +56,7 @@ RUN curl -fsL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/
     yq --version | grep -qF "version v${YQ_VERSION}"
 
 # uname -m, not dpkg --print-architecture above: ruff names assets by triple.
-ARG RUFF_VERSION=0.17.1
+ARG RUFF_VERSION=0.17.3
 RUN curl -fsL "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}/ruff-$(uname -m)-unknown-linux-gnu.tar.gz" | \
     tar -xz -C /usr/local/bin --strip-components=1 --wildcards '*/ruff' && \
     ruff --version && \
