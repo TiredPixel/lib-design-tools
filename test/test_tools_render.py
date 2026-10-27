@@ -300,6 +300,42 @@ class ServeTest(TempDirTestCase):
         expected = "<head>" + design_render.CAPTURE_SCRIPT + "</head><p>"
         self.assertEqual(body, expected.encode("utf-8") + b"\xe9</p>")
 
+    def test_refuses_dot_segments_and_symlinks_leaving_the_tree(self) -> None:
+        self.write(".env", "secret")
+        self.write(".git/config", "secret")
+        self.write("a.css", "a {}")
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        (pathlib.Path(outside.name) / "x.css").write_text("secret", encoding="utf-8")
+        (self.root / "public").symlink_to(".env")
+        (self.root / "git").symlink_to(".git")
+        (self.root / "out.css").symlink_to(pathlib.Path(outside.name) / "x.css")
+        (self.root / "alias.css").symlink_to("a.css")
+        with design_render.serve(self.root) as base_url:
+            for path in (".env", "%2Egit/config", "public", "git/config", "out.css"):
+                for method in ("GET", "HEAD"):
+                    with self.subTest(path=path, method=method):
+                        request = urllib.request.Request(base_url + path, method=method)
+                        with self.assertRaises(urllib.error.HTTPError) as caught:
+                            urllib.request.urlopen(request, timeout=10)
+                        caught.exception.close()
+                        self.assertEqual(caught.exception.code, 404)
+            self.assertEqual(self.fetch(base_url + "alias.css")[0], b"a {}")
+
+    def test_refused(self) -> None:
+        self.write("a.css", "")
+        root = str(self.root)
+        cases = {
+            ("/a.css", self.root / "a.css"): False,
+            ("/", self.root): False,
+            ("/.env", self.root / ".env"): True,
+            ("/x/%2e%2e/a.css", self.root / "a.css"): True,
+            ("/b.css", self.root.parent / "b.css"): True,
+        }
+        for (url, path), expected in cases.items():
+            with self.subTest(url=url):
+                self.assertEqual(design_render.refused(root, url, str(path)), expected)
+
     def test_page_outside_root(self) -> None:
         with self.assertRaisesRegex(ValueError, "not inside the served root"):
             design_render.page_url("http://h/", self.root / "sub", self.root / "a.html")

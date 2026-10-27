@@ -281,14 +281,45 @@ def find_marked(dom: str, class_name: str) -> list[tuple[str, int]]:
     return finder.matches
 
 
+def refused(directory: str, url: str, path: str) -> bool:
+    """Whether a request for ``url``, which a server of ``directory`` maps to ``path``,
+    is refused.
+
+    The tree served is usually a whole repository, so a segment starting ``.``, as
+    ``.git`` and ``.env`` have, is refused in the URL and in the real path, symlinks
+    followed, that the file is reached by, as is a real path outside ``directory``.
+    """
+    segments = urllib.parse.unquote(urllib.parse.urlsplit(url).path).split("/")
+    if any(segment.startswith(".") for segment in segments):
+        return True
+    root = pathlib.Path(directory).resolve()
+    target = pathlib.Path(path).resolve()
+    if not target.is_relative_to(root):
+        return True
+    return any(part.startswith(".") for part in target.relative_to(root).parts)
+
+
 class _InjectingHandler(http.server.SimpleHTTPRequestHandler):
     """Serve a directory, injecting the capture script into HTML pages.
 
     Pages are served as UTF-8. Bytes that are not valid UTF-8 pass through unchanged
-    rather than failing the request.
+    rather than failing the request. What ``refused`` names is answered 404.
     """
 
+    def _refuse(self) -> bool:
+        """Answer a refused request; return True when answered."""
+        if refused(self.directory, self.path, self.translate_path(self.path)):
+            self.send_error(404)
+            return True
+        return False
+
+    def do_HEAD(self) -> None:
+        if not self._refuse():
+            super().do_HEAD()
+
     def do_GET(self) -> None:
+        if self._refuse():
+            return
         path = pathlib.Path(self.translate_path(self.path))
         if path.suffix.lower() not in HTML_SUFFIXES or not path.is_file():
             super().do_GET()

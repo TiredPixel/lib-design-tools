@@ -3,10 +3,9 @@
 
 Every response carries ``Cache-Control: no-store``, so a reload always shows the file as
 saved. A directory without an ``index.html`` is listed. ``/`` is redirected to
-``--index``. Any path with a segment starting ``.`` is refused, since the tree served is
-usually a whole repository, ``.git`` included. ``.webmanifest`` is served as
-``application/manifest+json``, which a browser needs to read a web app manifest rather
-than download it.
+``--index``. A path ``design_render.refused`` names, such as one through ``.git``, is
+answered 404. ``.webmanifest`` is served as ``application/manifest+json``, which a
+browser needs to read a web app manifest rather than download it.
 
 For development only: the server is Python's standard one, threaded, with no TLS and no
 access control.
@@ -23,6 +22,8 @@ import pathlib
 import sys
 import urllib.parse
 from typing import ClassVar
+
+import design_render
 
 EXTRA_TYPES = {".webmanifest": "application/manifest+json"}
 
@@ -43,10 +44,6 @@ class PreviewHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
-    def _refused(self) -> bool:
-        path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
-        return any(segment.startswith(".") for segment in path.split("/"))
-
     def _route(self) -> bool:
         """Answer the redirect and refusals; return True when answered."""
         if urllib.parse.urlsplit(self.path).path == "/":
@@ -55,7 +52,9 @@ class PreviewHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return True
-        if self._refused():
+        if design_render.refused(
+            self.directory, self.path, self.translate_path(self.path)
+        ):
             self.send_error(404)
             return True
         return False

@@ -31,6 +31,14 @@ class ServeTest(unittest.TestCase):
         (root / ".git").mkdir()
         (root / ".git/config").write_text("secret", encoding="utf-8")
         (root / ".env").write_text("secret", encoding="utf-8")
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        (pathlib.Path(outside.name) / "x.txt").write_text("secret", encoding="utf-8")
+        (root / "public-config").symlink_to(".env")
+        (root / "listed/git").symlink_to("../.git")
+        (root / "outside").symlink_to(pathlib.Path(outside.name) / "x.txt")
+        (root / "preview/alias.html").symlink_to("index.html")
+        (root / "linked").symlink_to("listed")
         quiet = mock.patch.object(preview_serve.PreviewHandler, "log_message")
         quiet.start()
         self.addCleanup(quiet.stop)
@@ -92,6 +100,22 @@ class ServeTest(unittest.TestCase):
             for method in ("GET", "HEAD"):
                 with self.subTest(path=path, method=method):
                     self.assertEqual(self.request(path, method).status, 404)
+
+    def test_refuses_symlinks_to_dotfiles_or_out_of_the_tree(self) -> None:
+        for path in ("/public-config", "/listed/git/config", "/outside"):
+            for method in ("GET", "HEAD"):
+                with self.subTest(path=path, method=method):
+                    self.assertEqual(self.request(path, method).status, 404)
+
+    def test_serves_symlinks_within_the_tree(self) -> None:
+        for path, body in (
+            ("/preview/alias.html", b"<p>preview</p>"),
+            ("/linked/a.txt", b"a"),
+        ):
+            with self.subTest(path=path):
+                response = self.request(path)
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.body, body)
 
 
 class ArgumentsTest(unittest.TestCase):
