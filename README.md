@@ -43,7 +43,7 @@ git submodule add https://github.com/TiredPixel/lib-design-tools.git lib/design-
 git submodule update --init --recursive lib/design-tools
 ```
 
-Each part below is taken on its own. A tool can be called from anywhere, the image needs only its link, and only the parts that run commands in the image depend on others: the services run the runners, and the make targets run the services.
+Each part below is taken on its own. A tool needs nothing else here and can be called directly, in the image, the image needs only its link, and only the parts that run commands in the image depend on others: the services run the runners, and the make targets run the services.
 
 ### The image
 
