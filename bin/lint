@@ -21,6 +21,7 @@ if defines shell_files; then
     read_files shell_files shell
     echo "checking ${#shell[@]} shell file(s)" >&2
     shellcheck -x "${shell[@]}"
+    shfmt "${shfmt_args[@]}" -d "${shell[@]}"
 fi
 
 if defines palette_args; then
@@ -57,7 +58,7 @@ if defines json_files; then
     echo "checking ${#json[@]} JSON file(s)" >&2
     status=0
     for f in "${json[@]}"; do
-        if ! python3 -m json.tool "${json_options[@]}" "$f" | diff -u -- "$f" -; then
+        if ! jq "${jq_args[@]}" "$f" | diff -u -- "$f" -; then
             echo "$f: not formatted" >&2
             status=1
         fi
@@ -70,7 +71,7 @@ if defines js_files; then
 
     read_files js_files js
     echo "checking ${#js[@]} JavaScript file(s)" >&2
-    semistandard --verbose "${js[@]}" | snazzy
+    semistandard "${js[@]}" | snazzy
 fi
 
 if defines css_files || defines html_files; then

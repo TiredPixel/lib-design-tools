@@ -22,11 +22,21 @@ if defines palette_args; then
     "$tools/palette-generate" "${palette[@]}"
 fi
 
+if defines shell_files; then
+    echo -e "\n=== FORMAT SHELL\n"
+
+    read_files shell_files shell
+    echo "formatting ${#shell[@]} shell file(s)" >&2
+    shfmt "${shfmt_args[@]}" -w "${shell[@]}"
+fi
+
 if defines python_files; then
     echo -e "\n=== FORMAT PYTHON\n"
 
     read_files python_files python
     echo "formatting ${#python[@]} Python file(s)" >&2
+    # Every fix ruff offers, unsafe ones included, as format applies them all
+    # and leaves its diff and the tests to catch a wrong one.
     ruff check --fix --unsafe-fixes "${python[@]}"
     ruff format "${python[@]}"
 fi
@@ -36,6 +46,9 @@ if defines yaml_files; then
 
     read_files yaml_files yaml
     echo "formatting ${#yaml[@]} YAML file(s)" >&2
+    # -P, since yq otherwise keeps each value's flow or block style and quoting,
+    # so the same data could pass in several layouts; jq gives JSON one layout
+    # by default.
     for f in "${yaml[@]}"; do
         yq -i -P 'sort_keys(..)' "$f"
     done
@@ -46,11 +59,11 @@ if defines json_files; then
 
     read_files json_files json
     echo "formatting ${#json[@]} JSON file(s)" >&2
-    # Captured before writing, since redirecting json.tool's output to the file
-    # it reads would truncate it before reading.
+    # Captured before writing, since redirecting jq's output to the file it
+    # reads would truncate it before reading.
     for f in "${json[@]}"; do
-        formatted=$(python3 -m json.tool "${json_options[@]}" "$f")
-        printf '%s\n' "$formatted" > "$f"
+        formatted=$(jq "${jq_args[@]}" "$f")
+        printf '%s\n' "$formatted" >"$f"
     done
 fi
 

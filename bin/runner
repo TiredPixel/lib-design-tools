@@ -15,10 +15,13 @@ tools=$design_tools/tools
 source bin/settings
 
 # Read by bin/format and bin/lint alike, so the two cannot disagree.
-json_options=(--indent 2 --sort-keys --no-ensure-ascii)
+jq_args=(--sort-keys .)
+# Indented by 4 spaces rather than shfmt's default tab, since spaces are the
+# common practice for shell. -s, since format applies every fix a tool offers.
+shfmt_args=(-i 4 -s)
 
 function defines {
-    declare -F "$1" > /dev/null || declare -p "$1" > /dev/null 2>&1
+    declare -F "$1" >/dev/null || declare -p "$1" >/dev/null 2>&1
 }
 
 # Reads the NUL-separated output of the function named by $1 into the array

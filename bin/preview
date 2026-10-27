@@ -12,7 +12,7 @@ shopt -s inherit_errexit failglob
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
 
 # Unlike the other settings, a variable rather than a function.
-if declare -F preview_index > /dev/null; then
+if declare -F preview_index >/dev/null; then
     echo "bin/settings: preview_index must be a variable, not a function" >&2
     exit 1
 fi

@@ -148,6 +148,15 @@ class FormatThenLintTest(Repository):
         self.assertPasses(result)
         self.assertRegex(result.stderr, r"checking [12] .* file\(s\)")
 
+    def test_shell(self):
+        self.settings("function shell_files { printf '%s\\0' a.sh; }\n")
+        self.assertFormatFixes(
+            "a.sh",
+            "#!/bin/bash\nf() {\n  local a=1\n  echo $(( $a + 1 ))\n}\n",
+            "#!/bin/bash\nf() {\n    local a=1\n    echo $((a + 1))\n}\n",
+            "SHELL",
+        )
+
     def test_yaml(self):
         self.settings("function yaml_files { printf '%s\\0' a.yml; }\n")
         self.assertFormatFixes("a.yml", UNSORTED_YAML, SORTED_YAML, "YAML")
@@ -160,9 +169,20 @@ class FormatThenLintTest(Repository):
 
     def test_json(self):
         self.settings("function json_files { printf '%s\\0' a.json; }\n")
+        # Numbers keep their literals, which a formatter going through floats would
+        # round or respell.
         self.assertFormatFixes(
-            "a.json", '{"b": 1, "a": "é"}', '{\n  "a": "é",\n  "b": 1\n}\n', "JSON"
+            "a.json",
+            '{"b": 1, "a": "é", "n": 12345678901234567890123, "f": 1.0, "z": -0}',
+            '{\n  "a": "é",\n  "b": 1,\n  "f": 1.0,\n'
+            '  "n": 12345678901234567890123,\n  "z": -0\n}\n',
+            "JSON",
         )
+
+    def test_json_that_does_not_parse_fails_the_lint(self):
+        self.settings("function json_files { printf '%s\\0' a.json; }\n")
+        self.write("a.json", '{"a": }\n')
+        self.assertFails(self.run_bin("lint"), "a.json: not formatted")
 
     def test_python(self):
         self.settings("function python_files { printf '%s\\0' a.py; }\n")

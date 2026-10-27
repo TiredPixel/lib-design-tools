@@ -24,12 +24,14 @@ RUN apt-get update && \
     curl \
     diffutils \
     file \
+    jq \
     npm \
     python3 \
     python3-pytest \
     python3-pytest-subtests \
     python3-pytest-xdist \
     shellcheck \
+    shfmt \
     && \
     rm -rf /var/lib/apt/lists/*
 
