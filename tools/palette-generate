@@ -83,6 +83,7 @@ out=$(mktemp -d)
 trap 'rm -rf -- "$out"' EXIT
 
 colour='^#([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$'
+notice="Generated from $yaml, in its key order: edit that file, never this one."
 
 # Both outputs and the checks read the YAML with its aliases and << merge keys
 # expanded, which yq does only where asked, so the CSS holds every colour the
@@ -90,7 +91,7 @@ colour='^#([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$'
 # winning over a merged one.
 # $comment is the JSON key, written literally, not a shell variable.
 # shellcheck disable=SC2016
-COMMENT="Generated from $yaml, in its key order: edit that file, never this one." \
+COMMENT=$notice \
     yq --yaml-fix-merge-anchor-to-spec -o=json -I2 \
     'explode(.) | {"$comment": strenv(COMMENT)} + .' "$yaml" >"$out/json"
 
@@ -131,7 +132,7 @@ collisions=$(cut -d':' -f1 "$out/properties" | sort | uniq -d)
 
 {
     echo '@charset "UTF-8";'
-    echo "/* Generated from $yaml, in its key order: edit that file, never this one. */"
+    echo "/* $notice */"
     echo ':root {'
     cat "$out/properties"
     echo '}'

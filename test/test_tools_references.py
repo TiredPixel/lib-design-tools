@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import unittest
 
+import temp_tree
 import tools_loader
 
 references_check = tools_loader.load("references-check")
@@ -16,41 +17,45 @@ references_check = tools_loader.load("references-check")
 SRI = 'integrity="sha384-abc" crossorigin="anonymous"'
 
 
-class ReferencesTestCase(unittest.TestCase):
+class ReferencesTestCase(temp_tree.TempTreeTestCase):
     def setUp(self) -> None:
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.root = pathlib.Path(directory.name)
+        super().setUp()
         for name in ("site/a.css", "site/img/x.png", "top.js", "site/dir/index.html"):
             self.write(name, "")
         (self.root / "site/empty").mkdir()
 
-    def write(self, name: str, content: str | bytes) -> pathlib.Path:
-        path = self.root / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if isinstance(content, bytes):
-            path.write_bytes(content)
-        else:
-            path.write_text(content, encoding="utf-8")
-        return path
-
-    def run_main(self, *paths: pathlib.Path) -> tuple[int, str]:
+    def run_main(self, *arguments: str) -> tuple[int, str]:
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            status = references_check.main(["--root", str(self.root), *map(str, paths)])
+            status = references_check.main(list(arguments))
         return status, stderr.getvalue()
 
+    def run_usage_error(self, *arguments: str) -> str:
+        stderr = io.StringIO()
+        with (
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as caught,
+        ):
+            references_check.main(list(arguments))
+        self.assertEqual(caught.exception.code, 2)
+        return stderr.getvalue()
+
     def html_problems(
-        self, markup: str, require_integrity: bool = False
+        self, markup: str, require_integrity: bool = False, no_external: bool = False
     ) -> list[tuple[int, str]]:
         page = self.write("site/page.html", markup)
         return references_check.check_html(
-            page, self.root, require_integrity=require_integrity
+            page,
+            self.root,
+            no_external=no_external,
+            require_integrity=require_integrity,
         )
 
-    def css_problems(self, css: str) -> list[tuple[int, str]]:
+    def css_problems(
+        self, css: str, no_external: bool = False
+    ) -> list[tuple[int, str]]:
         sheet = self.write("site/sheet.css", css)
-        return references_check.check_css(sheet, self.root)
+        return references_check.check_css(sheet, self.root, no_external=no_external)
 
 
 class ClassifyTest(unittest.TestCase):
@@ -76,6 +81,59 @@ class ClassifyTest(unittest.TestCase):
         for reference, expected in cases.items():
             with self.subTest(reference=reference):
                 self.assertEqual(references_check.classify(reference), expected)
+
+
+class RefreshUrlTest(unittest.TestCase):
+    def test_refresh_url(self) -> None:
+        cases = {
+            "": "",
+            "5": "",
+            " 5 ; ": "",
+            "0x; url=a.html": "",
+            "soon; url=a.html": "",
+            "0; url=a.html": "a.html",
+            "0;\n URL = 'a b.html' x": "a b.html",
+            '0 "a.html"': "a.html",
+            "0;url='a.html": "a.html",
+            ".5,a.html": "a.html",
+            "1.5.0 a.html": "a.html",
+            "0; uploads/a.html": "uploads/a.html",
+            "0; url a.html": "url a.html",
+            "0; u'a.html'": "u'a.html'",
+        }
+        for content, expected in cases.items():
+            with self.subTest(content=content):
+                self.assertEqual(references_check.refresh_url(content), expected)
+
+
+class SrcsetUrlsTest(unittest.TestCase):
+    def test_srcset_urls(self) -> None:
+        cases = {
+            "": [],
+            " , ,": [],
+            "a.png": ["a.png"],
+            "a.png 1x, b.png 2x": ["a.png", "b.png"],
+            "a.png,b.png 2x": ["a.png,b.png"],
+            "a.png,, b.png": ["a.png", "b.png"],
+            "a.png 100w,\n  b.png 200w": ["a.png", "b.png"],
+            "data:image/png;base64,AA 1x, b.png 2x": [
+                "data:image/png;base64,AA",
+                "b.png",
+            ],
+            "a.png calc(1, 2) 1x, b.png": ["a.png", "b.png"],
+        }
+        for srcset, expected in cases.items():
+            with self.subTest(srcset=srcset):
+                self.assertEqual(list(references_check.srcset_urls(srcset)), expected)
+
+
+class CssUnescapeTest(unittest.TestCase):
+    def test_unreadable_escapes_become_the_replacement_character(self) -> None:
+        for escape in ("\\0", "\\110000", "\\d800"):
+            with self.subTest(escape=escape):
+                self.assertEqual(
+                    references_check._css_unescape(f"a{escape} b"), "a\ufffdb"
+                )
 
 
 class HtmlTest(ReferencesTestCase):
@@ -205,46 +263,6 @@ class HtmlTest(ReferencesTestCase):
             ],
         )
 
-    def test_refresh_url(self) -> None:
-        cases = {
-            "": "",
-            "5": "",
-            " 5 ; ": "",
-            "0x; url=a.html": "",
-            "soon; url=a.html": "",
-            "0; url=a.html": "a.html",
-            "0;\n URL = 'a b.html' x": "a b.html",
-            '0 "a.html"': "a.html",
-            "0;url='a.html": "a.html",
-            ".5,a.html": "a.html",
-            "1.5.0 a.html": "a.html",
-            "0; uploads/a.html": "uploads/a.html",
-            "0; url a.html": "url a.html",
-            "0; u'a.html'": "u'a.html'",
-        }
-        for content, expected in cases.items():
-            with self.subTest(content=content):
-                self.assertEqual(references_check.refresh_url(content), expected)
-
-    def test_srcset_urls(self) -> None:
-        cases = {
-            "": [],
-            " , ,": [],
-            "a.png": ["a.png"],
-            "a.png 1x, b.png 2x": ["a.png", "b.png"],
-            "a.png,b.png 2x": ["a.png,b.png"],
-            "a.png,, b.png": ["a.png", "b.png"],
-            "a.png 100w,\n  b.png 200w": ["a.png", "b.png"],
-            "data:image/png;base64,AA 1x, b.png 2x": [
-                "data:image/png;base64,AA",
-                "b.png",
-            ],
-            "a.png calc(1, 2) 1x, b.png": ["a.png", "b.png"],
-        }
-        for srcset, expected in cases.items():
-            with self.subTest(srcset=srcset):
-                self.assertEqual(list(references_check.srcset_urls(srcset)), expected)
-
     def test_attribute_line_on_multiline_tag(self) -> None:
         markup = '<p>x</p>\n<img\n  alt="a"\n  src="gone.png">\n'
         self.assertEqual(self.html_problems(markup), [(4, "gone.png does not exist")])
@@ -276,6 +294,25 @@ class HtmlTest(ReferencesTestCase):
         self.assertEqual(
             self.html_problems(markup),
             [(4, "gone.png does not exist"), (8, "missing.png does not exist")],
+        )
+
+    def test_style_element_text_in_several_chunks(self) -> None:
+        # CPython delivers <style> text whole, so the chunks are fed by hand.
+        css = "\n  @import 'gone.css';\n  .x { background: url(\"missing.png\"); }\n"
+        whole = self.html_problems(f"<style>{css}</style>")
+        parser = references_check._HtmlReferences(
+            self.root / "site/page.html", self.root, False, False
+        )
+        parser.feed("<style>")
+        split = css.index("missing") + 3
+        parser.handle_data(css[:split])
+        parser.handle_data(css[split:])
+        parser.feed("</style>")
+        parser.close()
+        self.assertEqual(parser.problems, whole)
+        self.assertEqual(
+            whole,
+            [(2, "gone.css does not exist"), (3, "missing.png does not exist")],
         )
 
     def test_external_loads_pass_without_require_integrity(self) -> None:
@@ -314,9 +351,12 @@ class HtmlTest(ReferencesTestCase):
             ],
         )
 
-    def test_local_script_needs_no_sri(self) -> None:
+    def test_local_script_needs_no_integrity(self) -> None:
         self.assertEqual(
-            self.html_problems('<script src="/top.js"></script>', True), []
+            self.html_problems(
+                '<script src="/top.js"></script>', require_integrity=True
+            ),
+            [],
         )
 
     def test_no_external_refuses_every_load(self) -> None:
@@ -335,10 +375,9 @@ class HtmlTest(ReferencesTestCase):
             '<video src="https://cdn/v.mp4"></video>\n'
             '<img srcset="img/x.png 1x, https://cdn/x2.png 2x">\n'
         )
-        page = self.write("site/page.html", markup)
         refused = "which --no-external refuses"
         self.assertEqual(
-            references_check.check_html(page, self.root, no_external=True),
+            self.html_problems(markup, no_external=True),
             [
                 (1, f"external https://cdn/a.css, {refused}"),
                 (2, f"external //cdn/a.js, {refused}"),
@@ -354,10 +393,8 @@ class HtmlTest(ReferencesTestCase):
         )
         # A load refused outright is not reported again for lacking integrity.
         self.assertEqual(
-            references_check.check_html(
-                page, self.root, no_external=True, require_integrity=True
-            ),
-            references_check.check_html(page, self.root, no_external=True),
+            self.html_problems(markup, no_external=True, require_integrity=True),
+            self.html_problems(markup, no_external=True),
         )
 
     def test_no_external_reads_areas_image_srcsets_refreshes_and_image_sets(
@@ -372,10 +409,9 @@ class HtmlTest(ReferencesTestCase):
             '<img src="blob:https://example.com/0f6e">\n'
             "<p style=\"background: image-set('https://cdn/s.png' 1x)\"></p>\n"
         )
-        page = self.write("site/page.html", markup)
         refused = "which --no-external refuses"
         self.assertEqual(
-            references_check.check_html(page, self.root, no_external=True),
+            self.html_problems(markup, no_external=True),
             [
                 (3, f"external https://cdn/x2.png, {refused}"),
                 (6, f"external https://cdn/s.png, {refused}"),
@@ -407,16 +443,15 @@ class CssTest(ReferencesTestCase):
         )
 
     def test_no_external_refuses_urls_and_imports(self) -> None:
-        sheet = self.write(
-            "site/sheet.css",
+        css = (
             ".c { background: url(https://cdn/x.png) }\n"
             '@import "//cdn/y.css";\n'
             ".d { background: url(img/x.png) }\n"
-            '.e { background: image-set("https://cdn/z.png" 1x) }\n',
+            '.e { background: image-set("https://cdn/z.png" 1x) }\n'
         )
         refused = "which --no-external refuses"
         self.assertEqual(
-            references_check.check_css(sheet, self.root, no_external=True),
+            self.css_problems(css, no_external=True),
             [
                 (1, f"external https://cdn/x.png, {refused}"),
                 (2, f"external //cdn/y.css, {refused}"),
@@ -475,13 +510,6 @@ class CssTest(ReferencesTestCase):
             [(2, "gone-6.png does not exist"), (5, "gone-7.png does not exist")],
         )
 
-    def test_unreadable_escapes_become_the_replacement_character(self) -> None:
-        for escape in ("\\0", "\\110000", "\\d800"):
-            with self.subTest(escape=escape):
-                self.assertEqual(
-                    references_check._css_unescape(f"a{escape} b"), "a\ufffdb"
-                )
-
     def test_an_unquoted_url_is_read_whole(self) -> None:
         css = (
             ".a { background: url(gone/*x*/.png) }\n"
@@ -526,14 +554,16 @@ class CssTest(ReferencesTestCase):
 class MainTest(ReferencesTestCase):
     def test_clean(self) -> None:
         page = self.write("site/p.html", '<a href="a.css">a</a>')
-        status, output = self.run_main(page, self.root / "site/a.css")
+        status, output = self.run_main(
+            "--root", str(self.root), str(page), str(self.root / "site/a.css")
+        )
         self.assertEqual(status, 0)
         self.assertEqual(output, "checked 2 file(s): 0 problem(s)\n")
 
     def test_failures_are_reported_per_line(self) -> None:
         page = self.write("site/p.HTM", '\n<img src="gone.png">')
         sheet = self.write("site/s.css", "a { b: url(gone.svg) }")
-        status, output = self.run_main(page, sheet)
+        status, output = self.run_main("--root", str(self.root), str(page), str(sheet))
         self.assertEqual(status, 1)
         self.assertEqual(
             output,
@@ -545,14 +575,12 @@ class MainTest(ReferencesTestCase):
     def test_no_external_option(self) -> None:
         page = self.write("site/p.html", '<img src="https://cdn/x.png">')
         sheet = self.write("site/s.css", "a { b: url(https://cdn/y.svg) }")
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            status = references_check.main(
-                ["--root", str(self.root), "--no-external", str(page), str(sheet)]
-            )
+        status, output = self.run_main(
+            "--root", str(self.root), "--no-external", str(page), str(sheet)
+        )
         self.assertEqual(status, 1)
         self.assertEqual(
-            stderr.getvalue(),
+            output,
             f"{page}:1: external https://cdn/x.png, which --no-external refuses\n"
             f"{sheet}:1: external https://cdn/y.svg, which --no-external refuses\n"
             "checked 2 file(s): 2 problem(s)\n",
@@ -560,15 +588,13 @@ class MainTest(ReferencesTestCase):
 
     def test_require_integrity_option(self) -> None:
         page = self.write("site/p.html", '<script src="https://cdn/x.js"></script>')
-        self.assertEqual(self.run_main(page)[0], 0)
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            status = references_check.main(
-                ["--root", str(self.root), "--require-integrity", str(page)]
-            )
+        self.assertEqual(self.run_main("--root", str(self.root), str(page))[0], 0)
+        status, output = self.run_main(
+            "--root", str(self.root), "--require-integrity", str(page)
+        )
         self.assertEqual(status, 1)
         self.assertEqual(
-            stderr.getvalue(),
+            output,
             f"{page}:1: external script https://cdn/x.js lacks integrity and "
             "crossorigin\n"
             "checked 1 file(s): 1 problem(s)\n",
@@ -593,10 +619,38 @@ class MainTest(ReferencesTestCase):
 
     def test_not_utf8(self) -> None:
         page = self.write("site/p.html", b"<p>\xff</p>")
-        status, output = self.run_main(page)
+        status, output = self.run_main("--root", str(self.root), str(page))
         self.assertEqual(status, 1)
         self.assertIn(f"{page}: not valid UTF-8", output)
         self.assertIn("1 problem(s)", output)
+
+    def test_a_file_linked_into_the_root_from_outside_it_is_checked(self) -> None:
+        outside = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (outside / "clean.html").write_text('<a href="a.css">a</a>', encoding="utf-8")
+        (outside / "broken.html").write_text('<img src="gone.png">', encoding="utf-8")
+        clean = self.root / "site/clean.html"
+        clean.symlink_to(outside / "clean.html")
+        broken = self.root / "site/broken.html"
+        broken.symlink_to(outside / "broken.html")
+        self.assertEqual(
+            self.run_main("--root", str(self.root), str(clean)),
+            (0, "checked 1 file(s): 0 problem(s)\n"),
+        )
+        status, output = self.run_main("--root", str(self.root), str(broken))
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            output,
+            f"{broken}:1: gone.png does not exist\nchecked 1 file(s): 1 problem(s)\n",
+        )
+
+    def test_a_link_outside_the_root_to_a_page_inside_it_is_refused(self) -> None:
+        page = self.write("site/p.html", "")
+        outside = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (outside / "link.html").symlink_to(page)
+        self.assertIn(
+            "is not inside --root",
+            self.run_usage_error("--root", str(self.root), str(outside / "link.html")),
+        )
 
     def test_usage_errors(self) -> None:
         text = self.write("site/notes.txt", "")
@@ -612,14 +666,7 @@ class MainTest(ReferencesTestCase):
         }
         for message, arguments in cases.items():
             with self.subTest(message=message):
-                stderr = io.StringIO()
-                with (
-                    contextlib.redirect_stderr(stderr),
-                    self.assertRaises(SystemExit) as caught,
-                ):
-                    references_check.main(arguments)
-                self.assertEqual(caught.exception.code, 2)
-                self.assertIn(message, stderr.getvalue())
+                self.assertIn(message, self.run_usage_error(*arguments))
 
 
 if __name__ == "__main__":

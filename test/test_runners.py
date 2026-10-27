@@ -40,7 +40,7 @@ class Repository(unittest.TestCase):
     def write(self, name, text):
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(textwrap.dedent(text).lstrip())
+        path.write_text(textwrap.dedent(text).lstrip(), encoding="utf-8")
         return path
 
     def settings(self, text):
@@ -83,7 +83,9 @@ class PassSelectionTest(Repository):
                 result = self.run_bin(runner)
                 self.assertPasses(result)
                 self.assertEqual(self.sections(result), [])
-        self.assertEqual((self.root / "a.yml").read_text(), UNSORTED_YAML)
+        self.assertEqual(
+            (self.root / "a.yml").read_text(encoding="utf-8"), UNSORTED_YAML
+        )
 
     def test_only_the_defined_passes_run(self):
         self.write("a.html", "<p>a</p>\n")
@@ -103,7 +105,18 @@ class PassSelectionTest(Repository):
         self.settings(
             "function references_args { printf '%s\\0' --root . a.html; false; }\n"
         )
-        self.assertFails(self.run_bin("lint"), "bin/settings: references_args failed")
+        self.assertFails(
+            self.run_bin("lint"), "bin/settings: references_args failed (1)"
+        )
+
+    def test_a_failing_set_fails_even_before_its_last_command(self):
+        self.write("a.html", "<p>a</p>\n")
+        self.settings(
+            "function references_args { false; printf '%s\\0' --root . a.html; }\n"
+        )
+        self.assertFails(
+            self.run_bin("lint"), "bin/settings: references_args failed (1)"
+        )
 
     def test_the_shell_pass_checks_only_the_named_files(self):
         self.write("ok.sh", '# shellcheck shell=bash\necho "$1"\n')
@@ -143,7 +156,7 @@ class FormatThenLintTest(Repository):
         self.assertPasses(result)
         self.assertIn(f"FORMAT {section}", self.sections(result))
         self.assertRegex(result.stderr, r"formatting [12] .* file\(s\)")
-        self.assertEqual((self.root / name).read_text(), after)
+        self.assertEqual((self.root / name).read_text(encoding="utf-8"), after)
         result = self.run_bin("lint")
         self.assertPasses(result)
         self.assertRegex(result.stderr, r"checking [12] .* file\(s\)")
@@ -221,7 +234,9 @@ class FormatThenLintTest(Repository):
         )
         self.write("p.yml", 'a: "#000000"\n')
         self.assertPasses(self.run_bin("format"))
-        self.assertIn("--x-a: #000000;", (self.root / "p.css").read_text())
+        self.assertIn(
+            "--x-a: #000000;", (self.root / "p.css").read_text(encoding="utf-8")
+        )
         self.assertPasses(self.run_bin("lint"))
         self.write("p.yml", 'a: "#FFFFFF"\n')
         self.assertFails(self.run_bin("lint"), "palette files are stale.")
@@ -251,7 +266,7 @@ class CheckingPassTest(Repository):
         self.assertEqual(self.sections(result), ["LINT RENDER"])
 
 
-class TestRunnerTest(Repository):
+class GateTest(Repository):
     def test_named_tests_skip_the_lint_and_reach_the_tools(self):
         self.settings(
             "function pytest_args { printf '%s\\0' --no-skips; }\n"
@@ -360,6 +375,8 @@ class PreviewTest(Repository):
                 time.sleep(0.1)
         # The test container has no network but loopback, so the wildcard bind is
         # read from the kernel's socket table: 0.0.0.0:8080, listening.
-        table = pathlib.Path("/proc/net/tcp").read_text().splitlines()[1:]
+        table = (
+            pathlib.Path("/proc/net/tcp").read_text(encoding="utf-8").splitlines()[1:]
+        )
         listening = {(line.split()[1], line.split()[3]) for line in table}
         self.assertIn(("00000000:1F90", "0A"), listening)
