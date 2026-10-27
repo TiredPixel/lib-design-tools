@@ -49,6 +49,8 @@ ENV PYTHONDONTWRITEBYTECODE=1
 
 ENV PATH=/home/x/r/bin:$PATH
 
+# mikefarah's yq, which bin/format and lint/yaml-keys need: Debian's yq is the
+# Python wrapper.
 ARG YQ_VERSION=4.54.1
 RUN curl -fsL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_$(dpkg --print-architecture)" -o /usr/local/bin/yq && \
     chmod +x /usr/local/bin/yq && \
