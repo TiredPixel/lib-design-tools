@@ -6,8 +6,8 @@
 #
 # dev copies nothing in, so a repository taking this one as a submodule builds
 # the same image, through a Dockerfile symlinked to this one, and runs it on its
-# own tree; test adds that tree for the gate. README.md, Building the images,
-# describes both stages.
+# own tree; test adds that tree for the gate. README.md, Building, describes
+# both stages.
 #===============================================================================
 FROM docker.io/library/debian@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308 AS dev
 
@@ -49,6 +49,8 @@ ENV PYTHONDONTWRITEBYTECODE=1
 
 ENV PATH=/home/x/r/bin:$PATH
 
+# mikefarah's yq, which bin/format and lint/yaml-keys need: Debian's yq is the
+# Python wrapper.
 ARG YQ_VERSION=4.54.1
 RUN curl -fsL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_$(dpkg --print-architecture)" -o /usr/local/bin/yq && \
     chmod +x /usr/local/bin/yq && \
