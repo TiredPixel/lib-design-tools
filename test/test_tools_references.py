@@ -131,6 +131,29 @@ class HtmlTest(ReferencesTestCase):
             [(1, "/../outside.html resolves outside --root")],
         )
 
+    def test_dot_dot_is_taken_against_the_url_not_a_symlink_target(self) -> None:
+        self.write("site/assets/docs/page.html", '<img src="../image.svg">\n')
+        (self.root / "site/docs").symlink_to("assets/docs")
+        page = self.root / "site/docs/page.html"
+        self.write("site/image.svg", "")
+        self.assertEqual(references_check.check_html(page, self.root), [])
+        (self.root / "site/image.svg").unlink()
+        self.write("site/assets/image.svg", "")
+        self.assertEqual(
+            references_check.check_html(page, self.root),
+            [(1, "../image.svg does not exist")],
+        )
+
+    def test_a_symlink_out_of_the_root_resolves_outside_it(self) -> None:
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        (pathlib.Path(outside.name) / "x.png").write_bytes(b"")
+        (self.root / "site/out.png").symlink_to(pathlib.Path(outside.name) / "x.png")
+        self.assertEqual(
+            self.html_problems('<img src="out.png">'),
+            [(1, "out.png resolves outside --root")],
+        )
+
     def test_every_loading_attribute_is_read(self) -> None:
         markup = (
             '<img srcset="gone-1.png 1x, img/x.png 2x">\n'
