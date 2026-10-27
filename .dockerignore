@@ -1,7 +1,6 @@
 # Read by the test stage alone, since dev copies nothing in. The .env files and
 # Compose overrides hold this checkout's settings, not the tree's.
 **/.git
-**/__pycache__
 /.env*
 /docker-compose.*.yml
 /tmp/
