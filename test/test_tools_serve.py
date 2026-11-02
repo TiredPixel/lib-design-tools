@@ -62,7 +62,7 @@ class PreviewServeTest(unittest.TestCase):
         response.body = response.read()
         return response
 
-    def test_root_redirects_to_the_index(self) -> None:
+    def test_root_redirects_to_the_start(self) -> None:
         for method in ("GET", "HEAD"):
             with self.subTest(method=method):
                 response = self.request("/", method)
@@ -157,26 +157,26 @@ class ArgumentsTest(unittest.TestCase):
 
     def test_defaults(self) -> None:
         arguments = preview_serve.parse_arguments(
-            ["--root", self.root, "--index", "/p/"]
+            ["--root", self.root, "--start", "/p/"]
         )
         self.assertEqual((arguments.address, arguments.port), ("127.0.0.1", 8080))
 
     def test_usage_errors(self) -> None:
         self.assertIn(
             "is not a directory",
-            self.run_usage_error("--root", "/no/such", "--index", "/"),
+            self.run_usage_error("--root", "/no/such", "--start", "/"),
         )
         self.assertIn(
             "is not a /-rooted path",
-            self.run_usage_error("--root", self.root, "--index", "p/"),
+            self.run_usage_error("--root", self.root, "--start", "p/"),
         )
         self.assertIn(
             "is not a port",
             self.run_usage_error(
-                "--root", self.root, "--index", "/", "--port", "70000"
+                "--root", self.root, "--start", "/", "--port", "70000"
             ),
         )
-        self.assertIn("required", self.run_usage_error("--index", "/"))
+        self.assertIn("required", self.run_usage_error("--start", "/"))
 
     def test_main_serves_until_interrupted(self) -> None:
         server = mock.Mock(server_address=("0.0.0.0", 1234))
@@ -189,7 +189,7 @@ class ArgumentsTest(unittest.TestCase):
             contextlib.redirect_stdout(stdout),
         ):
             status = preview_serve.main(
-                ["--root", self.root, "--index", "/p/", "--address", "0.0.0.0"]
+                ["--root", self.root, "--start", "/p/", "--address", "0.0.0.0"]
             )
         self.assertEqual(status, 0)
         made.assert_called_once_with(

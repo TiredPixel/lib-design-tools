@@ -3,9 +3,10 @@
 
 Every response carries ``Cache-Control: no-store``, so a reload always shows the file as
 saved. A directory without an ``index.html`` is listed. ``/`` is redirected to
-``--index``. A path ``design_render.refused`` names, such as one through ``.git``, is
-answered 404. ``.webmanifest`` is served as ``application/manifest+json``, which a
-browser needs to read a web app manifest rather than download it.
+``--start``, the page a preview opens on. A path ``design_render.refused`` names, such
+as one through ``.git``, is answered 404. ``.webmanifest`` is served as
+``application/manifest+json``, which a browser needs to read a web app manifest rather
+than download it.
 
 For development only: the server is Python's standard one, threaded, with no TLS and no
 access control.
@@ -30,15 +31,15 @@ EXTRA_TYPES = {".webmanifest": MANIFEST_TYPE}
 
 
 class PreviewHandler(http.server.SimpleHTTPRequestHandler):
-    """Serves ``directory`` with the rules above; ``index`` is where ``/`` goes."""
+    """Serves ``directory`` with the rules above; ``start`` is where ``/`` goes."""
 
     extensions_map: ClassVar[dict[str, str]] = {
         **http.server.SimpleHTTPRequestHandler.extensions_map,
         **EXTRA_TYPES,
     }
 
-    def __init__(self, *args, index: str, **kwargs):
-        self.index = index
+    def __init__(self, *args, start: str, **kwargs):
+        self.start = start
         super().__init__(*args, **kwargs)
 
     def end_headers(self) -> None:
@@ -49,7 +50,7 @@ class PreviewHandler(http.server.SimpleHTTPRequestHandler):
         """Answer the redirect and refusals; return True when answered."""
         if urllib.parse.urlsplit(self.path).path == "/":
             self.send_response(302)
-            self.send_header("Location", self.index)
+            self.send_header("Location", self.start)
             self.send_header("Content-Length", "0")
             self.end_headers()
             return True
@@ -81,10 +82,10 @@ class PreviewHandler(http.server.SimpleHTTPRequestHandler):
 
 
 def make_server(
-    root: pathlib.Path, address: str, port: int, index: str
+    root: pathlib.Path, address: str, port: int, start: str
 ) -> http.server.ThreadingHTTPServer:
     """A server for ``root`` bound to ``address`` and ``port`` (0 picks one)."""
-    handler = functools.partial(PreviewHandler, directory=str(root), index=index)
+    handler = functools.partial(PreviewHandler, directory=str(root), start=start)
     return http.server.ThreadingHTTPServer((address, port), handler)
 
 
@@ -101,13 +102,15 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--port", type=int, default=8080, help="the port to listen on")
     parser.add_argument(
-        "--index", required=True, help="the path / redirects to, such as /preview/"
+        "--start",
+        required=True,
+        help="the page the preview opens on, which / redirects to, such as /preview/",
     )
     arguments = parser.parse_args(argv)
     if not arguments.root.is_dir():
         parser.error(f"--root {arguments.root} is not a directory")
-    if not arguments.index.startswith("/"):
-        parser.error(f"--index {arguments.index} is not a /-rooted path")
+    if not arguments.start.startswith("/"):
+        parser.error(f"--start {arguments.start} is not a /-rooted path")
     if not 0 <= arguments.port <= 65535:
         parser.error(f"--port {arguments.port} is not a port")
     return arguments
@@ -116,7 +119,7 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     arguments = parse_arguments(argv)
     server = make_server(
-        arguments.root.resolve(), arguments.address, arguments.port, arguments.index
+        arguments.root.resolve(), arguments.address, arguments.port, arguments.start
     )
     host, port = server.server_address[:2]
     print(f"preview-serve: {arguments.root} at http://{host}:{port}/", flush=True)

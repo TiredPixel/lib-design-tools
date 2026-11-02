@@ -339,20 +339,20 @@ class GateTest(Repository):
 
 
 class PreviewTest(Repository):
-    def test_refuses_without_an_index(self):
+    def test_refuses_without_a_start(self):
         self.settings("")
-        self.assertFails(self.run_bin("preview"), "preview_index is not set")
-        self.settings("# shellcheck disable=SC2034\npreview_index=\n")
-        self.assertFails(self.run_bin("preview"), "preview_index is not set")
+        self.assertFails(self.run_bin("preview"), "preview_start is not set")
+        self.settings("# shellcheck disable=SC2034\npreview_start=\n")
+        self.assertFails(self.run_bin("preview"), "preview_start is not set")
 
-    def test_refuses_an_index_written_as_a_function(self):
-        self.settings("function preview_index { printf '%s\\0' /pages/; }\n")
+    def test_refuses_a_start_written_as_a_function(self):
+        self.settings("function preview_start { printf '%s\\0' /pages/; }\n")
         self.assertFails(
-            self.run_bin("preview"), "preview_index must be a variable, not a function"
+            self.run_bin("preview"), "preview_start must be a variable, not a function"
         )
 
-    def test_serves_every_address_and_redirects_to_the_index(self):
-        self.settings("# shellcheck disable=SC2034\npreview_index=/pages/\n")
+    def test_serves_every_address_and_redirects_to_the_start(self):
+        self.settings("# shellcheck disable=SC2034\npreview_start=/pages/\n")
         self.write("pages/index.html", "<p>page</p>")
         server = subprocess.Popen(
             ["bin/preview"],

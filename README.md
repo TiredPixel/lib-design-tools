@@ -27,7 +27,7 @@ Each command prints its usage with `--help`.
 - `tools/palette-generate` – the JSON and the CSS from a palette YAML, one custom property per colour; the check option compares them with the files instead of writing. A property is named `--`, the given prefix and a hyphen, then the full YAML key path, lowercased, with `_` written as `-` and list items numbered from 1, so `greys: {warm: [a, b]}` with prefix `x` gives `--x-greys-warm-1` and `--x-greys-warm-2`; a key that would put anything but letters, digits, hyphens or non-ASCII characters in a name fails the run, as does a value starting with `#` that is not a `#RGB`, `#RGBA`, `#RRGGBB` or `#RRGGBBAA` colour, or a value left empty, as an unquoted `#` colour is, since YAML reads it as a comment. Aliases and merge keys are expanded in both outputs alike.
 - `tools/references-check` – every local reference in HTML and CSS resolves under the root: each attribute that loads or links something, such as `href`, `src`, `srcset`, `imagesrcset`, `poster` and `data`, a refresh's target, and each `url()`, `@import` and `image-set()` string. Options refuse anything external a page loads, or require `integrity` and `crossorigin` on every external stylesheet and script.
 - `tools/render-check` – each page loaded in headless Chromium, failing on an uncaught error, an unhandled rejection, a `console.error`, a failed load the page or its stylesheets start, such as an image, script, stylesheet, `@import`, font or background image, or an element matching the error marker. A request the page's own script makes, such as `fetch`, is left to the script; the page's icon is not checked, and a load from another origin that does not use CORS counts only where its element reports an error.
-- `tools/preview-serve` – the tree as it is on disk, for previewing while editing: nothing cached, dotfiles refused, directories listed, and `/` redirected to the index path. For development only.
+- `tools/preview-serve` – the tree as it is on disk, for previewing while editing: nothing cached, dotfiles refused, directories listed, and `/` redirected to the start path, the page the preview opens on. For development only.
 
 Importable from a repository's own Python tests, with `tools/` on the path, as `bin/test` puts it:
 
@@ -127,7 +127,7 @@ What `bin/test` runs, after the lint unless tests are named:
 
 And `bin/preview`:
 
-- `preview_index`, a variable – the path `/` redirects to.
+- `preview_start`, a variable – the path `/` redirects to, the page the preview opens on.
 
 A `bin/settings` for a design system with a preview page and a palette:
 
@@ -135,7 +135,7 @@ A `bin/settings` for a design system with a preview page and a palette:
 # shellcheck shell=bash
 
 # shellcheck disable=SC2034
-preview_index=/preview/
+preview_start=/preview/
 
 function palette_args {
     printf '%s\0' palette/palette.yml --prefix x --json palette/palette.json --css palette/palette.css
