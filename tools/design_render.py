@@ -118,6 +118,7 @@ CAPTURE_SCRIPT = """<script>(function () {
 })();</script>""".replace("ERRORS_ATTRIBUTE", ERRORS_ATTRIBUTE)
 
 _CLASS_SELECTOR = re.compile(r"\.(-?[A-Za-z_][A-Za-z0-9_-]*)")
+_PDF_PAGE = re.compile(rb"/Type\s*/Page(?![s\w])")
 
 HTML_SUFFIXES = frozenset({".html", ".htm"})
 _INDEX_NAMES = http.server.SimpleHTTPRequestHandler.index_pages
@@ -136,14 +137,14 @@ class Render:
     errors: list[dict]
 
 
-def _offset(starts: list[int], position: tuple[int, int]) -> int:
-    line, column = position
-    return starts[line - 1] + column
-
-
 def _line_starts(text: str) -> list[int]:
     """Return the offset of the first character of each line of ``text``."""
     return [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
+
+
+def _offset(starts: list[int], position: tuple[int, int]) -> int:
+    line, column = position
+    return starts[line - 1] + column
 
 
 class _InsertionPoint(html.parser.HTMLParser):
@@ -497,9 +498,6 @@ def print_pdf(
         if not out.is_file():
             raise RenderError(f"{chromium} printed no PDF for {url}")
         return out.read_bytes()
-
-
-_PDF_PAGE = re.compile(rb"/Type\s*/Page(?![s\w])")
 
 
 def sheet_count(pdf: bytes) -> int:

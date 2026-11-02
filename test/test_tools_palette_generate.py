@@ -1,12 +1,11 @@
 """tools/palette-generate, on fabricated input in temporary directories."""
 
 import json
-import pathlib
 import subprocess
-import tempfile
 import textwrap
 import unittest
 
+import temp_tree
 import tools_loader
 
 
@@ -20,17 +19,9 @@ def run(*args, cwd):
     )
 
 
-class Workspace(unittest.TestCase):
-    def setUp(self):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.root = pathlib.Path(directory.name)
-
+class Workspace(temp_tree.TempTreeTestCase):
     def write(self, name, text):
-        path = self.root / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(textwrap.dedent(text).lstrip(), encoding="utf-8")
-        return path
+        return super().write(name, textwrap.dedent(text).lstrip())
 
 
 class PaletteGenerateTest(Workspace):

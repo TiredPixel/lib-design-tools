@@ -4,16 +4,14 @@ from the root of a fabricated repository whose bin/ links to them."""
 import os
 import pathlib
 import subprocess
-import tempfile
 import textwrap
 import time
-import unittest
 import urllib.error
 import urllib.request
 
-import tools_loader
+import temp_tree
 
-BIN = tools_loader.TOOLS.parent / "bin"
+BIN = pathlib.Path(__file__).resolve().parent.parent / "bin"
 
 UNSORTED_YAML = "b: 1\na: 2\n"
 SORTED_YAML = "a: 2\nb: 1\n"
@@ -46,20 +44,15 @@ SKIPPING_TEST = (
 )
 
 
-class Repository(unittest.TestCase):
+class Repository(temp_tree.TempTreeTestCase):
     def setUp(self):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.root = pathlib.Path(directory.name)
+        super().setUp()
         (self.root / "bin").mkdir()
         for runner in ("format", "lint", "test", "preview"):
             (self.root / "bin" / runner).symlink_to(BIN / runner)
 
     def write(self, name, text):
-        path = self.root / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(textwrap.dedent(text).lstrip(), encoding="utf-8")
-        return path
+        return super().write(name, textwrap.dedent(text).lstrip())
 
     def settings(self, text):
         self.write("bin/settings", "# shellcheck shell=bash\n" + text)

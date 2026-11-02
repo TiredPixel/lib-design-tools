@@ -203,10 +203,9 @@ class HtmlTest(ReferencesTestCase):
         )
 
     def test_a_symlink_out_of_the_root_resolves_outside_it(self) -> None:
-        outside = tempfile.TemporaryDirectory()
-        self.addCleanup(outside.cleanup)
-        (pathlib.Path(outside.name) / "x.png").write_bytes(b"")
-        (self.root / "site/out.png").symlink_to(pathlib.Path(outside.name) / "x.png")
+        outside = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (outside / "x.png").write_bytes(b"")
+        (self.root / "site/out.png").symlink_to(outside / "x.png")
         self.assertEqual(
             self.html_problems('<img src="out.png">'),
             [(1, "out.png resolves outside --root")],

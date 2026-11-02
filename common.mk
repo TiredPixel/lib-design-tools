@@ -23,4 +23,4 @@ upgrade:
 	$(MAKE) upgrade-pre
 	$(MAKE) build
 	$(MAKE) test
-.PHONY: build format lint preview test upgrade-pre upgrade
+.PHONY: build format lint preview test upgrade upgrade-pre
