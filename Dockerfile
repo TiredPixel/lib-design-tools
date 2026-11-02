@@ -17,7 +17,7 @@
 # own tree; test adds that tree for the gate. README.md, Building, describes
 # both stages.
 #===============================================================================
-FROM docker.io/library/debian@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308 AS dev
+FROM docker.io/library/debian@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1 AS dev
 
 LABEL org.opencontainers.image.source=https://github.com/TiredPixel/lib-design-tools
 
