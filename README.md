@@ -75,7 +75,7 @@ ln -s lib/design-tools/docker-compose.yml docker-compose.yml
 
 A repository whose YAML pass would cover `docker-compose.yml` leaves the link out of `yaml_files`, since `bin/format` would rewrite this repository's file through it.
 
-The test stage copies the whole tree, so the repository's `.dockerignore` keeps `.git`, `.env` and anything local out of it, and must not exclude the submodule.
+The test stage copies the whole tree, so the repository's `.dockerignore` keeps `.git`, `.env` and anything local out of it, and must not exclude the submodule. Excluding every top-level dot path, `/.*`, and letting the repository's own dot files back in by name, such as `!/.github`, keeps a per-user directory such as `.claude` out without naming it.
 
 ### The make targets
 
