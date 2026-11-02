@@ -30,6 +30,8 @@ VALID_WORKFLOW = (
     "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
     "      - run: echo a\n"
 )
+VALID_MAKEFILE = "all:\n\ttrue\nclean:\n\ttrue\ntest:\n\ttrue\n.PHONY: all clean test\n"
+LONG_BODY_MAKEFILE = VALID_MAKEFILE.replace("all:\n\ttrue\n", "all:\n" + "\ttrue\n" * 6)
 INVALID_WORKFLOW = (
     "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
     "      - run: echo ${{ undefined_context }}\n"
@@ -162,12 +164,14 @@ class PassSelectionTest(Repository):
         self.write("Dockerfile", FORMATTED_DOCKERFILE)
         self.write("compose.yml", VALID_COMPOSE)
         self.write("workflow.yml", VALID_WORKFLOW)
+        self.write("Makefile", VALID_MAKEFILE)
         cases = (
             ("md_files", "a.md", ["FORMAT MARKDOWN"], ["LINT MARKDOWN"]),
             ("toml_files", "a.toml", ["FORMAT TOML"], ["LINT TOML"]),
             ("docker_files", "Dockerfile", ["FORMAT DOCKER"], ["LINT DOCKER"]),
             ("compose_files", "compose.yml", [], ["LINT COMPOSE"]),
             ("workflow_files", "workflow.yml", [], ["LINT WORKFLOWS"]),
+            ("make_files", "Makefile", [], ["LINT MAKE"]),
         )
         for name, path, formats, lints in cases:
             with self.subTest(name=name):
@@ -394,6 +398,22 @@ class CheckingPassTest(Repository):
         result = self.run_bin("lint")
         self.assertPasses(result)
         self.assertEqual(self.sections(result), ["LINT WORKFLOWS"])
+
+    def test_make(self):
+        self.settings("function make_files { printf '%s\\0' Makefile; }\n")
+        self.write("Makefile", LONG_BODY_MAKEFILE)
+        self.assertFails(self.run_bin("lint"), "maxbodylength")
+        self.write("Makefile", VALID_MAKEFILE)
+        result = self.run_bin("lint")
+        self.assertPasses(result)
+        self.assertEqual(self.sections(result), ["LINT MAKE"])
+
+    def test_make_reads_the_repository_s_checkmake_ini(self):
+        self.settings("function make_files { printf '%s\\0' Makefile; }\n")
+        self.write("Makefile", "build:\n\ttrue\n.PHONY: build\n")
+        self.assertFails(self.run_bin("lint"), "minphony")
+        self.write("checkmake.ini", "[minphony]\ndisabled = true\n")
+        self.assertPasses(self.run_bin("lint"))
 
 
 class GateTest(Repository):

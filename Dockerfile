@@ -1,5 +1,6 @@
 # FROMFREEZE docker.io/library/debian:13
 # ARGFREEZE ACTIONLINT_VERSION github:rhysd/actionlint
+# ARGFREEZE CHECKMAKE_VERSION github:checkmake/checkmake
 # ARGFREEZE DOCKERFMT_VERSION github:reteps/dockerfmt
 # ARGFREEZE HADOLINT_VERSION github:hadolint/hadolint
 # ARGFREEZE MDFORMAT_FRONTMATTER_VERSION pypi:mdformat-frontmatter
@@ -83,6 +84,12 @@ RUN curl -fsL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLI
     | tar -xz -C /usr/local/bin actionlint \
     && actionlint --version \
     && actionlint --version | grep -qFx "${ACTIONLINT_VERSION}"
+
+ARG CHECKMAKE_VERSION=0.3.2
+RUN curl -fsL "https://github.com/checkmake/checkmake/releases/download/v${CHECKMAKE_VERSION}/checkmake-v${CHECKMAKE_VERSION}.linux.$(dpkg --print-architecture)" -o /usr/local/bin/checkmake \
+    && chmod +x /usr/local/bin/checkmake \
+    && checkmake --version \
+    && checkmake --version | grep -qF "checkmake v${CHECKMAKE_VERSION} "
 
 ARG DOCKERFMT_VERSION=0.5.4
 RUN curl -fsL "https://github.com/reteps/dockerfmt/releases/download/v${DOCKERFMT_VERSION}/dockerfmt-v${DOCKERFMT_VERSION}-linux-$(dpkg --print-architecture).tar.gz" \

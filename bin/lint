@@ -136,6 +136,14 @@ if defines workflow_files; then
     actionlint "${workflow[@]}"
 fi
 
+if defines make_files; then
+    echo -e "\n=== LINT MAKE\n"
+
+    read_files make_files make
+    echo "checking ${#make[@]} make file(s)" >&2
+    checkmake "${make[@]}"
+fi
+
 if defines references_args; then
     echo -e "\n=== LINT REFERENCES\n"
 
