@@ -4,6 +4,11 @@
 # submodule sits.
 DESIGN_TOOLS := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
 
+# Recipes in strict bash rather than make's default /bin/sh, here and in every
+# Makefile that includes this one.
+SHELL := bash
+.SHELLFLAGS := -Eeuo pipefail -O inherit_errexit -O failglob -c
+
 # --profile test so the design and design_test services are built here rather
 # than on demand by the --build the other targets carry. preview, under a
 # profile of its own, runs the same dev image as design.

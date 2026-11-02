@@ -25,6 +25,8 @@ SHELL ["/bin/bash", "-Eeuo", "pipefail", "-O", "inherit_errexit", "-O", "failglo
 
 # Without python3-psutil, which nothing here installs, xdist's -n auto counts
 # the CPUs the container may use rather than the machine's physical cores.
+# DL3008: the versions are those of the Debian snapshot the base image's digest
+# pins, which make upgrade moves.
 # hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

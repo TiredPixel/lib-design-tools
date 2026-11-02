@@ -1,3 +1,4 @@
 [lint]
-# The performance rules, on top of ruff's defaults.
-extend-select = ["PERF"]
+# The performance rules, and RUF100 so an unused suppression fails, on top of
+# ruff's defaults.
+extend-select = ["PERF", "RUF100"]

@@ -18,6 +18,8 @@ source bin/settings
 #
 # --newline, since dockerfmt otherwise drops each file's final newline.
 dockerfmt_args=(--newline)
+# --sort-keys, since jq otherwise keeps each object's keys as written, so the
+# same data could pass in several orders.
 jq_args=(--sort-keys .)
 # One paragraph per line rather than mdformat's default of keeping each line
 # break, since a renderer reflows a paragraph, so a break inside one carries

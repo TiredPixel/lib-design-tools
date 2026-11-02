@@ -15,15 +15,6 @@ shopt -s inherit_errexit failglob
 # shellcheck source=/dev/null
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
 
-if defines shell_files; then
-    echo -e "\n=== LINT SHELL\n"
-
-    read_files shell_files shell
-    echo "checking ${#shell[@]} shell file(s)" >&2
-    shellcheck -x "${shell[@]}"
-    shfmt "${shfmt_args[@]}" -d "${shell[@]}"
-fi
-
 if defines palette_args; then
     echo -e "\n=== LINT PALETTE\n"
 
@@ -32,6 +23,17 @@ if defines palette_args; then
         echo "The generated palette files are stale." >&2
         exit 1
     }
+fi
+
+if defines shell_files; then
+    echo -e "\n=== LINT SHELL\n"
+
+    read_files shell_files shell
+    echo "checking ${#shell[@]} shell file(s)" >&2
+    # -x, so ShellCheck follows a sourced file the set does not name rather than
+    # failing on SC1091.
+    shellcheck -x "${shell[@]}"
+    shfmt "${shfmt_args[@]}" -d "${shell[@]}"
 fi
 
 if defines python_files; then
