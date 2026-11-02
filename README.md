@@ -77,7 +77,7 @@ The test stage copies the whole tree, so the repository's `.dockerignore` keeps 
 
 ### The make targets
 
-`common.mk` gives `build`, `format`, `lint`, `test` and `upgrade`, run through the services. A repository's `Makefile` includes it and adds its own `upgrade-pre`, which moves the submodule to its latest commit and its own submodules to the commits that one records:
+`common.mk` gives `build`, `format`, `lint`, `preview`, `test` and `upgrade`, run through the services. A repository's `Makefile` includes it and adds its own `upgrade-pre`, which moves the submodule to its latest commit and its own submodules to the commits that one records:
 
 ```make
 include lib/design-tools/common.mk
@@ -156,13 +156,13 @@ function pytest_args {
 
 ### Previewing
 
-`docker compose up` serves the tree read-only with `bin/preview`, on a free host port, or on `DC_PREVIEW_PORT` where `.env` sets one. The port is published on `127.0.0.1` only; `DC_PREVIEW_HOST` in `.env` publishes it on another address, such as `0.0.0.0` to reach a VM's preview from its host:
+`make preview` serves the tree read-only with `bin/preview`, on a free host port, or on `DC_PREVIEW_PORT` where `.env` sets one. The port is published on `127.0.0.1` only; `DC_PREVIEW_HOST` in `.env` publishes it on another address, such as `0.0.0.0` to reach a VM's preview from its host:
 
 ```sh
-docker compose up
+make preview
 ```
 
-With no port pinned, read it back:
+With no port pinned, read it back from another terminal:
 
 ```sh
 docker compose port preview 8080
@@ -192,7 +192,7 @@ make format
 
 The image builds two stages. `dev` is the formatting, linting and test toolchain, headless Chromium included, running as the unprivileged user `x`; it copies nothing in, so a repository builds it through its symlinked `Dockerfile` and runs it on its own tree. `test` adds a copy of the repository's tree to it.
 
-The `design` and `design_test` services sit under the `test` profile, which every make target that runs Compose passes, so `docker compose up` starts only `preview`. The `design` service runs `bin/format` from `dev` on the tree mounted read-write, since its rewrites must reach it, and the `preview` service `bin/preview` on the tree mounted read-only. The `design_test` service runs the gates from `test` on its own copy, with no mount and no network.
+The `design` and `design_test` services sit under the `test` profile, which `make build`, `make format`, `make lint` and `make test` pass, and the `preview` service under the `preview` profile, which `make preview` selects, so a bare `docker compose up` starts no service. The `design` service runs `bin/format` from `dev` on the tree mounted read-write, since its rewrites must reach it, and the `preview` service `bin/preview` on the tree mounted read-only. The `design_test` service runs the gates from `test` on its own copy, with no mount and no network.
 
 `make build` builds both stages:
 
