@@ -25,9 +25,9 @@ cp .env.example .env
 Each command prints its usage with `--help`.
 
 - `tools/palette-generate` – the JSON and the CSS from a palette YAML, one custom property per colour; the check option compares them with the files instead of writing. A property is named `--`, the given prefix and a hyphen, then the full YAML key path, lowercased, with `_` written as `-` and list items numbered from 1, so `greys: {warm: [a, b]}` with prefix `x` gives `--x-greys-warm-1` and `--x-greys-warm-2`; a key that would put anything but letters, digits, hyphens or non-ASCII characters in a name fails the run, as does a value starting with `#` that is not a `#RGB`, `#RGBA`, `#RRGGBB` or `#RRGGBBAA` colour, or a value left empty, as an unquoted `#` colour is, since YAML reads it as a comment. Aliases and merge keys are expanded in both outputs alike.
-- `tools/references-check` – every local reference in HTML and CSS resolves under the root: each attribute that loads or links something, such as `href`, `src`, `srcset`, `imagesrcset`, `poster` and `data`, a refresh's target, and each `url()`, `@import` and `image-set()` string. Options refuse anything external a page loads, or require `integrity` and `crossorigin` on every external stylesheet and script.
+- `tools/references-check` – every local reference in HTML and CSS resolves under the root: each attribute that loads or links something, such as `href`, `src`, `srcset`, `imagesrcset`, `poster` and `data`, a refresh's target, and each `url()`, `@import` and `image-set()` string. Options refuse anything external a page loads, or require `integrity` and `crossorigin` on every external stylesheet and script. `--unresolved PATH`, repeatable, exempts a `/`-rooted path served by something else, such as a sibling site, for a link, an `area`, a refresh or a `link` whose every `rel` loads nothing, matching wherever a reference lands, query and fragment aside; an exempt path that something loads into the page fails, as does an exemption whose path resolves or that nothing references.
 - `tools/render-check` – each page loaded in headless Chromium, failing on an uncaught error, an unhandled rejection, a `console.error`, a failed load the page or its stylesheets start, such as an image, script, stylesheet, `@import`, font or background image, or an element matching the error marker. A request the page's own script makes, such as `fetch`, is left to the script; the page's icon is not checked, and a load from another origin that does not use CORS counts only where its element reports an error.
-- `tools/preview-serve` – the tree as it is on disk, for previewing while editing: nothing cached, dotfiles refused, directories listed, and `/` redirected to the index path. For development only.
+- `tools/preview-serve` – the tree as it is on disk, for previewing while editing: nothing cached, dotfiles refused, directories listed, and `/` redirected to the start path, the page the preview opens on. For development only.
 
 Importable from a repository's own Python tests, with `tools/` on the path, as `bin/test` puts it:
 
@@ -54,6 +54,8 @@ A repository builds it, as *Building* describes, through a `Dockerfile` that lin
 ln -s lib/design-tools/Dockerfile Dockerfile
 ```
 
+A repository leaves the link out of `docker_files`, since `bin/format` would rewrite this repository's `Dockerfile` through it.
+
 ### The runners
 
 `bin/format`, `bin/lint`, `bin/test` and `bin/preview` run in the image, from the repository's root, and do only what the repository's own `bin/settings` names (*Settings*). A repository links the ones it uses; each finds this repository by resolving its link:
@@ -77,7 +79,7 @@ The test stage copies the whole tree, so the repository's `.dockerignore` keeps 
 
 ### The make targets
 
-`common.mk` gives `build`, `format`, `lint`, `test` and `upgrade`, run through the services. A repository's `Makefile` includes it and adds its own `upgrade-pre`, which moves the submodule to its latest commit and its own submodules to the commits that one records:
+`common.mk` gives `build`, `format`, `lint`, `preview`, `test` and `upgrade`, run through the services. A repository's `Makefile` includes it and adds its own `upgrade-pre`, which moves the submodule to its latest commit and its own submodules to the commits that one records:
 
 ```make
 include lib/design-tools/common.mk
@@ -115,9 +117,14 @@ What `bin/format` rewrites and `bin/lint` checks for drift, each to the tool's o
 - `json_files` – indented by 2 with keys sorted, by jq.
 - `js_files` – semistandard.
 - `css_files` and `html_files` – Prettier, under the repository's own Prettier configuration.
+- `md_files` – mdformat, with its GFM and front matter plugins, one paragraph per line.
+- `toml_files` – taplo, under the repository's own taplo configuration.
+- `docker_files` – dockerfmt, ending each file with a newline; `bin/lint` also runs hadolint, under the repository's own hadolint configuration. It never names the link to this repository's `Dockerfile` (*The image*).
 
 What `bin/lint` checks only:
 
+- `compose_files` – Compose files, each validated on its own, with every profile enabled, by `docker-compose --profile '*' config -q`. It checks neither layout nor key order, so each is also named in `yaml_files`, except the link to this repository's `docker-compose.yml` (*The services*).
+- `workflow_files` – GitHub Actions workflows, checked by actionlint; like `compose_files`, each is also named in `yaml_files` for its layout and key order.
 - `references_args` – `tools/references-check`'s arguments.
 - `render_args` – `tools/render-check`'s arguments, such as `--root . pages/*.html`.
 
@@ -127,7 +134,7 @@ What `bin/test` runs, after the lint unless tests are named:
 
 And `bin/preview`:
 
-- `preview_index`, a variable – the path `/` redirects to.
+- `preview_start`, a variable – the path `/` redirects to, the page the preview opens on.
 
 A `bin/settings` for a design system with a preview page and a palette:
 
@@ -135,7 +142,7 @@ A `bin/settings` for a design system with a preview page and a palette:
 # shellcheck shell=bash
 
 # shellcheck disable=SC2034
-preview_index=/preview/
+preview_start=/preview/
 
 function palette_args {
     printf '%s\0' palette/palette.yml --prefix x --json palette/palette.json --css palette/palette.css
@@ -156,13 +163,13 @@ function pytest_args {
 
 ### Previewing
 
-`docker compose up` serves the tree read-only with `bin/preview`, on a free host port, or on `DC_PREVIEW_PORT` where `.env` sets one. The port is published on `127.0.0.1` only; `DC_PREVIEW_HOST` in `.env` publishes it on another address, such as `0.0.0.0` to reach a VM's preview from its host:
+`make preview` serves the tree read-only with `bin/preview`, on a free host port, or on `DC_PREVIEW_PORT` where `.env` sets one. The port is published on `127.0.0.1` only; `DC_PREVIEW_HOST` in `.env` publishes it on another address, such as `0.0.0.0` to reach a VM's preview from its host:
 
 ```sh
-docker compose up
+make preview
 ```
 
-With no port pinned, read it back:
+With no port pinned, read it back from another terminal:
 
 ```sh
 docker compose port preview 8080
@@ -192,7 +199,7 @@ make format
 
 The image builds two stages. `dev` is the formatting, linting and test toolchain, headless Chromium included, running as the unprivileged user `x`; it copies nothing in, so a repository builds it through its symlinked `Dockerfile` and runs it on its own tree. `test` adds a copy of the repository's tree to it.
 
-The `design` and `design_test` services sit under the `test` profile, which every make target that runs Compose passes, so `docker compose up` starts only `preview`. The `design` service runs `bin/format` from `dev` on the tree mounted read-write, since its rewrites must reach it, and the `preview` service `bin/preview` on the tree mounted read-only. The `design_test` service runs the gates from `test` on its own copy, with no mount and no network.
+The `design` and `design_test` services sit under the `test` profile, which `make build`, `make format`, `make lint` and `make test` pass, and the `preview` service under the `preview` profile, which `make preview` selects, so a bare `docker compose up` starts no service. The `design` service runs `bin/format` from `dev` on the tree mounted read-write, since its rewrites must reach it, and the `preview` service `bin/preview` on the tree mounted read-only. The `design_test` service runs the gates from `test` on its own copy, with no mount and no network.
 
 `make build` builds both stages:
 
@@ -202,7 +209,7 @@ make build
 
 ## Upgrading
 
-Base images are pinned by digest, and tools from outside Debian's repositories by `ARG`. `make upgrade` moves `lib/shell-common` to its latest commit and runs its `docker/upgrade` to re-pin each pin the `Dockerfile` names on a `FROMFREEZE` or `ARGFREEZE` line, then builds and tests, so a bump that breaks the repository shows before it is committed:
+Base images are pinned by digest, and tools from outside Debian's repositories by `ARG`. `make upgrade` moves `lib/shell-common` to its latest commit and runs its `docker/upgrade` to re-pin each pin the `Dockerfile` names on a `FROMFREEZE` or `ARGFREEZE` line, then builds and tests, so a bump that breaks the repository shows before it is committed. `docker/upgrade` runs on the host, so `make upgrade` needs `curl` and `jq` there:
 
 ```sh
 make upgrade

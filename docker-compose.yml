@@ -34,10 +34,12 @@ services:
     profiles:
       - test
   # bin/preview on the tree as it is on disk, read-only, so an edit shows on
-  # reload. An init process forwards the stop signal, which Python running as
-  # pid 1 would ignore. The host port is free unless DC_PREVIEW_PORT pins one,
-  # and published on loopback unless DC_PREVIEW_HOST names another address, such
-  # as 0.0.0.0 to reach a VM's preview from its host.
+  # reload. Under a profile of its own, which make preview selects, so a bare
+  # docker compose up starts nothing a repository has not asked for. An init
+  # process forwards the stop signal, which Python running as pid 1 would
+  # ignore. The host port is free unless DC_PREVIEW_PORT pins one, and published
+  # on loopback unless DC_PREVIEW_HOST names another address, such as 0.0.0.0 to
+  # reach a VM's preview from its host.
   preview:
     build:
       context: .
@@ -53,6 +55,8 @@ services:
     init: true
     ports:
       - ${DC_PREVIEW_HOST:-127.0.0.1}:${DC_PREVIEW_PORT:-0}:8080
+    profiles:
+      - preview
     volumes:
       - read_only: true
         source: .

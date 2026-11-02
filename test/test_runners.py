@@ -18,6 +18,24 @@ BIN = tools_loader.TOOLS.parent / "bin"
 UNSORTED_YAML = "b: 1\na: 2\n"
 SORTED_YAML = "a: 2\nb: 1\n"
 
+UNFORMATTED_MARKDOWN = (
+    "---\ntitle: a\n---\n\nOne\ntwo.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+)
+FORMATTED_MARKDOWN = (
+    "---\ntitle: a\n---\n\nOne two.\n\n| a   | b   |\n| --- | --- |\n| 1   | 2   |\n"
+)
+UNFORMATTED_DOCKERFILE = "from debian:13\nrun true"
+FORMATTED_DOCKERFILE = "FROM debian:13\nRUN true\n"
+VALID_COMPOSE = "services:\n  a:\n    image: debian\n"
+VALID_WORKFLOW = (
+    "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
+    "      - run: echo a\n"
+)
+INVALID_WORKFLOW = (
+    "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
+    "      - run: echo ${{ undefined_context }}\n"
+)
+
 PASSING_TEST = (
     "import unittest\n\n\nclass A(unittest.TestCase):\n    def test_a(self):\n"
     "        pass\n"
@@ -144,6 +162,31 @@ class PassSelectionTest(Repository):
         self.assertPasses(result)
         self.assertIn("checking 5 shell file(s)", result.stderr)
 
+    def test_each_new_set_runs_its_own_pass_alone(self):
+        self.write("a.md", "a\n")
+        self.write("a.toml", "a = 1\n")
+        self.write("Dockerfile", FORMATTED_DOCKERFILE)
+        self.write("compose.yml", VALID_COMPOSE)
+        self.write("workflow.yml", VALID_WORKFLOW)
+        cases = (
+            ("md_files", "a.md", ["FORMAT MARKDOWN"], ["LINT MARKDOWN"]),
+            ("toml_files", "a.toml", ["FORMAT TOML"], ["LINT TOML"]),
+            ("docker_files", "Dockerfile", ["FORMAT DOCKER"], ["LINT DOCKER"]),
+            ("compose_files", "compose.yml", [], ["LINT COMPOSE"]),
+            ("workflow_files", "workflow.yml", [], ["LINT WORKFLOWS"]),
+        )
+        for name, path, formats, lints in cases:
+            with self.subTest(name=name):
+                self.settings(f"function {name} {{ printf '%s\\0' {path}; }}\n")
+                for runner, sections in (("format", formats), ("lint", lints)):
+                    result = self.run_bin(runner)
+                    self.assertPasses(result)
+                    self.assertEqual(self.sections(result), sections)
+                self.settings(f"function {name} {{ :; }}\n")
+                self.assertFails(
+                    self.run_bin("lint"), f"bin/settings: {name} names nothing"
+                )
+
 
 class FormatThenLintTest(Repository):
     """Each writing pass: lint fails on the unformatted file, format fixes it, and lint
@@ -226,6 +269,37 @@ class FormatThenLintTest(Repository):
             "a.css", "a{color:red}\n", "a {\n  color: red;\n}\n", "CSS AND HTML"
         )
 
+    def test_markdown(self):
+        # A paragraph is joined onto one line, and the front matter and the GFM
+        # table come through as front matter and a table, padded to their
+        # columns, rather than as a thematic break and a paragraph.
+        self.settings("function md_files { printf '%s\\0' a.md; }\n")
+        self.write("a.md", UNFORMATTED_MARKDOWN)
+        self.assertFails(self.run_bin("lint"), "a.md")
+        self.assertFormatFixes(
+            "a.md", UNFORMATTED_MARKDOWN, FORMATTED_MARKDOWN, "MARKDOWN"
+        )
+
+    def test_markdown_split_over_lines_fails_the_lint(self):
+        self.settings("function md_files { printf '%s\\0' a.md; }\n")
+        self.write("a.md", "One\ntwo.\n")
+        self.assertFails(self.run_bin("lint"), "a.md")
+        self.write("a.md", "One two.\n")
+        self.assertPasses(self.run_bin("lint"))
+
+    def test_toml(self):
+        self.settings("function toml_files { printf '%s\\0' a.toml; }\n")
+        self.assertFormatFixes("a.toml", "a=1\n", "a = 1\n", "TOML")
+
+    def test_dockerfile(self):
+        self.settings("function docker_files { printf '%s\\0' Dockerfile; }\n")
+        # hadolint passes this file, so the failure is dockerfmt's check.
+        self.write("Dockerfile", UNFORMATTED_DOCKERFILE)
+        self.assertFails(self.run_bin("lint"), "Dockerfile is not formatted")
+        self.assertFormatFixes(
+            "Dockerfile", UNFORMATTED_DOCKERFILE, FORMATTED_DOCKERFILE, "DOCKER"
+        )
+
     def test_palette(self):
         self.settings(
             "function palette_args {\n"
@@ -264,6 +338,58 @@ class CheckingPassTest(Repository):
         result = self.run_bin("lint")
         self.assertPasses(result)
         self.assertEqual(self.sections(result), ["LINT RENDER"])
+
+    def test_hadolint(self):
+        self.settings("function docker_files { printf '%s\\0' Dockerfile; }\n")
+        self.write("Dockerfile", "FROM debian:13\nRUN cd /tmp\n")
+        self.assertFails(self.run_bin("lint"), "DL3003")
+        self.write("Dockerfile", "FROM debian:13\nWORKDIR /tmp\n")
+        self.assertPasses(self.run_bin("lint"))
+
+    def test_compose(self):
+        self.settings("function compose_files { printf '%s\\0' a.yml; }\n")
+        self.write("a.yml", "services:\n  a:\n    image: debian\n    bogus: 1\n")
+        self.assertFails(self.run_bin("lint"), "a.yml: not a valid Compose file")
+        self.write("a.yml", VALID_COMPOSE)
+        result = self.run_bin("lint")
+        self.assertPasses(result)
+        self.assertEqual(self.sections(result), ["LINT COMPOSE"])
+
+    def test_compose_checks_each_file_on_its_own(self):
+        # a.yml gives its service no image, which b.yml supplies: merged, as
+        # Compose merges every -f, the two would pass.
+        self.settings("function compose_files { printf '%s\\0' a.yml b.yml; }\n")
+        self.write("a.yml", "services:\n  a:\n    init: true\n")
+        self.write("b.yml", VALID_COMPOSE)
+        self.assertFails(self.run_bin("lint"), "a.yml: not a valid Compose file")
+        self.write("b.yml", "services:\n  b:\n    init: true\n")
+        result = self.run_bin("lint")
+        self.assertFails(result, "a.yml: not a valid Compose file")
+        self.assertIn("b.yml: not a valid Compose file", result.stderr)
+
+    def test_compose_checks_services_under_a_profile(self):
+        self.settings("function compose_files { printf '%s\\0' a.yml; }\n")
+        self.write(
+            "a.yml",
+            "services:\n  a:\n    image: debian\n    profiles: [p]\n"
+            "    depends_on: [missing]\n",
+        )
+        self.assertFails(self.run_bin("lint"), 'undefined service "missing"')
+        self.write(
+            "a.yml",
+            "services:\n  a:\n    image: debian\n    profiles: [p]\n"
+            "    depends_on: [b]\n  b:\n    image: debian\n",
+        )
+        self.assertPasses(self.run_bin("lint"))
+
+    def test_workflows(self):
+        self.settings("function workflow_files { printf '%s\\0' a.yml; }\n")
+        self.write("a.yml", INVALID_WORKFLOW)
+        self.assertFails(self.run_bin("lint"), "undefined_context")
+        self.write("a.yml", VALID_WORKFLOW)
+        result = self.run_bin("lint")
+        self.assertPasses(result)
+        self.assertEqual(self.sections(result), ["LINT WORKFLOWS"])
 
 
 class GateTest(Repository):
@@ -339,20 +465,20 @@ class GateTest(Repository):
 
 
 class PreviewTest(Repository):
-    def test_refuses_without_an_index(self):
+    def test_refuses_without_a_start(self):
         self.settings("")
-        self.assertFails(self.run_bin("preview"), "preview_index is not set")
-        self.settings("# shellcheck disable=SC2034\npreview_index=\n")
-        self.assertFails(self.run_bin("preview"), "preview_index is not set")
+        self.assertFails(self.run_bin("preview"), "preview_start is not set")
+        self.settings("# shellcheck disable=SC2034\npreview_start=\n")
+        self.assertFails(self.run_bin("preview"), "preview_start is not set")
 
-    def test_refuses_an_index_written_as_a_function(self):
-        self.settings("function preview_index { printf '%s\\0' /pages/; }\n")
+    def test_refuses_a_start_written_as_a_function(self):
+        self.settings("function preview_start { printf '%s\\0' /pages/; }\n")
         self.assertFails(
-            self.run_bin("preview"), "preview_index must be a variable, not a function"
+            self.run_bin("preview"), "preview_start must be a variable, not a function"
         )
 
-    def test_serves_every_address_and_redirects_to_the_index(self):
-        self.settings("# shellcheck disable=SC2034\npreview_index=/pages/\n")
+    def test_serves_every_address_and_redirects_to_the_start(self):
+        self.settings("# shellcheck disable=SC2034\npreview_start=/pages/\n")
         self.write("pages/index.html", "<p>page</p>")
         server = subprocess.Popen(
             ["bin/preview"],

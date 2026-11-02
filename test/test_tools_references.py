@@ -301,7 +301,11 @@ class HtmlTest(ReferencesTestCase):
         css = "\n  @import 'gone.css';\n  .x { background: url(\"missing.png\"); }\n"
         whole = self.html_problems(f"<style>{css}</style>")
         parser = references_check._HtmlReferences(
-            self.root / "site/page.html", self.root, False, False
+            self.root / "site/page.html",
+            self.root,
+            False,
+            False,
+            references_check.Exemptions(),
         )
         parser.feed("<style>")
         split = css.index("missing") + 3
@@ -667,6 +671,151 @@ class MainTest(ReferencesTestCase):
         for message, arguments in cases.items():
             with self.subTest(message=message):
                 self.assertIn(message, self.run_usage_error(*arguments))
+
+
+class UnresolvedTest(ReferencesTestCase):
+    def run_exempt(
+        self, unresolved: list[str], *files: pathlib.Path
+    ) -> tuple[int, str]:
+        arguments = ["--root", str(self.root)]
+        for path in unresolved:
+            arguments.extend(("--unresolved", path))
+        return self.run_main(*arguments, *map(str, files))
+
+    def test_a_link_is_exempt_with_a_query_or_fragment(self) -> None:
+        page = self.write(
+            "site/p.html",
+            '<a href="/es/">a</a>\n<a href="/es?x=1#f">b</a>\n<a href="/es#top">c</a>\n',
+        )
+        self.assertEqual(
+            self.run_exempt(["/es"], page), (0, "checked 1 file(s): 0 problem(s)\n")
+        )
+        self.assertEqual(self.run_exempt([], page)[0], 1)
+
+    def test_percent_encoding_is_decoded_on_either_side(self) -> None:
+        cases = {
+            "/café": '<a href="/caf%C3%A9/">c</a>',
+            "/caf%C3%A9": '<a href="/café">c</a>',
+            "/a%3Fb%23c": '<a href="/a%3Fb%23c?q#f">q</a>',
+        }
+        for unresolved, markup in cases.items():
+            with self.subTest(unresolved=unresolved):
+                page = self.write("site/p.html", markup)
+                self.assertEqual(
+                    self.run_exempt([unresolved], page),
+                    (0, "checked 1 file(s): 0 problem(s)\n"),
+                )
+
+    def test_a_relative_reference_matches_where_it_lands(self) -> None:
+        page = self.write(
+            "site/docs/p.html", '<a href="../../es/">a</a>\n<a href="es">b</a>\n'
+        )
+        status, output = self.run_exempt(["/es"], page)
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            output,
+            f"{page}:2: es does not exist\nchecked 1 file(s): 1 problem(s)\n",
+        )
+
+    def test_references_loading_nothing_are_exemptible(self) -> None:
+        page = self.write(
+            "site/p.html",
+            '<link rel="alternate" hreflang="es" href="/es/">\n'
+            '<meta http-equiv="refresh" content="0; url=/fr/">\n'
+            '<map><area href="/de/"></map>\n',
+        )
+        self.assertEqual(
+            self.run_exempt(["/es", "/fr", "/de"], page),
+            (0, "checked 1 file(s): 0 problem(s)\n"),
+        )
+
+    def test_a_reference_that_loads_is_never_exempt(self) -> None:
+        page = self.write(
+            "site/p.html",
+            '<img src="gone.png">\n'
+            '<link rel="stylesheet" href="gone.css">\n'
+            "<style>.a { background: url(gone.png) }</style>\n"
+            '<p style="background: url(/site/gone.png)"></p>\n',
+        )
+        sheet = self.write("site/s.css", "a { b: url(gone.png) }\n")
+        status, output = self.run_exempt(
+            ["/site/gone.png", "/site/gone.css"], page, sheet
+        )
+        exempt = "is exempt by --unresolved but loads into the page"
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            output,
+            f"{page}:1: gone.png {exempt}\n"
+            f"{page}:2: gone.css {exempt}\n"
+            f"{page}:3: gone.png {exempt}\n"
+            f"{page}:4: /site/gone.png {exempt}\n"
+            f"{sheet}:1: gone.png {exempt}\n"
+            "checked 2 file(s): 5 problem(s)\n",
+        )
+
+    def test_stale_exemptions_fail_in_the_order_given(self) -> None:
+        page = self.write(
+            "site/p.html", '<a href="a.css">a</a>\n<a href="/es/">b</a>\n'
+        )
+        status, output = self.run_exempt(
+            ["/zz", "/site/a.css", "/es", "/site/dir/", "/site/empty"], page
+        )
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            output,
+            "--unresolved /zz matches no reference\n"
+            "--unresolved /site/a.css resolves, so needs no exemption\n"
+            "--unresolved /site/dir/ resolves, so needs no exemption\n"
+            "--unresolved /site/empty matches no reference\n"
+            "checked 1 file(s): 4 problem(s)\n",
+        )
+
+    def test_an_unreadable_file_leaves_only_resolving_exemptions_stale(
+        self,
+    ) -> None:
+        unreadable = self.write("site/u.html", b'<a href="/es/">\xff</a>')
+        page = self.write("site/p.html", "")
+        status, output = self.run_exempt(["/es", "/site/a.css"], unreadable, page)
+        self.assertEqual(status, 1)
+        lines = output.splitlines()
+        self.assertTrue(lines[0].startswith(f"{unreadable}: not valid UTF-8"))
+        self.assertEqual(
+            lines[1:],
+            [
+                "--unresolved /site/a.css resolves, so needs no exemption",
+                "checked 2 file(s): 2 problem(s)",
+            ],
+        )
+
+    def test_the_option_repeats(self) -> None:
+        page = self.write("site/p.html", '<a href="/es/">a</a><a href="/fr/">b</a>')
+        sheet = self.write("site/s.css", "")
+        self.assertEqual(
+            self.run_exempt(["/es", "/fr"], page, sheet),
+            (0, "checked 2 file(s): 0 problem(s)\n"),
+        )
+
+    def test_usage_errors(self) -> None:
+        page = self.write("site/p.html", "")
+        cases = {
+            "--unresolved es is not /-rooted": ["es"],
+            "--unresolved %2Fes is not /-rooted": ["%2Fes"],
+            "--unresolved //cdn/es names a host, not a path": ["//cdn/es"],
+            "--unresolved /es?x carries a query or fragment": ["/es?x"],
+            "--unresolved /es#f carries a query or fragment": ["/es#f"],
+            "--unresolved /../es resolves outside --root": ["/../es"],
+            "--unresolved /%2E%2E/es resolves outside --root": ["/%2E%2E/es"],
+            "--unresolved /es/ names the same path as /es": ["/es", "/es/"],
+            "--unresolved /%65s names the same path as /es": ["/es", "/%65s"],
+        }
+        for message, unresolved in cases.items():
+            arguments = ["--root", str(self.root)]
+            for path in unresolved:
+                arguments.extend(("--unresolved", path))
+            with self.subTest(message=message):
+                self.assertIn(
+                    f"error: {message}\n", self.run_usage_error(*arguments, str(page))
+                )
 
 
 if __name__ == "__main__":

@@ -18,15 +18,27 @@ rather than running. With ``--no-external``, nothing external may load at all: o
 ``a``, an ``area``, a refresh and a ``link`` whose every ``rel`` loads nothing, such as
 ``canonical``, may point outside, since following a link loads nothing into the page.
 
+Each ``--unresolved PATH`` exempts a ``/``-rooted path served by something other than
+these files, such as a sibling site, so a reference to it need not resolve. It matches
+where a reference lands, decoded and normalised, so ``/es``, ``/es/?q``, ``/%65s`` and,
+from ``/docs/page.html``, ``../es/`` all match ``--unresolved /es``, which may itself be
+percent-encoded. Only a reference that loads nothing into the page, as under
+``--no-external``, may be exempt, since a page missing what it loads is broken. An
+exemption is stale, and fails, when its path resolves or nothing references it, so that
+none outlives its reason; that nothing references it is not claimed where a file could
+not be read, since that file may hold the reference.
+
 Exit status: 0 when every file passes, 1 when a reference does not resolve, an external
 stylesheet or script lacks ``integrity`` or ``crossorigin`` under
-``--require-integrity``, something external loads under ``--no-external``, or a file
-holds a ``<base>`` element or is not valid UTF-8, and 2 on a usage error.
+``--require-integrity``, something external loads under ``--no-external``, an exempt
+reference loads into the page, an exemption is stale, or a file holds a ``<base>``
+element or is not valid UTF-8, and 2 on a usage error.
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import html.parser
 import pathlib
 import posixpath
@@ -300,11 +312,15 @@ def classify(reference: str) -> tuple[str, str]:
     return "local", path
 
 
-def resolve(path: str, referrer: pathlib.Path, root: pathlib.Path) -> str | None:
-    """Return why a local ``path`` does not resolve, or None when it does.
+def root_key(
+    path: str, referrer: pathlib.Path | None, root: pathlib.Path
+) -> str | None:
+    """Return where a local ``path`` lands, relative to ``root`` and normalised, or None
+    when it leaves ``root``.
 
     ``..`` is taken against the referrer's own URL, as a browser takes it, before any
     symlink is followed, as the server follows them only for the path it is sent.
+    ``referrer`` is read only for a relative ``path``.
     """
     if path.startswith("/"):
         joined = path.lstrip("/")
@@ -313,8 +329,13 @@ def resolve(path: str, referrer: pathlib.Path, root: pathlib.Path) -> str | None
         joined = posixpath.join(posixpath.dirname(referrer_url), path)
     normal = posixpath.normpath(joined)
     if normal == ".." or normal.startswith("../"):
-        return f"{path} resolves outside --root"
-    target = (root / normal).resolve()
+        return None
+    return normal
+
+
+def _resolve_key(path: str, key: str, root: pathlib.Path) -> str | None:
+    """Return why ``path``, landing at ``key``, does not resolve, or None when it does."""
+    target = (root / key).resolve()
     if not target.is_relative_to(root.resolve()):
         return f"{path} resolves outside --root"
     if target.is_dir():
@@ -326,20 +347,47 @@ def resolve(path: str, referrer: pathlib.Path, root: pathlib.Path) -> str | None
     return None
 
 
+def resolve(path: str, referrer: pathlib.Path, root: pathlib.Path) -> str | None:
+    """Return why a local ``path`` does not resolve, or None when it does."""
+    key = root_key(path, referrer, root)
+    if key is None:
+        return f"{path} resolves outside --root"
+    return _resolve_key(path, key, root)
+
+
+@dataclasses.dataclass
+class Exemptions:
+    """The ``--unresolved`` paths as given, by root key, and the keys a reference has
+    matched."""
+
+    paths: dict[str, str] = dataclasses.field(default_factory=dict)
+    used: set[str] = dataclasses.field(default_factory=set)
+
+
 def _problem(
     reference: str,
     referrer: pathlib.Path,
     root: pathlib.Path,
     refuse_external: bool,
+    loads: bool,
+    exemptions: Exemptions,
 ) -> str | None:
     """Return why ``reference`` fails, else None: a local one that does not resolve, or
-    an external one where ``refuse_external`` is set."""
+    that is exempt but ``loads``, or an external one where ``refuse_external`` is set."""
     kind, path = classify(reference)
     if kind == "external" and refuse_external:
         return f"external {reference}, which --no-external refuses"
     if kind != "local":
         return None
-    return resolve(path, referrer, root)
+    key = root_key(path, referrer, root)
+    if key is None:
+        return f"{path} resolves outside --root"
+    if key in exemptions.paths:
+        exemptions.used.add(key)
+        if loads:
+            return f"{path} is exempt by --unresolved but loads into the page"
+        return None
+    return _resolve_key(path, key, root)
 
 
 def _relations(attributes: dict[str, str | None]) -> list[str]:
@@ -366,12 +414,14 @@ class _HtmlReferences(html.parser.HTMLParser):
         root: pathlib.Path,
         no_external: bool,
         require_integrity: bool,
+        exemptions: Exemptions,
     ) -> None:
         super().__init__(convert_charrefs=True)
         self._path = path
         self._root = root
         self._no_external = no_external
         self._require_integrity = require_integrity
+        self._exemptions = exemptions
         self._style: list[str] | None = None
         self._style_line = 0
         self.problems: list[tuple[int, str]] = []
@@ -392,7 +442,12 @@ class _HtmlReferences(html.parser.HTMLParser):
 
     def _check(self, line: int, reference: str, loads: bool) -> None:
         problem = _problem(
-            reference, self._path, self._root, self._no_external and loads
+            reference,
+            self._path,
+            self._root,
+            self._no_external and loads,
+            loads,
+            self._exemptions,
         )
         if problem is not None:
             self.problems.append((line, problem))
@@ -482,19 +537,25 @@ def check_html(
     root: pathlib.Path,
     no_external: bool = False,
     require_integrity: bool = False,
+    exemptions: Exemptions | None = None,
 ) -> list[tuple[int, str]]:
-    parser = _HtmlReferences(path, root, no_external, require_integrity)
+    exemptions = Exemptions() if exemptions is None else exemptions
+    parser = _HtmlReferences(path, root, no_external, require_integrity, exemptions)
     parser.feed(path.read_text(encoding="utf-8"))
     parser.close()
     return parser.problems
 
 
 def check_css(
-    path: pathlib.Path, root: pathlib.Path, no_external: bool = False
+    path: pathlib.Path,
+    root: pathlib.Path,
+    no_external: bool = False,
+    exemptions: Exemptions | None = None,
 ) -> list[tuple[int, str]]:
+    exemptions = Exemptions() if exemptions is None else exemptions
     problems = []
     for offset, reference in css_references(path.read_text(encoding="utf-8")):
-        problem = _problem(reference, path, root, no_external)
+        problem = _problem(reference, path, root, no_external, True, exemptions)
         if problem is not None:
             problems.append((offset + 1, problem))
     return problems
@@ -522,6 +583,14 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
         help="fail on an external stylesheet or script lacking integrity or "
         "crossorigin",
     )
+    parser.add_argument(
+        "--unresolved",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="a /-rooted path that a reference loading nothing may name without it "
+        "resolving; repeatable, and fails where the path resolves or nothing names it",
+    )
     parser.add_argument("files", nargs="+", type=pathlib.Path, metavar="FILE")
     arguments = parser.parse_args(argv)
     if not arguments.root.is_dir():
@@ -535,12 +604,47 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
             design_render.served_path(arguments.root, path)
         except ValueError:
             parser.error(f"{path} is not inside --root {arguments.root}")
+    arguments.exemptions = Exemptions()
+    for given in arguments.unresolved:
+        # Read as a reference is: query, fragment and host before decoding, so that an
+        # encoded ? or # names a file, then the decoded path.
+        if not given.startswith("/"):
+            parser.error(f"--unresolved {given} is not /-rooted")
+        if given.startswith("//"):
+            parser.error(f"--unresolved {given} names a host, not a path")
+        if "?" in given or "#" in given:
+            parser.error(f"--unresolved {given} carries a query or fragment")
+        key = root_key(urllib.parse.unquote(given), None, arguments.root)
+        if key is None:
+            parser.error(f"--unresolved {given} resolves outside --root")
+        if key in arguments.exemptions.paths:
+            other = arguments.exemptions.paths[key]
+            parser.error(f"--unresolved {given} names the same path as {other}")
+        arguments.exemptions.paths[key] = given
     return arguments
+
+
+def stale_exemptions(
+    exemptions: Exemptions, root: pathlib.Path, every_file_read: bool
+) -> Iterator[str]:
+    """Yield why each exemption is stale, in the order given: its path resolves, or no
+    reference matched it.
+
+    That no reference matched is said only when ``every_file_read``, since the only one
+    may sit in a file that could not be read, which has already failed.
+    """
+    for key, given in exemptions.paths.items():
+        if _resolve_key(given, key, root) is None:
+            yield f"--unresolved {given} resolves, so needs no exemption"
+        elif every_file_read and key not in exemptions.used:
+            yield f"--unresolved {given} matches no reference"
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = parse_arguments(argv)
+    exemptions = arguments.exemptions
     failures = 0
+    every_file_read = True
     for path in arguments.files:
         try:
             if path.suffix.lower() in design_render.HTML_SUFFIXES:
@@ -549,16 +653,23 @@ def main(argv: list[str] | None = None) -> int:
                     arguments.root,
                     arguments.no_external,
                     arguments.require_integrity,
+                    exemptions,
                 )
             else:
-                problems = check_css(path, arguments.root, arguments.no_external)
+                problems = check_css(
+                    path, arguments.root, arguments.no_external, exemptions
+                )
         except UnicodeDecodeError as error:
             print(f"{path}: not valid UTF-8: {error}", file=sys.stderr)
             failures += 1
+            every_file_read = False
             continue
         for line, message in problems:
             print(f"{path}:{line}: {message}", file=sys.stderr)
         failures += len(problems)
+    for message in stale_exemptions(exemptions, arguments.root, every_file_read):
+        print(message, file=sys.stderr)
+        failures += 1
     print(
         f"checked {len(arguments.files)} file(s): {failures} problem(s)",
         file=sys.stderr,
