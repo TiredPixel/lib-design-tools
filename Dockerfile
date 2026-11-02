@@ -5,9 +5,9 @@
 # ARGFREEZE MDFORMAT_FRONTMATTER_VERSION pypi:mdformat-frontmatter
 # ARGFREEZE MDFORMAT_GFM_VERSION pypi:mdformat-gfm
 # ARGFREEZE MDFORMAT_VERSION pypi:mdformat
-# ARGFREEZE PRETTIER_VERSION github:prettier/prettier
-# ARGFREEZE RUFF_VERSION github:astral-sh/ruff
-# ARGFREEZE SEMISTANDARD_VERSION github:standard/semistandard
+# ARGFREEZE PRETTIER_VERSION npm:prettier
+# ARGFREEZE RUFF_VERSION pypi:ruff
+# ARGFREEZE SEMISTANDARD_VERSION npm:semistandard
 # ARGFREEZE SNAZZY_VERSION npm:snazzy
 # ARGFREEZE TAPLO_VERSION github:tamasfe/taplo
 # ARGFREEZE YQ_VERSION github:mikefarah/yq
@@ -37,10 +37,12 @@ RUN apt-get update \
         docker-compose \
         file \
         jq \
+        kcov \
         npm \
         pipx \
         python3 \
         python3-pytest \
+        python3-pytest-cov \
         python3-pytest-subtests \
         python3-pytest-xdist \
         shellcheck \
@@ -69,10 +71,9 @@ RUN curl -fsL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/
     && yq --version \
     && yq --version | grep -qF "version v${YQ_VERSION}"
 
-# uname -m, not dpkg --print-architecture above: ruff names assets by triple.
+# Global, as mdformat below, so ruff is on the PATH of x, who runs it.
 ARG RUFF_VERSION=0.17.3
-RUN curl -fsL "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}/ruff-$(uname -m)-unknown-linux-gnu.tar.gz" \
-    | tar -xz -C /usr/local/bin --strip-components=1 --wildcards '*/ruff' \
+RUN pipx install --global "ruff==${RUFF_VERSION}" \
     && ruff --version \
     && ruff --version | grep -qFx "ruff ${RUFF_VERSION}"
 
