@@ -3,7 +3,6 @@
 import json
 import subprocess
 import textwrap
-import unittest
 
 import temp_tree
 import tools_loader
@@ -237,7 +236,3 @@ class PaletteGenerateTest(Workspace):
                 self.assertEqual(result.returncode, 0)
                 self.assertTrue(result.stdout.startswith("usage: palette-generate"))
                 self.assertEqual(result.stderr, "")
-
-
-if __name__ == "__main__":
-    unittest.main()

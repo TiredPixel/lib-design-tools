@@ -13,6 +13,9 @@ import temp_tree
 
 BIN = pathlib.Path(__file__).resolve().parent.parent / "bin"
 
+# A generous bound on any one child process, so a hang fails its test rather than
+# stalling a worker; not a measure of how long anything should take.
+WAIT_S = 300
 
 UNSORTED_YAML = "---\nb: 1\na: 2\n"
 SORTED_YAML = "---\na: 2\nb: 1\n"
@@ -65,9 +68,11 @@ class Repository(temp_tree.TempTreeTestCase):
             [f"bin/{runner}", *args],
             cwd=self.root,
             env={**os.environ, **(env or {})},
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             check=False,
+            timeout=WAIT_S,
         )
 
     def assertPasses(self, result):
@@ -190,17 +195,17 @@ class FormatThenLintTest(Repository):
     """Each writing pass: lint fails on the unformatted file, format fixes it, and lint
     then passes."""
 
-    def assertFormatFixes(self, name, before, after, section):
+    def assertFormatFixes(self, name, before, after, section, count=1):
         self.write(name, before)
         self.assertNotEqual(self.run_bin("lint").returncode, 0)
         result = self.run_bin("format")
         self.assertPasses(result)
         self.assertIn(f"FORMAT {section}", self.sections(result))
-        self.assertRegex(result.stderr, r"formatting [12] .* file\(s\)")
+        self.assertRegex(result.stderr, rf"formatting {count} .* file\(s\)")
         self.assertEqual((self.root / name).read_text(encoding="utf-8"), after)
         result = self.run_bin("lint")
         self.assertPasses(result)
-        self.assertRegex(result.stderr, r"checking [12] .* file\(s\)")
+        self.assertRegex(result.stderr, rf"checking {count} .* file\(s\)")
 
     def test_shell(self):
         self.settings("function shell_files { printf '%s\\0' a.sh; }\n")
@@ -268,7 +273,11 @@ class FormatThenLintTest(Repository):
         )
         self.write("a.html", "<!doctype html>\n<p>a</p>\n")
         self.assertFormatFixes(
-            "a.css", "a{color:red}\n", "a {\n  color: red;\n}\n", "CSS AND HTML"
+            "a.css",
+            "a{color:red}\n",
+            "a {\n  color: red;\n}\n",
+            "CSS AND HTML",
+            count=2,
         )
 
     def test_css_alone(self):
@@ -510,16 +519,20 @@ class PreviewTest(Repository):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        self.addCleanup(server.wait)
+        self.addCleanup(server.wait, timeout=WAIT_S)
         self.addCleanup(server.terminate)
         deadline = time.monotonic() + 30
         while True:
+            if server.poll() is not None:
+                self.fail(f"bin/preview exited {server.returncode}")
             try:
-                with urllib.request.urlopen("http://127.0.0.1:8080/") as response:
+                with urllib.request.urlopen(
+                    "http://127.0.0.1:8080/", timeout=10
+                ) as response:
                     self.assertEqual(response.url, "http://127.0.0.1:8080/pages/")
                     self.assertIn(b"page", response.read())
                 break
-            except (urllib.error.URLError, ConnectionError):
+            except (urllib.error.URLError, ConnectionError, TimeoutError):
                 if time.monotonic() > deadline:
                     raise
                 time.sleep(0.1)

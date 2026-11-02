@@ -815,7 +815,3 @@ class UnresolvedTest(ReferencesTestCase):
                 self.assertIn(
                     f"error: {message}\n", self.run_usage_error(*arguments, str(page))
                 )
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -25,6 +25,8 @@ class PreviewServeTest(temp_tree.TempTreeTestCase):
         self.write("preview/app.webmanifest", "{}")
         self.write("preview/logo.svg", "<svg/>")
         self.write("preview/font.ttf", b"\0\1")
+        self.write("preview/data.json", "{}")
+        self.write("preview/app.js", "")
         self.write("listed/a.txt", "a")
         self.write(".git/config", "secret")
         self.write(".env", "secret")
@@ -100,10 +102,15 @@ class PreviewServeTest(temp_tree.TempTreeTestCase):
         cases = {
             "/preview/app.webmanifest": "application/manifest+json; charset=utf-8",
             "/preview/logo.svg": "image/svg+xml; charset=utf-8",
+            "/preview/data.json": "application/json; charset=utf-8",
         }
         for path, expected in cases.items():
             with self.subTest(path=path):
                 self.assertEqual(self.request(path).getheader("Content-Type"), expected)
+        # text/javascript or application/javascript, as the host's MIME tables
+        # have it; either takes the charset.
+        script = self.request("/preview/app.js").getheader("Content-Type")
+        self.assertTrue(script.endswith("javascript; charset=utf-8"), script)
         binary = self.request("/preview/font.ttf").getheader("Content-Type")
         self.assertNotIn("charset", binary)
 
@@ -193,7 +200,3 @@ class ArgumentsTest(unittest.TestCase):
         )
         server.server_close.assert_called_once_with()
         self.assertIn("http://0.0.0.0:1234/", stdout.getvalue())
-
-
-if __name__ == "__main__":
-    unittest.main()
