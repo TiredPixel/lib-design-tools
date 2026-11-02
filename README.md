@@ -202,7 +202,7 @@ make build
 
 ## Upgrading
 
-Base images are pinned by digest, and tools from outside Debian's repositories by `ARG`. `make upgrade` moves `lib/shell-common` to its latest commit and runs its `docker/upgrade` to re-pin each pin the `Dockerfile` names on a `FROMFREEZE` or `ARGFREEZE` line, then builds and tests, so a bump that breaks the repository shows before it is committed:
+Base images are pinned by digest, and tools from outside Debian's repositories by `ARG`. `make upgrade` moves `lib/shell-common` to its latest commit and runs its `docker/upgrade` to re-pin each pin the `Dockerfile` names on a `FROMFREEZE` or `ARGFREEZE` line, then builds and tests, so a bump that breaks the repository shows before it is committed. `docker/upgrade` runs on the host, so `make upgrade` needs `curl` and `jq` there:
 
 ```sh
 make upgrade

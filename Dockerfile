@@ -2,6 +2,7 @@
 # ARGFREEZE PRETTIER_VERSION github:prettier/prettier
 # ARGFREEZE RUFF_VERSION github:astral-sh/ruff
 # ARGFREEZE SEMISTANDARD_VERSION github:standard/semistandard
+# ARGFREEZE SNAZZY_VERSION npm:snazzy
 # ARGFREEZE YQ_VERSION github:mikefarah/yq
 #
 # dev copies nothing in, so a repository taking this one as a submodule builds
@@ -67,8 +68,6 @@ RUN curl -fsL "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSIO
 # Global packages, so nothing npm writes lands in the mounted tree.
 ARG PRETTIER_VERSION=3.9.10
 ARG SEMISTANDARD_VERSION=17.0.0
-# Held out of ARGFREEZE, which reads GitHub releases, and moved by hand from the
-# npm registry: as of 2026-10-27, github.com/standard/snazzy/releases lists none.
 ARG SNAZZY_VERSION=9.0.0
 RUN npm install --global \
     "prettier@${PRETTIER_VERSION}" \
