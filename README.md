@@ -54,6 +54,8 @@ A repository builds it, as *Building* describes, through a `Dockerfile` that lin
 ln -s lib/design-tools/Dockerfile Dockerfile
 ```
 
+A repository leaves the link out of `docker_files`, since `bin/format` would rewrite this repository's `Dockerfile` through it.
+
 ### The runners
 
 `bin/format`, `bin/lint`, `bin/test` and `bin/preview` run in the image, from the repository's root, and do only what the repository's own `bin/settings` names (*Settings*). A repository links the ones it uses; each finds this repository by resolving its link:
@@ -115,9 +117,13 @@ What `bin/format` rewrites and `bin/lint` checks for drift, each to the tool's o
 - `json_files` – indented by 2 with keys sorted, by jq.
 - `js_files` – semistandard.
 - `css_files` and `html_files` – Prettier, under the repository's own Prettier configuration.
+- `toml_files` – taplo, under the repository's own taplo configuration.
+- `docker_files` – dockerfmt, ending each file with a newline; `bin/lint` also runs hadolint, under the repository's own hadolint configuration. It never names the link to this repository's `Dockerfile` (*The image*).
 
 What `bin/lint` checks only:
 
+- `compose_files` – Compose files, each validated on its own, with every profile enabled, by `docker-compose --profile '*' config -q`. It checks neither layout nor key order, so each is also named in `yaml_files`, except the link to this repository's `docker-compose.yml` (*The services*).
+- `workflow_files` – GitHub Actions workflows, checked by actionlint; like `compose_files`, each is also named in `yaml_files` for its layout and key order.
 - `references_args` – `tools/references-check`'s arguments.
 - `render_args` – `tools/render-check`'s arguments, such as `--root . pages/*.html`.
 

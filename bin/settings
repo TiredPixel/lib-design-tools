@@ -6,9 +6,25 @@
 
 # A proposed workflow waits in .github/workflows.new/ until it is moved into
 # .github/workflows/, so either directory may be empty or absent.
+function workflow_files {
+    find .github -path '.github/workflows*/*.yml' -print0 | sort -z
+}
+
 function yaml_files {
     printf '%s\0' docker-compose.yml
-    find .github -path '.github/workflows*/*.yml' -print0 | sort -z
+    workflow_files
+}
+
+function compose_files {
+    printf '%s\0' docker-compose.yml
+}
+
+function docker_files {
+    printf '%s\0' Dockerfile
+}
+
+function toml_files {
+    printf '%s\0' ruff.toml
 }
 
 # By shebang, since the commands in tools/ carry no suffix.

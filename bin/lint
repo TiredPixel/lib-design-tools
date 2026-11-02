@@ -82,6 +82,49 @@ if defines css_files || defines html_files; then
     prettier --check "${prettied[@]}"
 fi
 
+if defines toml_files; then
+    echo -e "\n=== LINT TOML\n"
+
+    read_files toml_files toml
+    echo "checking ${#toml[@]} TOML file(s)" >&2
+    taplo fmt --check "${toml[@]}"
+fi
+
+if defines docker_files; then
+    echo -e "\n=== LINT DOCKER\n"
+
+    read_files docker_files docker
+    echo "checking ${#docker[@]} Docker file(s)" >&2
+    dockerfmt "${dockerfmt_args[@]}" --check "${docker[@]}"
+    hadolint "${docker[@]}"
+fi
+
+if defines compose_files; then
+    echo -e "\n=== LINT COMPOSE\n"
+
+    read_files compose_files compose
+    echo "checking ${#compose[@]} Compose file(s)" >&2
+    # One file at a time, since Compose merges every -f it is given into one
+    # project and would check only the merge. Every profile is enabled, since
+    # Compose leaves a service under a profile out of the project it checks.
+    status=0
+    for f in "${compose[@]}"; do
+        if ! docker-compose -f "$f" --profile '*' config -q; then
+            echo "$f: not a valid Compose file" >&2
+            status=1
+        fi
+    done
+    [ $status -eq 0 ]
+fi
+
+if defines workflow_files; then
+    echo -e "\n=== LINT WORKFLOWS\n"
+
+    read_files workflow_files workflow
+    echo "checking ${#workflow[@]} workflow file(s)" >&2
+    actionlint "${workflow[@]}"
+fi
+
 if defines references_args; then
     echo -e "\n=== LINT REFERENCES\n"
 

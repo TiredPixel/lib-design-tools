@@ -81,4 +81,20 @@ if defines css_files || defines html_files; then
     prettier --write "${prettied[@]}"
 fi
 
+if defines toml_files; then
+    echo -e "\n=== FORMAT TOML\n"
+
+    read_files toml_files toml
+    echo "formatting ${#toml[@]} TOML file(s)" >&2
+    taplo fmt "${toml[@]}"
+fi
+
+if defines docker_files; then
+    echo -e "\n=== FORMAT DOCKER\n"
+
+    read_files docker_files docker
+    echo "formatting ${#docker[@]} Docker file(s)" >&2
+    dockerfmt "${dockerfmt_args[@]}" --write "${docker[@]}"
+fi
+
 echo

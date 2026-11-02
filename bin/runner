@@ -15,6 +15,9 @@ tools=$design_tools/tools
 source bin/settings
 
 # Read by bin/format and bin/lint alike, so the two cannot disagree.
+#
+# --newline, since dockerfmt otherwise drops each file's final newline.
+dockerfmt_args=(--newline)
 jq_args=(--sort-keys .)
 # Indented by 4 spaces rather than shfmt's default tab, since spaces are the
 # common practice for shell.
