@@ -13,8 +13,9 @@ import temp_tree
 
 BIN = pathlib.Path(__file__).resolve().parent.parent / "bin"
 
-UNSORTED_YAML = "b: 1\na: 2\n"
-SORTED_YAML = "a: 2\nb: 1\n"
+
+UNSORTED_YAML = "---\nb: 1\na: 2\n"
+SORTED_YAML = "---\na: 2\nb: 1\n"
 
 UNFORMATTED_MARKDOWN = (
     "---\ntitle: a\n---\n\nOne\ntwo.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
@@ -215,6 +216,16 @@ class FormatThenLintTest(Repository):
         self.assertFormatFixes("-a.yml", UNSORTED_YAML, SORTED_YAML, "YAML")
         self.settings("function json_files { printf '%s\\0' -a.json; }\n")
         self.assertFormatFixes("-a.json", '{"b": 1}', '{\n  "b": 1\n}\n', "JSON")
+
+    def test_yaml_with_sorted_keys_still_fails_yamllint(self):
+        self.settings("function yaml_files { printf '%s\\0' a.yml; }\n")
+        for text, rule in (
+            ("a: 2\nb: 1\n", "document-start"),
+            ("---\na: yes\nb: 1\n", "truthy"),
+        ):
+            with self.subTest(rule=rule):
+                self.write("a.yml", text)
+                self.assertFails(self.run_bin("lint"), rule)
 
     def test_json(self):
         self.settings("function json_files { printf '%s\\0' a.json; }\n")

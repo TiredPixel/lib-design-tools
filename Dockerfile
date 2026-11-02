@@ -47,6 +47,7 @@ RUN apt-get update \
         python3-pytest-xdist \
         shellcheck \
         shfmt \
+        yamllint \
     && rm -rf /var/lib/apt/lists/*
 
 ENV LANG=C.UTF-8 \

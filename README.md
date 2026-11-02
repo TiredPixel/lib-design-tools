@@ -113,7 +113,7 @@ What `bin/format` rewrites and `bin/lint` checks for drift, each to the tool's o
 - `palette_args` – `tools/palette-generate`'s arguments. The files it generates belong to this pass alone, so no other set names them: Prettier, for one, lowercases the hex colours the CSS keeps as the YAML writes them, and the JSON pass would sort the keys it keeps in the YAML's order, so format and lint would never agree.
 - `shell_files` – shfmt, indented by 4; `bin/lint` also runs ShellCheck.
 - `python_files` – ruff, under the repository's own ruff configuration.
-- `yaml_files` – keys sorted with yq.
+- `yaml_files` – keys sorted with yq; `bin/lint` also runs `yamllint --strict`, under the repository's own yamllint configuration.
 - `json_files` – indented by 2 with keys sorted, by jq.
 - `js_files` – semistandard.
 - `css_files` and `html_files` – Prettier, under the repository's own Prettier configuration.

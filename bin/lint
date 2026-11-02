@@ -51,6 +51,7 @@ if defines yaml_files; then
     read_files yaml_files yaml
     echo "checking ${#yaml[@]} YAML file(s)" >&2
     printf '%s\0' "${yaml[@]}" | "$design_tools/lib/shell-common/lint/yaml-keys"
+    yamllint --strict -- "${yaml[@]}"
 fi
 
 if defines json_files; then

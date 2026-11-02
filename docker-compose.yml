@@ -2,6 +2,7 @@
 # as its own docker-compose.yml. Compose resolves paths against the folder
 # holding the link, so every path here is that repository's: its tree, and its
 # Dockerfile, a link to this one's.
+---
 services:
   # Runs bin/format, whose rewrites have to reach the host tree, which only this
   # mount carries there. The whole tree is bound rather than file by file, since
@@ -51,7 +52,7 @@ services:
         - CMD
         - python3
         - -c
-        - import urllib.request; urllib.request.urlopen("http://localhost:8080/")
+        - import urllib.request as r; r.urlopen("http://localhost:8080/")
     init: true
     ports:
       - ${DC_PREVIEW_HOST:-127.0.0.1}:${DC_PREVIEW_PORT:-0}:8080
