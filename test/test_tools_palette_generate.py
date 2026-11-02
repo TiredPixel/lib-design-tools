@@ -219,6 +219,10 @@ class PaletteGenerateTest(Workspace):
             ["p.yml", "--prefix", "x", "--json", "p.json"],
             ["p.yml", "--prefix"],
             ["p.yml", "q.yml", "--prefix", "x", "--json", "j", "--css", "c"],
+            ["p.yml", "--prefix", "x", "--prefix", "y", "--json", "j", "--css", "c"],
+            ["p.yml", "--prefix", "", "--prefix", "x", "--json", "j", "--css", "c"],
+            ["p.yml", "--prefix", "x", "--json", "j", "--json", "k", "--css", "c"],
+            ["p.yml", "--prefix", "x", "--json", "j", "--css", "c", "--css", "d"],
             ["p.yml", "--bogus"],
         ):
             with self.subTest(args=args):

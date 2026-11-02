@@ -347,14 +347,6 @@ def _resolve_key(path: str, key: str, root: pathlib.Path) -> str | None:
     return None
 
 
-def resolve(path: str, referrer: pathlib.Path, root: pathlib.Path) -> str | None:
-    """Return why a local ``path`` does not resolve, or None when it does."""
-    key = root_key(path, referrer, root)
-    if key is None:
-        return f"{path} resolves outside --root"
-    return _resolve_key(path, key, root)
-
-
 @dataclasses.dataclass
 class Exemptions:
     """The ``--unresolved`` paths as given, by root key, and the keys a reference has

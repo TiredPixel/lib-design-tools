@@ -101,8 +101,14 @@ class HueTest(unittest.TestCase):
         self.assertAlmostEqual(
             design_colour.hue_spread([red, yellow, blue]), 156.57, places=2
         )
-        with self.assertRaises(ValueError):
-            design_colour.hue_spread([red])
+        for colours in ([], [red], iter([red])):
+            with (
+                self.subTest(colours=colours),
+                self.assertRaisesRegex(
+                    ValueError, "^hue_spread needs at least two colours$"
+                ),
+            ):
+                design_colour.hue_spread(colours)
 
     def test_hue_between_follows_the_shorter_arc(self):
         self.assertTrue(design_colour.hue_between(0, 350, 10))

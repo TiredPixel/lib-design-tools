@@ -108,7 +108,11 @@ def hue_gap(a: float, b: float) -> float:
 
 
 def hue_spread(colours: Iterable[str]) -> float:
-    """The widest hue gap between any two of COLOURS."""
+    """The widest hue gap between any two of COLOURS; ValueError for fewer than
+    two."""
+    colours = list(colours)
+    if len(colours) < 2:
+        raise ValueError("hue_spread needs at least two colours")
     pairs = itertools.combinations(colours, 2)
     return max(hue_gap(hue(a), hue(b)) for a, b in pairs)
 
