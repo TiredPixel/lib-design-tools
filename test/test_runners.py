@@ -18,6 +18,12 @@ BIN = tools_loader.TOOLS.parent / "bin"
 UNSORTED_YAML = "b: 1\na: 2\n"
 SORTED_YAML = "a: 2\nb: 1\n"
 
+UNFORMATTED_MARKDOWN = (
+    "---\ntitle: a\n---\n\nOne\ntwo.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+)
+FORMATTED_MARKDOWN = (
+    "---\ntitle: a\n---\n\nOne two.\n\n| a   | b   |\n| --- | --- |\n| 1   | 2   |\n"
+)
 UNFORMATTED_DOCKERFILE = "from debian:13\nrun true"
 FORMATTED_DOCKERFILE = "FROM debian:13\nRUN true\n"
 VALID_COMPOSE = "services:\n  a:\n    image: debian\n"
@@ -157,11 +163,13 @@ class PassSelectionTest(Repository):
         self.assertIn("checking 5 shell file(s)", result.stderr)
 
     def test_each_new_set_runs_its_own_pass_alone(self):
+        self.write("a.md", "a\n")
         self.write("a.toml", "a = 1\n")
         self.write("Dockerfile", FORMATTED_DOCKERFILE)
         self.write("compose.yml", VALID_COMPOSE)
         self.write("workflow.yml", VALID_WORKFLOW)
         cases = (
+            ("md_files", "a.md", ["FORMAT MARKDOWN"], ["LINT MARKDOWN"]),
             ("toml_files", "a.toml", ["FORMAT TOML"], ["LINT TOML"]),
             ("docker_files", "Dockerfile", ["FORMAT DOCKER"], ["LINT DOCKER"]),
             ("compose_files", "compose.yml", [], ["LINT COMPOSE"]),
@@ -260,6 +268,24 @@ class FormatThenLintTest(Repository):
         self.assertFormatFixes(
             "a.css", "a{color:red}\n", "a {\n  color: red;\n}\n", "CSS AND HTML"
         )
+
+    def test_markdown(self):
+        # A paragraph is joined onto one line, and the front matter and the GFM
+        # table come through as front matter and a table, padded to their
+        # columns, rather than as a thematic break and a paragraph.
+        self.settings("function md_files { printf '%s\\0' a.md; }\n")
+        self.write("a.md", UNFORMATTED_MARKDOWN)
+        self.assertFails(self.run_bin("lint"), "a.md")
+        self.assertFormatFixes(
+            "a.md", UNFORMATTED_MARKDOWN, FORMATTED_MARKDOWN, "MARKDOWN"
+        )
+
+    def test_markdown_split_over_lines_fails_the_lint(self):
+        self.settings("function md_files { printf '%s\\0' a.md; }\n")
+        self.write("a.md", "One\ntwo.\n")
+        self.assertFails(self.run_bin("lint"), "a.md")
+        self.write("a.md", "One two.\n")
+        self.assertPasses(self.run_bin("lint"))
 
     def test_toml(self):
         self.settings("function toml_files { printf '%s\\0' a.toml; }\n")

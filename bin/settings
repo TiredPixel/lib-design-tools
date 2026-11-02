@@ -23,6 +23,10 @@ function docker_files {
     printf '%s\0' Dockerfile
 }
 
+function md_files {
+    printf '%s\0' README.md
+}
+
 function toml_files {
     printf '%s\0' ruff.toml
 }

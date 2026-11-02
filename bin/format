@@ -81,6 +81,14 @@ if defines css_files || defines html_files; then
     prettier --write "${prettied[@]}"
 fi
 
+if defines md_files; then
+    echo -e "\n=== FORMAT MARKDOWN\n"
+
+    read_files md_files md
+    echo "formatting ${#md[@]} Markdown file(s)" >&2
+    mdformat "${mdformat_args[@]}" "${md[@]}"
+fi
+
 if defines toml_files; then
     echo -e "\n=== FORMAT TOML\n"
 

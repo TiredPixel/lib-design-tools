@@ -19,6 +19,10 @@ source bin/settings
 # --newline, since dockerfmt otherwise drops each file's final newline.
 dockerfmt_args=(--newline)
 jq_args=(--sort-keys .)
+# One paragraph per line rather than mdformat's default of keeping each line
+# break, since a renderer reflows a paragraph, so a break inside one carries
+# nothing but churn.
+mdformat_args=(--wrap no)
 # Indented by 4 spaces rather than shfmt's default tab, since spaces are the
 # common practice for shell.
 shfmt_args=(-i 4)

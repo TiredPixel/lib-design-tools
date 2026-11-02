@@ -2,6 +2,9 @@
 # ARGFREEZE ACTIONLINT_VERSION github:rhysd/actionlint
 # ARGFREEZE DOCKERFMT_VERSION github:reteps/dockerfmt
 # ARGFREEZE HADOLINT_VERSION github:hadolint/hadolint
+# ARGFREEZE MDFORMAT_FRONTMATTER_VERSION pypi:mdformat-frontmatter
+# ARGFREEZE MDFORMAT_GFM_VERSION pypi:mdformat-gfm
+# ARGFREEZE MDFORMAT_VERSION pypi:mdformat
 # ARGFREEZE PRETTIER_VERSION github:prettier/prettier
 # ARGFREEZE RUFF_VERSION github:astral-sh/ruff
 # ARGFREEZE SEMISTANDARD_VERSION github:standard/semistandard
@@ -33,6 +36,7 @@ RUN apt-get update \
         file \
         jq \
         npm \
+        pipx \
         python3 \
         python3-pytest \
         python3-pytest-subtests \
@@ -96,6 +100,25 @@ RUN curl -fsL "https://github.com/tamasfe/taplo/releases/download/${TAPLO_VERSIO
     && chmod +x /usr/local/bin/taplo \
     && taplo --version \
     && taplo --version | grep -qFx "taplo ${TAPLO_VERSION}"
+
+# Global, so mdformat sits outside root's home and on the PATH of x, who runs it.
+ARG MDFORMAT_FRONTMATTER_VERSION=2.2.0
+ARG MDFORMAT_GFM_VERSION=1.0.0
+ARG MDFORMAT_VERSION=1.0.0
+RUN pipx install --global "mdformat==${MDFORMAT_VERSION}" \
+    && pipx inject --global mdformat \
+        "mdformat-frontmatter==${MDFORMAT_FRONTMATTER_VERSION}" \
+        "mdformat-gfm==${MDFORMAT_GFM_VERSION}" \
+    && mdformat --version \
+    && pipx list --global --json \
+    | jq -e \
+        --arg m "${MDFORMAT_VERSION}" \
+        --arg f "${MDFORMAT_FRONTMATTER_VERSION}" \
+        --arg g "${MDFORMAT_GFM_VERSION}" \
+        '.venvs.mdformat.metadata | \
+    .main_package.package_version == $m and \
+    .injected_packages."mdformat-frontmatter".package_version == $f and \
+    .injected_packages."mdformat-gfm".package_version == $g'
 
 # Global packages, so nothing npm writes lands in the mounted tree.
 ARG PRETTIER_VERSION=3.9.10

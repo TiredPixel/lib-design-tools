@@ -82,6 +82,14 @@ if defines css_files || defines html_files; then
     prettier --check "${prettied[@]}"
 fi
 
+if defines md_files; then
+    echo -e "\n=== LINT MARKDOWN\n"
+
+    read_files md_files md
+    echo "checking ${#md[@]} Markdown file(s)" >&2
+    mdformat "${mdformat_args[@]}" --check "${md[@]}"
+fi
+
 if defines toml_files; then
     echo -e "\n=== LINT TOML\n"
 
