@@ -76,6 +76,20 @@ SRCSET_ATTRIBUTES = frozenset({"imagesrcset", "srcset"})
 # The attribute a stylesheet or script loads from, which is what integrity covers.
 INTEGRITY_ATTRIBUTES = {"link": "href", "script": "src"}
 
+# The script-like destinations of the HTML standard, and none, which a modulepreload
+# reads as script.
+MODULEPRELOAD_SCRIPT_DESTINATIONS = frozenset(
+    {
+        "",
+        "audioworklet",
+        "paintworklet",
+        "script",
+        "serviceworker",
+        "sharedworker",
+        "worker",
+    }
+)
+
 # The pages a static server answers a directory with.
 _INDEX_PAGES = http.server.SimpleHTTPRequestHandler.index_pages
 
@@ -470,9 +484,21 @@ class _HtmlReferences(html.parser.HTMLParser):
     ) -> None:
         if tag == "link":
             relations = _relations(attributes)
-            if "stylesheet" not in relations:
+            # Only a script or a stylesheet runs or restyles the page, so a preloaded
+            # image or font is not held to integrity. A modulepreload fetches nothing
+            # unless its destination is script-like.
+            destination = (attributes.get("as") or "").lower()
+            if "stylesheet" in relations or (
+                "preload" in relations and destination == "style"
+            ):
+                what = "stylesheet"
+            elif (
+                "modulepreload" in relations
+                and destination in MODULEPRELOAD_SCRIPT_DESTINATIONS
+            ) or ("preload" in relations and destination == "script"):
+                what = "script"
+            else:
                 return
-            what = "stylesheet"
         else:
             what = "script"
         reference = attributes[name]

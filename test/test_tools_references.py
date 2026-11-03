@@ -365,6 +365,33 @@ class HtmlTest(ReferencesTestCase):
             ],
         )
 
+    def test_require_integrity_checks_preloaded_stylesheets_and_scripts(self) -> None:
+        markup = (
+            '<link rel="modulepreload" href="https://cdn/a.js">\n'
+            '<link rel="preload" as="script" href="https://cdn/b.js">\n'
+            '<link rel="Preload" as="STYLE" href="https://cdn/c.css">\n'
+            f'<link rel="modulepreload" href="https://cdn/d.js" {SRI}>\n'
+            f'<link rel="preload" as="script" href="https://cdn/e.js" {SRI}>\n'
+            f'<link rel="preload" as="style" href="https://cdn/f.css" {SRI}>\n'
+            '<link rel="preload" as="image" href="https://cdn/g.png">\n'
+            '<link rel="preload" as="font" href="https://cdn/h.woff2">\n'
+            '<link rel="preload" href="https://cdn/i.js">\n'
+            '<link rel="modulepreload" href="/top.js">\n'
+            '<link rel="preload" as="style" href="a.css">\n'
+            '<link rel="modulepreload" as="image" href="https://cdn/j.png">\n'
+            '<link rel="modulepreload" as="Worker" href="https://cdn/k.js">\n'
+        )
+        lacks = "lacks integrity and crossorigin"
+        self.assertEqual(
+            self.html_problems(markup, require_integrity=True),
+            [
+                (1, f"external script https://cdn/a.js {lacks}"),
+                (2, f"external script https://cdn/b.js {lacks}"),
+                (3, f"external stylesheet https://cdn/c.css {lacks}"),
+                (13, f"external script https://cdn/k.js {lacks}"),
+            ],
+        )
+
     def test_integrity_covers_a_stylesheets_href_not_its_imagesrcset(self) -> None:
         self.assertEqual(
             self.html_problems(
@@ -397,6 +424,8 @@ class HtmlTest(ReferencesTestCase):
             '<img src="img/x.png"><img src="gone.png">\n'
             '<video src="https://cdn/v.mp4"></video>\n'
             '<img srcset="img/x.png 1x, https://cdn/x2.png 2x">\n'
+            '<link rel="modulepreload" href="https://cdn/m.js">\n'
+            '<link rel="preload" as="style" href="https://cdn/p.css">\n'
         )
         refused = "which --no-external refuses"
         self.assertEqual(
@@ -412,6 +441,8 @@ class HtmlTest(ReferencesTestCase):
                 (11, "gone.png does not exist"),
                 (12, f"external https://cdn/v.mp4, {refused}"),
                 (13, f"external https://cdn/x2.png, {refused}"),
+                (14, f"external https://cdn/m.js, {refused}"),
+                (15, f"external https://cdn/p.css, {refused}"),
             ],
         )
         # A load refused outright is not reported again for lacking integrity.
