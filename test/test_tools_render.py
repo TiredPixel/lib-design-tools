@@ -514,6 +514,24 @@ class DumpDomTest(TempDirTestCase):
             design_render.dump_dom("http://x/", chromium=chromium)
         self.assertEqual(patched.call_args_list[0].args[1], signal.SIGKILL)
 
+    def test_leader_surviving_sigkill_fails(self) -> None:
+        # Not an int, so a real killpg would raise TypeError rather than signal.
+        pid = object()
+        process = unittest.mock.Mock(pid=pid)
+        process.wait.side_effect = subprocess.TimeoutExpired("chromium", 0)
+        with (
+            unittest.mock.patch.object(design_render.os, "killpg") as patched,
+            self.assertRaisesRegex(
+                design_render.RenderError, "survived SIGKILL"
+            ) as raised,
+        ):
+            design_render._end_group(process, "chromium")
+        self.assertIsInstance(raised.exception.__cause__, subprocess.TimeoutExpired)
+        patched.assert_called_once_with(pid, signal.SIGKILL)
+        timeout = process.wait.call_args.kwargs["timeout"]
+        self.assertGreater(timeout, 0)
+        self.assertLessEqual(timeout, design_render.GROUP_EXIT_TIMEOUT_S)
+
 
 class PrintPdfTest(TempDirTestCase):
     def test_passes_flags_and_returns_the_pdf(self) -> None:
