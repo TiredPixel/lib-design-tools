@@ -36,7 +36,9 @@ die() {
 yaml=""
 check=false
 
-# Unset until given, so a repeat is refused even after an empty value.
+# Unset until given, so a repeat is refused even after an empty value, and so a
+# variable of the same name in the environment counts for nothing.
+unset prefix json css
 while [ $# -gt 0 ]; do
     case $1 in
     --prefix)

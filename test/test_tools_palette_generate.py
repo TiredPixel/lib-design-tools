@@ -1,6 +1,7 @@
 """tools/palette-generate, on fabricated input in temporary directories."""
 
 import json
+import os
 import subprocess
 import textwrap
 
@@ -8,10 +9,11 @@ import temp_tree
 import tools_loader
 
 
-def run(*args, cwd):
+def run(*args, cwd, env=None):
     return subprocess.run(
         [str(tools_loader.TOOLS / "palette-generate"), *args],
         cwd=cwd,
+        env={**os.environ, **(env or {})},
         capture_output=True,
         text=True,
         check=False,
@@ -228,6 +230,21 @@ class PaletteGenerateTest(Workspace):
                 result = run(*args, cwd=self.root)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("usage:", result.stderr)
+
+    def test_options_of_the_same_name_in_the_environment_count_for_nothing(self):
+        self.write("p.yml", self.YAML)
+        environment = {"prefix": "z", "json": "e.json", "css": "e.css"}
+        result = run(
+            "p.yml",
+            *("--prefix", "x", "--json", "p.json", "--css", "p.css"),
+            cwd=self.root,
+            env=environment,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / "e.css").exists())
+        result = run("p.yml", cwd=self.root, env=environment)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage:", result.stderr)
 
     def test_help_prints_usage_and_succeeds(self):
         for flag in ("--help", "-h"):
