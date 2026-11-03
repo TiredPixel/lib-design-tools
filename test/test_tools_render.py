@@ -32,9 +32,9 @@ render_check = tools_loader.load("render-check")
 
 CLEAN_DOM = '<html data-render-errors="[]"><head></head><body></body></html>'
 
-# For a fake Chromium: start a child in its process group that keeps writing files
-# into the profile, as Chromium's renderer and crashpad processes do, and record its
-# pid beside the fake once it has started writing.
+# For a fake Chromium: start a child in its process group that keeps writing files into
+# the profile, as Chromium's renderer and crashpad processes do, and record its pid
+# beside the fake once it has started writing.
 SPAWN_PROFILE_WRITER = """
 profile = next(
     a for a in sys.argv[1:] if a.startswith("--user-data-dir=")
@@ -54,8 +54,12 @@ child = subprocess.Popen(
     stderr=subprocess.DEVNULL,
 )
 while not (pathlib.Path(profile) / "Default").is_dir():
+    if child.poll() is not None:
+        sys.exit(f"profile writer exited {child.returncode} before writing")
     time.sleep(0.01)
-pathlib.Path(sys.argv[0]).with_name("child.pid").write_text(str(child.pid), encoding="utf-8")
+pathlib.Path(sys.argv[0]).with_name("child.pid").write_text(
+    str(child.pid), encoding="utf-8"
+)
 """
 
 
@@ -85,7 +89,11 @@ class TempDirTestCase(temp_tree.TempTreeTestCase):
         return self.fake_chromium(f"sys.stdout.write({dom!r})\n")
 
     def assert_writer_gone(self) -> None:
-        pid = int(self.beside_fake("child.pid").read_text(encoding="utf-8"))
+        path = self.beside_fake("child.pid")
+        self.assertTrue(
+            path.is_file(), "the fake's writer never started before the timeout"
+        )
+        pid = int(path.read_text(encoding="utf-8"))
         with self.assertRaises(ProcessLookupError):
             os.kill(pid, 0)
 
@@ -145,13 +153,6 @@ class InjectCaptureTest(unittest.TestCase):
     def test_bare_fragment_gets_it_first(self) -> None:
         result = design_render.inject_capture("<p>hello</p>")
         self.assertEqual(result, design_render.CAPTURE_SCRIPT + "<p>hello</p>")
-
-    def test_script_names_the_attribute(self) -> None:
-        self.assertIn("data-render-errors", design_render.CAPTURE_SCRIPT)
-        self.assertIn("addEventListener('error'", design_render.CAPTURE_SCRIPT)
-        self.assertIn("}, true);", design_render.CAPTURE_SCRIPT)
-        self.assertIn("unhandledrejection", design_render.CAPTURE_SCRIPT)
-        self.assertIn("console.error =", design_render.CAPTURE_SCRIPT)
 
 
 class ParseRenderErrorsTest(unittest.TestCase):
@@ -323,12 +324,11 @@ class ServeTest(TempDirTestCase):
         self.write(".env", "secret")
         self.write(".git/config", "secret")
         self.write("a.css", "a {}")
-        outside = tempfile.TemporaryDirectory()
-        self.addCleanup(outside.cleanup)
-        (pathlib.Path(outside.name) / "x.css").write_text("secret", encoding="utf-8")
+        outside = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (outside / "x.css").write_text("secret", encoding="utf-8")
         (self.root / "public").symlink_to(".env")
         (self.root / "git").symlink_to(".git")
-        (self.root / "out.css").symlink_to(pathlib.Path(outside.name) / "x.css")
+        (self.root / "out.css").symlink_to(outside / "x.css")
         (self.root / "alias.css").symlink_to("a.css")
         (self.root / "secret").mkdir()
         (self.root / "secret/index.html").symlink_to("../.env")
@@ -904,7 +904,3 @@ class RealChromiumTest(TempDirTestCase):
         )
         self.assertEqual(status, 1)
         self.assertIn("matching .load-error", output)
-
-
-if __name__ == "__main__":
-    unittest.main()

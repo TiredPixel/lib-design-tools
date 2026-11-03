@@ -11,38 +11,36 @@ import threading
 import unittest
 from unittest import mock
 
+import temp_tree
 import tools_loader
 
 preview_serve = tools_loader.load("preview-serve")
 
 
-class PreviewServeTest(unittest.TestCase):
+class PreviewServeTest(temp_tree.TempTreeTestCase):
     def setUp(self) -> None:
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        root = pathlib.Path(directory.name)
-        (root / "preview").mkdir()
-        (root / "preview/index.html").write_text("<p>preview</p>", encoding="utf-8")
-        (root / "preview/app.webmanifest").write_text("{}", encoding="utf-8")
-        (root / "preview/logo.svg").write_text("<svg/>", encoding="utf-8")
-        (root / "preview/font.ttf").write_bytes(b"\0\1")
-        (root / "listed").mkdir()
-        (root / "listed/a.txt").write_text("a", encoding="utf-8")
-        (root / ".git").mkdir()
-        (root / ".git/config").write_text("secret", encoding="utf-8")
-        (root / ".env").write_text("secret", encoding="utf-8")
-        outside = tempfile.TemporaryDirectory()
-        self.addCleanup(outside.cleanup)
-        (pathlib.Path(outside.name) / "x.txt").write_text("secret", encoding="utf-8")
+        super().setUp()
+        root = self.root
+        self.write("preview/index.html", "<p>preview</p>")
+        self.write("preview/app.webmanifest", "{}")
+        self.write("preview/logo.svg", "<svg/>")
+        self.write("preview/font.ttf", b"\0\1")
+        self.write("preview/data.json", "{}")
+        self.write("preview/app.js", "")
+        self.write("listed/a.txt", "a")
+        self.write(".git/config", "secret")
+        self.write(".env", "secret")
+        outside = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (outside / "x.txt").write_text("secret", encoding="utf-8")
         (root / "public-config").symlink_to(".env")
         (root / "listed/git").symlink_to("../.git")
-        (root / "outside").symlink_to(pathlib.Path(outside.name) / "x.txt")
+        (root / "outside").symlink_to(outside / "x.txt")
         (root / "preview/alias.html").symlink_to("index.html")
         (root / "linked").symlink_to("listed")
         (root / "public").mkdir()
         (root / "public/index.html").symlink_to("../.env")
         (root / "away").mkdir()
-        (root / "away/index.htm").symlink_to(pathlib.Path(outside.name) / "x.txt")
+        (root / "away/index.htm").symlink_to(outside / "x.txt")
         quiet = mock.patch.object(preview_serve.PreviewHandler, "log_message")
         quiet.start()
         self.addCleanup(quiet.stop)
@@ -61,6 +59,12 @@ class PreviewServeTest(unittest.TestCase):
         response = connection.getresponse()
         response.body = response.read()
         return response
+
+    def assertRefused(self, *paths: str) -> None:
+        for path in paths:
+            for method in ("GET", "HEAD"):
+                with self.subTest(path=path, method=method):
+                    self.assertEqual(self.request(path, method).status, 404)
 
     def test_root_redirects_to_the_start(self) -> None:
         for method in ("GET", "HEAD"):
@@ -98,10 +102,15 @@ class PreviewServeTest(unittest.TestCase):
         cases = {
             "/preview/app.webmanifest": "application/manifest+json; charset=utf-8",
             "/preview/logo.svg": "image/svg+xml; charset=utf-8",
+            "/preview/data.json": "application/json; charset=utf-8",
         }
         for path, expected in cases.items():
             with self.subTest(path=path):
                 self.assertEqual(self.request(path).getheader("Content-Type"), expected)
+        # text/javascript or application/javascript, as the host's MIME tables have it;
+        # either takes the charset.
+        script = self.request("/preview/app.js").getheader("Content-Type")
+        self.assertTrue(script.endswith("javascript; charset=utf-8"), script)
         binary = self.request("/preview/font.ttf").getheader("Content-Type")
         self.assertNotIn("charset", binary)
 
@@ -111,22 +120,16 @@ class PreviewServeTest(unittest.TestCase):
         self.assertIn(b"a.txt", response.body)
 
     def test_refuses_dotfiles_however_spelt(self) -> None:
-        for path in ("/.git/config", "/.env", "/%2Egit/config", "/listed/../.env"):
-            for method in ("GET", "HEAD"):
-                with self.subTest(path=path, method=method):
-                    self.assertEqual(self.request(path, method).status, 404)
+        self.assertRefused("/.git/config", "/.env", "/%2Egit/config", "/listed/../.env")
 
     def test_refuses_symlinks_to_dotfiles_or_out_of_the_tree(self) -> None:
-        for path in (
+        self.assertRefused(
             "/public-config",
             "/listed/git/config",
             "/outside",
             "/public/",
             "/away/",
-        ):
-            for method in ("GET", "HEAD"):
-                with self.subTest(path=path, method=method):
-                    self.assertEqual(self.request(path, method).status, 404)
+        )
 
     def test_serves_symlinks_within_the_tree(self) -> None:
         for path, body in (
@@ -197,7 +200,3 @@ class ArgumentsTest(unittest.TestCase):
         )
         server.server_close.assert_called_once_with()
         self.assertIn("http://0.0.0.0:1234/", stdout.getvalue())
-
-
-if __name__ == "__main__":
-    unittest.main()

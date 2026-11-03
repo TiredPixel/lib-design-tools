@@ -41,8 +41,8 @@ def pytest_sessionfinish(session, exitstatus):
     # run's.
     if hasattr(session.config, "workerinput"):
         return
-    # A run whose every module skipped collects nothing; any other status already
-    # fails the run, and says why.
+    # A run whose every module skipped collects nothing; any other status already fails
+    # the run, and says why.
     if (
         session.config.getoption("--no-skips")
         and _skipped

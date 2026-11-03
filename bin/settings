@@ -1,8 +1,11 @@
 # shellcheck shell=bash
 #
-# This repository's settings for the runners in bin/, which it uses as any
-# other repository does: each function names what one pass reads,
-# NUL-separated.
+# This repository's settings for the runners in bin/, which it uses as any other
+# repository does: each function names what one pass reads, NUL-separated.
+#
+# No pass reaches pytest.ini, checkmake.ini, .gitmodules, .gitignore,
+# .dockerignore, .dockerrepo or .env.example, since the image has no formatter
+# or linter for INI, git config, ignore or dotenv files.
 
 # A proposed workflow waits in .github/workflows.new/ until it is moved into
 # .github/workflows/, so either directory may be empty or absent.
@@ -21,6 +24,10 @@ function compose_files {
 
 function docker_files {
     printf '%s\0' Dockerfile
+}
+
+function make_files {
+    printf '%s\0' Makefile common.mk
 }
 
 function md_files {

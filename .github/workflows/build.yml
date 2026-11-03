@@ -1,3 +1,4 @@
+---
 concurrency:
   cancel-in-progress: true
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -38,8 +39,8 @@ jobs:
       - name: Test
         run: |
           make test
-    # Bounded because GitHub's default runs to hours. Generous, as a run with
-    # no cached image yet builds from cold.
+    # Bounded because GitHub's default runs to hours. Generous, as a run with no
+    # cached image yet builds from cold.
     timeout-minutes: 15
   # Pushes the dev image as the layer cache build takes, which nothing deploys.
   # Only on a person's push, never an app's, whose tree would otherwise run here
@@ -67,7 +68,7 @@ jobs:
     # suite besides.
     timeout-minutes: 15
 name: Build
-on:
+"on":
   pull_request:
     branches:
       - latest

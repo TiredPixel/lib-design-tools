@@ -1,22 +1,26 @@
-"""bin/format, bin/lint, bin/test and bin/preview, run as another repository runs them:
-from the root of a fabricated repository whose bin/ links to them."""
+"""bin/format, bin/lint, bin/test and bin/preview, run as another repository runs them.
+
+They run from the root of a fabricated repository whose bin/ links to them.
+"""
 
 import os
 import pathlib
 import subprocess
-import tempfile
 import textwrap
 import time
-import unittest
 import urllib.error
 import urllib.request
 
-import tools_loader
+import temp_tree
 
-BIN = tools_loader.TOOLS.parent / "bin"
+BIN = pathlib.Path(__file__).resolve().parent.parent / "bin"
 
-UNSORTED_YAML = "b: 1\na: 2\n"
-SORTED_YAML = "a: 2\nb: 1\n"
+# A generous bound on any one child process, so a hang fails its test rather than
+# stalling a worker; not a measure of how long anything should take.
+WAIT_S = 300
+
+UNSORTED_YAML = "---\nb: 1\na: 2\n"
+SORTED_YAML = "---\na: 2\nb: 1\n"
 
 UNFORMATTED_MARKDOWN = (
     "---\ntitle: a\n---\n\nOne\ntwo.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
@@ -31,6 +35,8 @@ VALID_WORKFLOW = (
     "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
     "      - run: echo a\n"
 )
+VALID_MAKEFILE = "all:\n\ttrue\nclean:\n\ttrue\ntest:\n\ttrue\n.PHONY: all clean test\n"
+LONG_BODY_MAKEFILE = VALID_MAKEFILE.replace("all:\n\ttrue\n", "all:\n" + "\ttrue\n" * 6)
 INVALID_WORKFLOW = (
     "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
     "      - run: echo ${{ undefined_context }}\n"
@@ -46,20 +52,15 @@ SKIPPING_TEST = (
 )
 
 
-class Repository(unittest.TestCase):
+class Repository(temp_tree.TempTreeTestCase):
     def setUp(self):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.root = pathlib.Path(directory.name)
+        super().setUp()
         (self.root / "bin").mkdir()
         for runner in ("format", "lint", "test", "preview"):
             (self.root / "bin" / runner).symlink_to(BIN / runner)
 
     def write(self, name, text):
-        path = self.root / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(textwrap.dedent(text).lstrip(), encoding="utf-8")
-        return path
+        return super().write(name, textwrap.dedent(text).lstrip())
 
     def settings(self, text):
         self.write("bin/settings", "# shellcheck shell=bash\n" + text)
@@ -69,9 +70,11 @@ class Repository(unittest.TestCase):
             [f"bin/{runner}", *args],
             cwd=self.root,
             env={**os.environ, **(env or {})},
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             check=False,
+            timeout=WAIT_S,
         )
 
     def assertPasses(self, result):
@@ -168,12 +171,14 @@ class PassSelectionTest(Repository):
         self.write("Dockerfile", FORMATTED_DOCKERFILE)
         self.write("compose.yml", VALID_COMPOSE)
         self.write("workflow.yml", VALID_WORKFLOW)
+        self.write("Makefile", VALID_MAKEFILE)
         cases = (
             ("md_files", "a.md", ["FORMAT MARKDOWN"], ["LINT MARKDOWN"]),
             ("toml_files", "a.toml", ["FORMAT TOML"], ["LINT TOML"]),
             ("docker_files", "Dockerfile", ["FORMAT DOCKER"], ["LINT DOCKER"]),
             ("compose_files", "compose.yml", [], ["LINT COMPOSE"]),
             ("workflow_files", "workflow.yml", [], ["LINT WORKFLOWS"]),
+            ("make_files", "Makefile", [], ["LINT MAKE"]),
         )
         for name, path, formats, lints in cases:
             with self.subTest(name=name):
@@ -189,20 +194,19 @@ class PassSelectionTest(Repository):
 
 
 class FormatThenLintTest(Repository):
-    """Each writing pass: lint fails on the unformatted file, format fixes it, and lint
-    then passes."""
+    """Each writing pass: lint fails, format fixes the file, and lint then passes."""
 
-    def assertFormatFixes(self, name, before, after, section):
+    def assertFormatFixes(self, name, before, after, section, count=1):
         self.write(name, before)
         self.assertNotEqual(self.run_bin("lint").returncode, 0)
         result = self.run_bin("format")
         self.assertPasses(result)
         self.assertIn(f"FORMAT {section}", self.sections(result))
-        self.assertRegex(result.stderr, r"formatting [12] .* file\(s\)")
+        self.assertRegex(result.stderr, rf"formatting {count} .* file\(s\)")
         self.assertEqual((self.root / name).read_text(encoding="utf-8"), after)
         result = self.run_bin("lint")
         self.assertPasses(result)
-        self.assertRegex(result.stderr, r"checking [12] .* file\(s\)")
+        self.assertRegex(result.stderr, rf"checking {count} .* file\(s\)")
 
     def test_shell(self):
         self.settings("function shell_files { printf '%s\\0' a.sh; }\n")
@@ -222,6 +226,16 @@ class FormatThenLintTest(Repository):
         self.assertFormatFixes("-a.yml", UNSORTED_YAML, SORTED_YAML, "YAML")
         self.settings("function json_files { printf '%s\\0' -a.json; }\n")
         self.assertFormatFixes("-a.json", '{"b": 1}', '{\n  "b": 1\n}\n', "JSON")
+
+    def test_yaml_with_sorted_keys_still_fails_yamllint(self):
+        self.settings("function yaml_files { printf '%s\\0' a.yml; }\n")
+        for text, rule in (
+            ("a: 2\nb: 1\n", "document-start"),
+            ("---\na: yes\nb: 1\n", "truthy"),
+        ):
+            with self.subTest(rule=rule):
+                self.write("a.yml", text)
+                self.assertFails(self.run_bin("lint"), rule)
 
     def test_json(self):
         self.settings("function json_files { printf '%s\\0' a.json; }\n")
@@ -260,7 +274,11 @@ class FormatThenLintTest(Repository):
         )
         self.write("a.html", "<!doctype html>\n<p>a</p>\n")
         self.assertFormatFixes(
-            "a.css", "a{color:red}\n", "a {\n  color: red;\n}\n", "CSS AND HTML"
+            "a.css",
+            "a{color:red}\n",
+            "a {\n  color: red;\n}\n",
+            "CSS AND HTML",
+            count=2,
         )
 
     def test_css_alone(self):
@@ -270,9 +288,9 @@ class FormatThenLintTest(Repository):
         )
 
     def test_markdown(self):
-        # A paragraph is joined onto one line, and the front matter and the GFM
-        # table come through as front matter and a table, padded to their
-        # columns, rather than as a thematic break and a paragraph.
+        # A paragraph is joined onto one line, and the front matter and the GFM table
+        # come through as front matter and a table, padded to their columns, rather than
+        # as a thematic break and a paragraph.
         self.settings("function md_files { printf '%s\\0' a.md; }\n")
         self.write("a.md", UNFORMATTED_MARKDOWN)
         self.assertFails(self.run_bin("lint"), "a.md")
@@ -356,8 +374,8 @@ class CheckingPassTest(Repository):
         self.assertEqual(self.sections(result), ["LINT COMPOSE"])
 
     def test_compose_checks_each_file_on_its_own(self):
-        # a.yml gives its service no image, which b.yml supplies: merged, as
-        # Compose merges every -f, the two would pass.
+        # a.yml gives its service no image, which b.yml supplies: merged, as Compose
+        # merges every -f, the two would pass.
         self.settings("function compose_files { printf '%s\\0' a.yml b.yml; }\n")
         self.write("a.yml", "services:\n  a:\n    init: true\n")
         self.write("b.yml", VALID_COMPOSE)
@@ -390,6 +408,22 @@ class CheckingPassTest(Repository):
         result = self.run_bin("lint")
         self.assertPasses(result)
         self.assertEqual(self.sections(result), ["LINT WORKFLOWS"])
+
+    def test_make(self):
+        self.settings("function make_files { printf '%s\\0' Makefile; }\n")
+        self.write("Makefile", LONG_BODY_MAKEFILE)
+        self.assertFails(self.run_bin("lint"), "maxbodylength")
+        self.write("Makefile", VALID_MAKEFILE)
+        result = self.run_bin("lint")
+        self.assertPasses(result)
+        self.assertEqual(self.sections(result), ["LINT MAKE"])
+
+    def test_make_reads_the_repository_s_checkmake_ini(self):
+        self.settings("function make_files { printf '%s\\0' Makefile; }\n")
+        self.write("Makefile", "build:\n\ttrue\n.PHONY: build\n")
+        self.assertFails(self.run_bin("lint"), "minphony")
+        self.write("checkmake.ini", "[minphony]\ndisabled = true\n")
+        self.assertPasses(self.run_bin("lint"))
 
 
 class GateTest(Repository):
@@ -486,21 +520,25 @@ class PreviewTest(Repository):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        self.addCleanup(server.wait)
+        self.addCleanup(server.wait, timeout=WAIT_S)
         self.addCleanup(server.terminate)
         deadline = time.monotonic() + 30
         while True:
+            if server.poll() is not None:
+                self.fail(f"bin/preview exited {server.returncode}")
             try:
-                with urllib.request.urlopen("http://127.0.0.1:8080/") as response:
+                with urllib.request.urlopen(
+                    "http://127.0.0.1:8080/", timeout=10
+                ) as response:
                     self.assertEqual(response.url, "http://127.0.0.1:8080/pages/")
                     self.assertIn(b"page", response.read())
                 break
-            except (urllib.error.URLError, ConnectionError):
+            except (urllib.error.URLError, ConnectionError, TimeoutError):
                 if time.monotonic() > deadline:
                     raise
                 time.sleep(0.1)
-        # The test container has no network but loopback, so the wildcard bind is
-        # read from the kernel's socket table: 0.0.0.0:8080, listening.
+        # The test container has no network but loopback, so the wildcard bind is read
+        # from the kernel's socket table: 0.0.0.0:8080, listening.
         table = (
             pathlib.Path("/proc/net/tcp").read_text(encoding="utf-8").splitlines()[1:]
         )

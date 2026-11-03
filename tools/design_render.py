@@ -47,7 +47,8 @@ GROUP_EXIT_TIMEOUT_S = 10
 # Loads a stylesheet starts, such as @font-face fonts, background images and @import,
 # fire no event at the element that needs them, so failed responses are also read from
 # Resource Timing. Initiators whose failures an `error` event already reports, or whose
-# responses the page's own script sees, are skipped there. A failed @import does fire
+# responses the page's own script sees, are skipped there, and so is a beacon, which
+# renders nothing and whose failure the page never sees. A failed @import does fire
 # `error` at a <style>, but with no URL, so that event is left to Resource Timing. A
 # no-cors response from another origin reports status 0, so its failure stays unseen. A
 # browser without `responseStatus` is recorded as unable to check, rather than passing
@@ -118,6 +119,7 @@ CAPTURE_SCRIPT = """<script>(function () {
 })();</script>""".replace("ERRORS_ATTRIBUTE", ERRORS_ATTRIBUTE)
 
 _CLASS_SELECTOR = re.compile(r"\.(-?[A-Za-z_][A-Za-z0-9_-]*)")
+_PDF_PAGE = re.compile(rb"/Type\s*/Page(?![s\w])")
 
 HTML_SUFFIXES = frozenset({".html", ".htm"})
 _INDEX_NAMES = http.server.SimpleHTTPRequestHandler.index_pages
@@ -136,14 +138,14 @@ class Render:
     errors: list[dict]
 
 
-def _offset(starts: list[int], position: tuple[int, int]) -> int:
-    line, column = position
-    return starts[line - 1] + column
-
-
 def _line_starts(text: str) -> list[int]:
     """Return the offset of the first character of each line of ``text``."""
     return [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
+
+
+def _offset(starts: list[int], position: tuple[int, int]) -> int:
+    line, column = position
+    return starts[line - 1] + column
 
 
 class _InsertionPoint(html.parser.HTMLParser):
@@ -283,8 +285,7 @@ def find_marked(dom: str, class_name: str) -> list[tuple[str, int]]:
 
 
 def refused(directory: str, url: str, path: str) -> bool:
-    """Whether a request for ``url``, which a server of ``directory`` maps to ``path``,
-    is refused.
+    """Whether a server of ``directory`` refuses ``url``, which it maps to ``path``.
 
     The tree served is usually a whole repository, so a segment starting ``.``, as
     ``.git`` and ``.env`` have, is refused in the URL and in the real path, symlinks
@@ -430,8 +431,7 @@ def _chromium(
 
 
 def _end_group(process: subprocess.Popen, chromium: str) -> None:
-    """Kill what is left of the process group ``process`` leads, and wait until it is
-    gone.
+    """Kill the rest of the process group ``process`` leads, and wait until it is gone.
 
     Chromium's renderer, GPU and crashpad processes outlive the browser process, and go
     on writing to the profile, whose removal would then fail. Once the leader is reaped,
@@ -482,8 +482,10 @@ def print_pdf(
     budget_ms: int = DEFAULT_BUDGET_MS,
     timeout_s: float = DEFAULT_TIMEOUT_S,
 ) -> bytes:
-    """Print ``url`` as headless Chromium's print does, without its header and footer,
-    and return the PDF."""
+    """Print ``url`` as headless Chromium's print does, and return the PDF.
+
+    The header and footer Chromium prints by default are left out.
+    """
     with tempfile.TemporaryDirectory(prefix="design-render-") as profile:
         out = pathlib.Path(profile) / "print.pdf"
         _chromium(
@@ -499,12 +501,11 @@ def print_pdf(
         return out.read_bytes()
 
 
-_PDF_PAGE = re.compile(rb"/Type\s*/Page(?![s\w])")
-
-
 def sheet_count(pdf: bytes) -> int:
-    """The number of pages in a PDF Chromium printed, read from its page objects;
-    Chromium writes them uncompressed."""
+    """The number of pages in a PDF Chromium printed.
+
+    Read from its page objects, which Chromium writes uncompressed.
+    """
     return len(_PDF_PAGE.findall(pdf))
 
 

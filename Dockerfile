@@ -1,21 +1,21 @@
 # FROMFREEZE docker.io/library/debian:13
 # ARGFREEZE ACTIONLINT_VERSION github:rhysd/actionlint
+# ARGFREEZE CHECKMAKE_VERSION github:checkmake/checkmake
 # ARGFREEZE DOCKERFMT_VERSION github:reteps/dockerfmt
 # ARGFREEZE HADOLINT_VERSION github:hadolint/hadolint
 # ARGFREEZE MDFORMAT_FRONTMATTER_VERSION pypi:mdformat-frontmatter
 # ARGFREEZE MDFORMAT_GFM_VERSION pypi:mdformat-gfm
 # ARGFREEZE MDFORMAT_VERSION pypi:mdformat
-# ARGFREEZE PRETTIER_VERSION github:prettier/prettier
-# ARGFREEZE RUFF_VERSION github:astral-sh/ruff
-# ARGFREEZE SEMISTANDARD_VERSION github:standard/semistandard
+# ARGFREEZE PRETTIER_VERSION npm:prettier
+# ARGFREEZE RUFF_VERSION pypi:ruff
+# ARGFREEZE SEMISTANDARD_VERSION npm:semistandard
 # ARGFREEZE SNAZZY_VERSION npm:snazzy
 # ARGFREEZE TAPLO_VERSION github:tamasfe/taplo
 # ARGFREEZE YQ_VERSION github:mikefarah/yq
 #
 # dev copies nothing in, so a repository taking this one as a submodule builds
 # the same image, through a Dockerfile symlinked to this one, and runs it on its
-# own tree; test adds that tree for the gate. README.md, Building, describes
-# both stages.
+# own tree; test adds that tree for the gate.
 #===============================================================================
 FROM docker.io/library/debian@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1 AS dev
 
@@ -25,6 +25,8 @@ SHELL ["/bin/bash", "-Eeuo", "pipefail", "-O", "inherit_errexit", "-O", "failglo
 
 # Without python3-psutil, which nothing here installs, xdist's -n auto counts
 # the CPUs the container may use rather than the machine's physical cores.
+# DL3008: the packages float within the Debian release the base image's digest
+# pins, so the release's updates reach the image on each build.
 # hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -35,14 +37,17 @@ RUN apt-get update \
         docker-compose \
         file \
         jq \
+        kcov \
         npm \
         pipx \
         python3 \
         python3-pytest \
+        python3-pytest-cov \
         python3-pytest-subtests \
         python3-pytest-xdist \
         shellcheck \
         shfmt \
+        yamllint \
     && rm -rf /var/lib/apt/lists/*
 
 ENV LANG=C.UTF-8 \
@@ -59,18 +64,17 @@ ENV PYTHONDONTWRITEBYTECODE=1
 
 ENV PATH=/home/x/r/bin:$PATH
 
-# mikefarah's yq, which bin/format and lint/yaml-keys need: Debian's yq is the
-# Python wrapper.
+# mikefarah's yq, which bin/format, lib/shell-common/lint/yaml-keys and
+# tools/palette-generate need: Debian's yq is the Python wrapper.
 ARG YQ_VERSION=4.54.1
 RUN curl -fsL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_$(dpkg --print-architecture)" -o /usr/local/bin/yq \
     && chmod +x /usr/local/bin/yq \
     && yq --version \
     && yq --version | grep -qF "version v${YQ_VERSION}"
 
-# uname -m, not dpkg --print-architecture above: ruff names assets by triple.
+# Global, as mdformat below, so ruff is on the PATH of x, who runs it.
 ARG RUFF_VERSION=0.17.3
-RUN curl -fsL "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}/ruff-$(uname -m)-unknown-linux-gnu.tar.gz" \
-    | tar -xz -C /usr/local/bin --strip-components=1 --wildcards '*/ruff' \
+RUN pipx install --global "ruff==${RUFF_VERSION}" \
     && ruff --version \
     && ruff --version | grep -qFx "ruff ${RUFF_VERSION}"
 
@@ -80,13 +84,20 @@ RUN curl -fsL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLI
     && actionlint --version \
     && actionlint --version | grep -qFx "${ACTIONLINT_VERSION}"
 
+ARG CHECKMAKE_VERSION=0.3.2
+RUN curl -fsL "https://github.com/checkmake/checkmake/releases/download/v${CHECKMAKE_VERSION}/checkmake-v${CHECKMAKE_VERSION}.linux.$(dpkg --print-architecture)" -o /usr/local/bin/checkmake \
+    && chmod +x /usr/local/bin/checkmake \
+    && checkmake --version \
+    && checkmake --version | grep -qF "checkmake v${CHECKMAKE_VERSION} "
+
 ARG DOCKERFMT_VERSION=0.5.4
 RUN curl -fsL "https://github.com/reteps/dockerfmt/releases/download/v${DOCKERFMT_VERSION}/dockerfmt-v${DOCKERFMT_VERSION}-linux-$(dpkg --print-architecture).tar.gz" \
     | tar -xz -C /usr/local/bin dockerfmt \
     && dockerfmt version \
     && dockerfmt version | grep -qF "${DOCKERFMT_VERSION}"
 
-# hadolint names its arm64 asset as dpkg does and its amd64 one as uname -m does.
+# hadolint names its arm64 asset as dpkg does and its amd64 one as uname -m
+# does.
 ARG HADOLINT_VERSION=2.15.1
 RUN case "$(uname -m)" in aarch64) arch=arm64 ;; *) arch=$(uname -m) ;; esac \
     && curl -fsL "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-${arch}" -o /usr/local/bin/hadolint \
@@ -101,7 +112,8 @@ RUN curl -fsL "https://github.com/tamasfe/taplo/releases/download/${TAPLO_VERSIO
     && taplo --version \
     && taplo --version | grep -qFx "taplo ${TAPLO_VERSION}"
 
-# Global, so mdformat sits outside root's home and on the PATH of x, who runs it.
+# Global, so mdformat sits outside root's home and on the PATH of x, who runs
+# it.
 ARG MDFORMAT_FRONTMATTER_VERSION=2.2.0
 ARG MDFORMAT_GFM_VERSION=1.0.0
 ARG MDFORMAT_VERSION=1.0.0

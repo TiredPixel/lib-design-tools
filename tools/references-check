@@ -96,12 +96,14 @@ NON_LOADING_RELATIONS = frozenset(
 )
 
 # Matched against CSS whose comments and unquoted url() are blanked and whose strings
-# hold only spaces between their quotes, so a string's value is read from the table.
+# hold only spaces between their quotes, so a string's value is read from the strings
+# _scan_css records.
 _CSS_URL = re.compile(r"""(?<![\w-])url\(\s*("[^"]*"|'[^']*')\s*\)""", re.IGNORECASE)
-_CSS_UNQUOTED_URL = re.compile(r"""(?<![\w-])url\(\s*(?=[^\s"'])""", re.IGNORECASE)
-_CSS_SPACE = " \t\n\r\f"
 _CSS_IMPORT_STRING = re.compile(r"""@import\s+("[^"]*"|'[^']*')""", re.IGNORECASE)
 _CSS_IMAGE_SET = re.compile(r"(?<![\w-])(?:-webkit-)?image-set\(", re.IGNORECASE)
+
+_CSS_UNQUOTED_URL = re.compile(r"""(?<![\w-])url\(\s*(?=[^\s"'])""", re.IGNORECASE)
+_CSS_SPACE = " \t\n\r\f"
 _CSS_ESCAPE = re.compile(r"\\(?:([0-9A-Fa-f]{1,6})[ \t\n\r\f]?|(\n)|(.))", re.DOTALL)
 
 # One attribute of a start tag, its value skipped whole, so that a name written inside
@@ -187,8 +189,10 @@ def _css_unescape(value: str) -> str:
 
 
 def _scan_css(css: str) -> tuple[str, dict[int, str], dict[int, str]]:
-    """Return ``css`` with its comments and unquoted ``url()`` blanked and its strings'
-    contents spaces, each string's value by the offset of its opening quote, and each
+    """Return ``css`` masked, with the values of its strings and unquoted ``url()``.
+
+    Its comments and unquoted ``url()`` are blanked and its strings' contents made
+    spaces; each string's value is keyed by the offset of its opening quote, and each
     unquoted ``url()``'s value by its own offset.
 
     Newlines are kept, so lines still count, and so is each quote of a closed string.
@@ -209,8 +213,11 @@ def _scan_css(css: str) -> tuple[str, dict[int, str], dict[int, str]]:
                 masked[index] = " "
 
     def skip(index: int, stops: str) -> int:
-        """Return the offset of the first of ``stops`` from ``index`` that no ``\\``
-        escapes, or ``end``."""
+        """Return the offset of the first unescaped stop from ``index``, or ``end``.
+
+        The stops are the characters of ``stops``; one is escaped where a ``\\`` comes
+        before it.
+        """
         while index < end and css[index] not in stops:
             index += 2 if css[index] == "\\" else 1
         return min(index, end)
@@ -315,8 +322,9 @@ def classify(reference: str) -> tuple[str, str]:
 def root_key(
     path: str, referrer: pathlib.Path | None, root: pathlib.Path
 ) -> str | None:
-    """Return where a local ``path`` lands, relative to ``root`` and normalised, or None
-    when it leaves ``root``.
+    """Return where a local ``path`` lands under ``root``, or None when it leaves it.
+
+    Where it lands is given relative to ``root`` and normalised.
 
     ``..`` is taken against the referrer's own URL, as a browser takes it, before any
     symlink is followed, as the server follows them only for the path it is sent.
@@ -334,7 +342,7 @@ def root_key(
 
 
 def _resolve_key(path: str, key: str, root: pathlib.Path) -> str | None:
-    """Return why ``path``, landing at ``key``, does not resolve, or None when it does."""
+    """Return why ``path``, landing at ``key``, does not resolve, else None."""
     target = (root / key).resolve()
     if not target.is_relative_to(root.resolve()):
         return f"{path} resolves outside --root"
@@ -347,18 +355,9 @@ def _resolve_key(path: str, key: str, root: pathlib.Path) -> str | None:
     return None
 
 
-def resolve(path: str, referrer: pathlib.Path, root: pathlib.Path) -> str | None:
-    """Return why a local ``path`` does not resolve, or None when it does."""
-    key = root_key(path, referrer, root)
-    if key is None:
-        return f"{path} resolves outside --root"
-    return _resolve_key(path, key, root)
-
-
 @dataclasses.dataclass
 class Exemptions:
-    """The ``--unresolved`` paths as given, by root key, and the keys a reference has
-    matched."""
+    """The ``--unresolved`` paths as given, by root key, and the keys matched so far."""
 
     paths: dict[str, str] = dataclasses.field(default_factory=dict)
     used: set[str] = dataclasses.field(default_factory=set)
@@ -372,8 +371,11 @@ def _problem(
     loads: bool,
     exemptions: Exemptions,
 ) -> str | None:
-    """Return why ``reference`` fails, else None: a local one that does not resolve, or
-    that is exempt but ``loads``, or an external one where ``refuse_external`` is set."""
+    """Return why ``reference`` fails, else None.
+
+    A local one fails where it does not resolve, or is exempt but ``loads``; an external
+    one fails where ``refuse_external`` is set.
+    """
     kind, path = classify(reference)
     if kind == "external" and refuse_external:
         return f"external {reference}, which --no-external refuses"
@@ -430,8 +432,8 @@ class _HtmlReferences(html.parser.HTMLParser):
         """Return the line holding attribute ``name`` of the current tag.
 
         Only called for an attribute the parser read a value for, so the tag's text
-        always holds it. A repeated attribute takes its last occurrence, whose value
-        the parser keeps.
+        always holds it. A repeated attribute takes its last occurrence, whose value the
+        parser keeps.
         """
         tag = self.get_starttag_text()
         start = 0
@@ -627,8 +629,9 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
 def stale_exemptions(
     exemptions: Exemptions, root: pathlib.Path, every_file_read: bool
 ) -> Iterator[str]:
-    """Yield why each exemption is stale, in the order given: its path resolves, or no
-    reference matched it.
+    """Yield why each exemption is stale, in the order given.
+
+    An exemption is stale where its path resolves, or no reference matched it.
 
     That no reference matched is said only when ``every_file_read``, since the only one
     may sit in a file that could not be read, which has already failed.

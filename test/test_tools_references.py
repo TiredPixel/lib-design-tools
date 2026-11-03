@@ -203,10 +203,9 @@ class HtmlTest(ReferencesTestCase):
         )
 
     def test_a_symlink_out_of_the_root_resolves_outside_it(self) -> None:
-        outside = tempfile.TemporaryDirectory()
-        self.addCleanup(outside.cleanup)
-        (pathlib.Path(outside.name) / "x.png").write_bytes(b"")
-        (self.root / "site/out.png").symlink_to(pathlib.Path(outside.name) / "x.png")
+        outside = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (outside / "x.png").write_bytes(b"")
+        (self.root / "site/out.png").symlink_to(outside / "x.png")
         self.assertEqual(
             self.html_problems('<img src="out.png">'),
             [(1, "out.png resolves outside --root")],
@@ -685,7 +684,8 @@ class UnresolvedTest(ReferencesTestCase):
     def test_a_link_is_exempt_with_a_query_or_fragment(self) -> None:
         page = self.write(
             "site/p.html",
-            '<a href="/es/">a</a>\n<a href="/es?x=1#f">b</a>\n<a href="/es#top">c</a>\n',
+            '<a href="/es/">a</a>\n<a href="/es?x=1#f">b</a>\n'
+            '<a href="/es#top">c</a>\n',
         )
         self.assertEqual(
             self.run_exempt(["/es"], page), (0, "checked 1 file(s): 0 problem(s)\n")
@@ -816,7 +816,3 @@ class UnresolvedTest(ReferencesTestCase):
                 self.assertIn(
                     f"error: {message}\n", self.run_usage_error(*arguments, str(page))
                 )
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -1,8 +1,11 @@
-# The make targets every repository using these tools shares, taken with
-# `include` from its Makefile, which adds its own upgrade-pre. Paths here are
-# found from this file's own location, so the same include works wherever the
-# submodule sits.
+# upgrade-pre is the including Makefile's own. Paths here are found from this
+# file's own location, so the same include works wherever the submodule sits.
 DESIGN_TOOLS := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
+
+# Recipes in strict bash rather than make's default /bin/sh, here and in every
+# Makefile that includes this one.
+SHELL := bash
+.SHELLFLAGS := -Eeuo pipefail -O inherit_errexit -O failglob -c
 
 # --profile test so the design and design_test services are built here rather
 # than on demand by the --build the other targets carry. preview, under a
@@ -23,4 +26,4 @@ upgrade:
 	$(MAKE) upgrade-pre
 	$(MAKE) build
 	$(MAKE) test
-.PHONY: build format lint preview test upgrade-pre upgrade
+.PHONY: build format lint preview test upgrade upgrade-pre

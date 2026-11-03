@@ -1,36 +1,28 @@
 """tools/palette-generate, on fabricated input in temporary directories."""
 
 import json
-import pathlib
+import os
 import subprocess
-import tempfile
 import textwrap
-import unittest
 
+import temp_tree
 import tools_loader
 
 
-def run(*args, cwd):
+def run(*args, cwd, env=None):
     return subprocess.run(
         [str(tools_loader.TOOLS / "palette-generate"), *args],
         cwd=cwd,
+        env={**os.environ, **(env or {})},
         capture_output=True,
         text=True,
         check=False,
     )
 
 
-class Workspace(unittest.TestCase):
-    def setUp(self):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.root = pathlib.Path(directory.name)
-
+class Workspace(temp_tree.TempTreeTestCase):
     def write(self, name, text):
-        path = self.root / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(textwrap.dedent(text).lstrip(), encoding="utf-8")
-        return path
+        return super().write(name, textwrap.dedent(text).lstrip())
 
 
 class PaletteGenerateTest(Workspace):
@@ -228,12 +220,31 @@ class PaletteGenerateTest(Workspace):
             ["p.yml", "--prefix", "x", "--json", "p.json"],
             ["p.yml", "--prefix"],
             ["p.yml", "q.yml", "--prefix", "x", "--json", "j", "--css", "c"],
+            ["p.yml", "--prefix", "x", "--prefix", "y", "--json", "j", "--css", "c"],
+            ["p.yml", "--prefix", "", "--prefix", "x", "--json", "j", "--css", "c"],
+            ["p.yml", "--prefix", "x", "--json", "j", "--json", "k", "--css", "c"],
+            ["p.yml", "--prefix", "x", "--json", "j", "--css", "c", "--css", "d"],
             ["p.yml", "--bogus"],
         ):
             with self.subTest(args=args):
                 result = run(*args, cwd=self.root)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("usage:", result.stderr)
+
+    def test_options_of_the_same_name_in_the_environment_count_for_nothing(self):
+        self.write("p.yml", self.YAML)
+        environment = {"prefix": "z", "json": "e.json", "css": "e.css"}
+        result = run(
+            "p.yml",
+            *("--prefix", "x", "--json", "p.json", "--css", "p.css"),
+            cwd=self.root,
+            env=environment,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / "e.css").exists())
+        result = run("p.yml", cwd=self.root, env=environment)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage:", result.stderr)
 
     def test_help_prints_usage_and_succeeds(self):
         for flag in ("--help", "-h"):
@@ -242,7 +253,3 @@ class PaletteGenerateTest(Workspace):
                 self.assertEqual(result.returncode, 0)
                 self.assertTrue(result.stdout.startswith("usage: palette-generate"))
                 self.assertEqual(result.stderr, "")
-
-
-if __name__ == "__main__":
-    unittest.main()

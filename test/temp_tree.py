@@ -1,4 +1,4 @@
-"""A test case working in a fresh temporary directory tree, for testing."""
+"""A test case working in a fresh temporary directory tree."""
 
 from __future__ import annotations
 
