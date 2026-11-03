@@ -15,11 +15,16 @@ shopt -s inherit_errexit failglob
 # shellcheck source=/dev/null
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
 
+# Each tool's failure is recorded here and the run carries on, so a finding no
+# tool can fix, or a file a formatter cannot parse, leaves no later pass's files
+# unformatted; the run fails once every pass has run.
+status=0
+
 if defines palette_args; then
     echo -e "\n=== FORMAT PALETTE\n"
 
     read_set palette_args palette
-    "$tools/palette-generate" "${palette[@]}"
+    "$tools/palette-generate" "${palette[@]}" || status=1
 fi
 
 if defines shell_files; then
@@ -27,7 +32,7 @@ if defines shell_files; then
 
     read_files shell_files shell
     echo "formatting ${#shell[@]} shell file(s)" >&2
-    shfmt "${shfmt_args[@]}" -w "${shell[@]}"
+    shfmt "${shfmt_args[@]}" -w "${shell[@]}" || status=1
 fi
 
 if defines python_files; then
@@ -35,8 +40,8 @@ if defines python_files; then
 
     read_files python_files python
     echo "formatting ${#python[@]} Python file(s)" >&2
-    ruff check --fix "${python[@]}"
-    ruff format "${python[@]}"
+    ruff check --fix "${python[@]}" || status=1
+    ruff format "${python[@]}" || status=1
 fi
 
 if defines yaml_files; then
@@ -48,7 +53,7 @@ if defines yaml_files; then
     # so the same data could pass in several layouts; jq gives JSON one layout
     # by default.
     for f in "${yaml[@]}"; do
-        yq -i -P 'sort_keys(..)' "$f"
+        yq -i -P 'sort_keys(..)' "$f" || status=1
     done
 fi
 
@@ -58,10 +63,14 @@ if defines json_files; then
     read_files json_files json
     echo "formatting ${#json[@]} JSON file(s)" >&2
     # Captured before writing, since redirecting jq's output to the file it
-    # reads would truncate it before reading.
+    # reads would truncate it before reading; a file jq cannot read is left as
+    # it is.
     for f in "${json[@]}"; do
-        formatted=$(jq "${jq_args[@]}" "$f")
-        printf '%s\n' "$formatted" >"$f"
+        if formatted=$(jq "${jq_args[@]}" "$f"); then
+            printf '%s\n' "$formatted" >"$f"
+        else
+            status=1
+        fi
     done
 fi
 
@@ -70,7 +79,7 @@ if defines js_files; then
 
     read_files js_files js
     echo "formatting ${#js[@]} JavaScript file(s)" >&2
-    semistandard --fix "${js[@]}"
+    semistandard --fix "${js[@]}" || status=1
 fi
 
 if defines css_files || defines html_files; then
@@ -78,7 +87,7 @@ if defines css_files || defines html_files; then
 
     read_prettier_files prettied
     echo "formatting ${#prettied[@]} CSS and HTML file(s)" >&2
-    prettier --write "${prettied[@]}"
+    prettier --write "${prettied[@]}" || status=1
 fi
 
 if defines md_files; then
@@ -86,7 +95,7 @@ if defines md_files; then
 
     read_files md_files md
     echo "formatting ${#md[@]} Markdown file(s)" >&2
-    mdformat "${mdformat_args[@]}" "${md[@]}"
+    mdformat "${mdformat_args[@]}" "${md[@]}" || status=1
 fi
 
 if defines toml_files; then
@@ -94,7 +103,7 @@ if defines toml_files; then
 
     read_files toml_files toml
     echo "formatting ${#toml[@]} TOML file(s)" >&2
-    taplo fmt "${toml[@]}"
+    taplo fmt "${toml[@]}" || status=1
 fi
 
 if defines docker_files; then
@@ -102,7 +111,8 @@ if defines docker_files; then
 
     read_files docker_files docker
     echo "formatting ${#docker[@]} Docker file(s)" >&2
-    dockerfmt "${dockerfmt_args[@]}" --write "${docker[@]}"
+    dockerfmt "${dockerfmt_args[@]}" --write "${docker[@]}" || status=1
 fi
 
 echo
+exit "$status"

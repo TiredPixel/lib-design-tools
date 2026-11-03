@@ -130,6 +130,8 @@ What `bin/format` rewrites and `bin/lint` checks for drift, each to the tool's o
 - `toml_files` – taplo, under the repository's own taplo configuration.
 - `docker_files` – dockerfmt, ending each file with a newline; `bin/lint` also runs hadolint, under the repository's own hadolint configuration. It never names the link to this repository's `Dockerfile` (*The image*).
 
+A tool that fails, on a finding it cannot fix or a file it cannot parse, fails `bin/format`, but only once every later pass has run.
+
 What `bin/lint` checks only:
 
 - `compose_files` – Compose files, each validated on its own, with every profile enabled, by `docker-compose --profile '*' config -q`. It checks neither layout nor key order, so each is also named in `yaml_files`, except the link to this repository's `docker-compose.yml` (*The services*).
