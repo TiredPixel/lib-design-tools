@@ -1,8 +1,7 @@
 # shellcheck shell=bash
 #
-# This repository's settings for the runners in bin/, which it uses as any
-# other repository does: each function names what one pass reads,
-# NUL-separated.
+# This repository's settings for the runners in bin/, which it uses as any other
+# repository does: each function names what one pass reads, NUL-separated.
 #
 # No pass reaches pytest.ini, checkmake.ini, .gitmodules, .gitignore,
 # .dockerignore, .dockerrepo or .env.example, since the image has no formatter

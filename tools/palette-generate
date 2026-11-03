@@ -88,17 +88,17 @@ notice="Generated from $yaml, in its key order: edit that file, never this one."
 
 # Both outputs and the checks read the YAML with its aliases and << merge keys
 # expanded, which yq does only where asked, so the CSS holds every colour the
-# JSON does; merge keys follow the YAML spec, a key of the mapping's own
-# winning over a merged one.
+# JSON does; merge keys follow the YAML spec, a key of the mapping's own winning
+# over a merged one.
 # $comment is the JSON key, written literally, not a shell variable.
 # shellcheck disable=SC2016
 COMMENT=$notice \
     yq --yaml-fix-merge-anchor-to-spec -o=json -I2 \
     'explode(.) | {"$comment": strenv(COMMENT)} + .' "$yaml" >"$out/json"
 
-# Runs the yq filter given on every node of the expanded YAML. Lists become
-# maps keyed from 1 first, so a list position and a mapping key both reach the
-# name through the same path.
+# Runs the yq filter given on every node of the expanded YAML. Lists become maps
+# keyed from 1 first, so a list position and a mapping key both reach the name
+# through the same path.
 nodes() {
     COLOUR=$colour PREFIX=$prefix yq --yaml-fix-merge-anchor-to-spec '
         explode(.)

@@ -424,8 +424,8 @@ class _HtmlReferences(html.parser.HTMLParser):
         """Return the line holding attribute ``name`` of the current tag.
 
         Only called for an attribute the parser read a value for, so the tag's text
-        always holds it. A repeated attribute takes its last occurrence, whose value
-        the parser keeps.
+        always holds it. A repeated attribute takes its last occurrence, whose value the
+        parser keeps.
         """
         tag = self.get_starttag_text()
         start = 0

@@ -32,9 +32,9 @@ render_check = tools_loader.load("render-check")
 
 CLEAN_DOM = '<html data-render-errors="[]"><head></head><body></body></html>'
 
-# For a fake Chromium: start a child in its process group that keeps writing files
-# into the profile, as Chromium's renderer and crashpad processes do, and record its
-# pid beside the fake once it has started writing.
+# For a fake Chromium: start a child in its process group that keeps writing files into
+# the profile, as Chromium's renderer and crashpad processes do, and record its pid
+# beside the fake once it has started writing.
 SPAWN_PROFILE_WRITER = """
 profile = next(
     a for a in sys.argv[1:] if a.startswith("--user-data-dir=")

@@ -107,8 +107,8 @@ class PreviewServeTest(temp_tree.TempTreeTestCase):
         for path, expected in cases.items():
             with self.subTest(path=path):
                 self.assertEqual(self.request(path).getheader("Content-Type"), expected)
-        # text/javascript or application/javascript, as the host's MIME tables
-        # have it; either takes the charset.
+        # text/javascript or application/javascript, as the host's MIME tables have it;
+        # either takes the charset.
         script = self.request("/preview/app.js").getheader("Content-Type")
         self.assertTrue(script.endswith("javascript; charset=utf-8"), script)
         binary = self.request("/preview/font.ttf").getheader("Content-Type")

@@ -40,8 +40,8 @@ INTERRUPTING = (
 """
 )
 
-# Fails inside pytest itself once the skip has been reported, which pytest answers
-# with an internal error.
+# Fails inside pytest itself once the skip has been reported, which pytest answers with
+# an internal error.
 FAILING_HOOK = """
     def pytest_runtest_logfinish(nodeid, location):
         if nodeid.endswith("test_xfails"):
@@ -75,8 +75,8 @@ class NoSkipsTest(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
-            # Generous, so a hung child pytest fails the test rather than stalling
-            # a worker; not a measure of how long it should take.
+            # Generous, so a hung child pytest fails the test rather than stalling a
+            # worker; not a measure of how long it should take.
             timeout=300,
         )
 

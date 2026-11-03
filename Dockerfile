@@ -96,7 +96,8 @@ RUN curl -fsL "https://github.com/reteps/dockerfmt/releases/download/v${DOCKERFM
     && dockerfmt version \
     && dockerfmt version | grep -qF "${DOCKERFMT_VERSION}"
 
-# hadolint names its arm64 asset as dpkg does and its amd64 one as uname -m does.
+# hadolint names its arm64 asset as dpkg does and its amd64 one as uname -m
+# does.
 ARG HADOLINT_VERSION=2.15.1
 RUN case "$(uname -m)" in aarch64) arch=arm64 ;; *) arch=$(uname -m) ;; esac \
     && curl -fsL "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-${arch}" -o /usr/local/bin/hadolint \
@@ -111,7 +112,8 @@ RUN curl -fsL "https://github.com/tamasfe/taplo/releases/download/${TAPLO_VERSIO
     && taplo --version \
     && taplo --version | grep -qFx "taplo ${TAPLO_VERSION}"
 
-# Global, so mdformat sits outside root's home and on the PATH of x, who runs it.
+# Global, so mdformat sits outside root's home and on the PATH of x, who runs
+# it.
 ARG MDFORMAT_FRONTMATTER_VERSION=2.2.0
 ARG MDFORMAT_GFM_VERSION=1.0.0
 ARG MDFORMAT_VERSION=1.0.0

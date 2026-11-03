@@ -287,9 +287,9 @@ class FormatThenLintTest(Repository):
         )
 
     def test_markdown(self):
-        # A paragraph is joined onto one line, and the front matter and the GFM
-        # table come through as front matter and a table, padded to their
-        # columns, rather than as a thematic break and a paragraph.
+        # A paragraph is joined onto one line, and the front matter and the GFM table
+        # come through as front matter and a table, padded to their columns, rather than
+        # as a thematic break and a paragraph.
         self.settings("function md_files { printf '%s\\0' a.md; }\n")
         self.write("a.md", UNFORMATTED_MARKDOWN)
         self.assertFails(self.run_bin("lint"), "a.md")
@@ -373,8 +373,8 @@ class CheckingPassTest(Repository):
         self.assertEqual(self.sections(result), ["LINT COMPOSE"])
 
     def test_compose_checks_each_file_on_its_own(self):
-        # a.yml gives its service no image, which b.yml supplies: merged, as
-        # Compose merges every -f, the two would pass.
+        # a.yml gives its service no image, which b.yml supplies: merged, as Compose
+        # merges every -f, the two would pass.
         self.settings("function compose_files { printf '%s\\0' a.yml b.yml; }\n")
         self.write("a.yml", "services:\n  a:\n    init: true\n")
         self.write("b.yml", VALID_COMPOSE)
@@ -536,8 +536,8 @@ class PreviewTest(Repository):
                 if time.monotonic() > deadline:
                     raise
                 time.sleep(0.1)
-        # The test container has no network but loopback, so the wildcard bind is
-        # read from the kernel's socket table: 0.0.0.0:8080, listening.
+        # The test container has no network but loopback, so the wildcard bind is read
+        # from the kernel's socket table: 0.0.0.0:8080, listening.
         table = (
             pathlib.Path("/proc/net/tcp").read_text(encoding="utf-8").splitlines()[1:]
         )
