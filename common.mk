@@ -24,6 +24,12 @@ test:
 # One step at a time even under -j, since each needs the one before it done.
 upgrade:
 	$(MAKE) upgrade-pre
+	$(MAKE) upgrade-post
+# Alone, it finishes an upgrade whose build or tests failed, once fixed.
+# UPGRADE_COMMIT, where the including Makefile sets it, commits what
+# upgrade-pre moved.
+upgrade-post:
 	$(MAKE) build
 	$(MAKE) test
-.PHONY: build format lint preview test upgrade upgrade-pre
+	$(UPGRADE_COMMIT)
+.PHONY: build format lint preview test upgrade upgrade-post upgrade-pre

@@ -86,16 +86,18 @@ The test stage copies the whole tree, so the repository's `.dockerignore` keeps 
 
 ### The make targets
 
-`common.mk` gives `build`, `format`, `lint`, `preview`, `test` and `upgrade`, run through the services. A repository's `Makefile` includes it and adds its own `upgrade-pre`, which moves the submodule to its latest commit and its own submodules to the commits that one records:
+`common.mk` gives `build`, `format`, `lint`, `preview`, `test`, `upgrade` and `upgrade-post`, run through the services. A repository's `Makefile` includes it and adds its own `upgrade-pre`, which moves the submodule to its latest commit and its own submodules to the commits that one records. Its first two lines make the submodule a repository of its own before anything runs in it, since git run in an uninitialised submodule's empty directory acts on the parent instead:
 
 ```make
 include lib/design-tools/common.mk
 
 upgrade-pre:
-	cd lib/design-tools && git checkout latest && git pull && git submodule update --init --recursive
+	git submodule sync lib/design-tools
+	git submodule update --init --checkout lib/design-tools
+	cd lib/design-tools && git checkout latest && git pull --ff-only && git submodule update --init --recursive
 ```
 
-`make upgrade` runs `upgrade-pre`, then builds and tests, so a change that breaks the repository shows before the bump is committed.
+`make upgrade` runs `upgrade-pre`, then `upgrade-post`, which builds and tests, so a change that breaks the repository shows before the bump is committed, and then runs the command in `UPGRADE_COMMIT` where the `Makefile` sets one.
 
 `make test` runs `bin/test`, which *Settings* describes, in the `design_test` service; named tests are pytest's arguments, paths from the repository's root:
 
@@ -215,10 +217,24 @@ make build
 
 ## Upgrading
 
-Base images are pinned by digest, and tools from outside Debian's repositories by `ARG`. `make upgrade` moves `lib/shell-common` to its latest commit and runs its `docker/upgrade` to re-pin each pin the `Dockerfile` names on a `FROMFREEZE` or `ARGFREEZE` line, then builds and tests, as *The make targets* describes. `docker/upgrade` runs on the host, so `make upgrade` needs `curl` and `jq` there:
+Base images are pinned by digest, tools from outside Debian's repositories by `ARG` and checked against a SHA-256 pinned beside each, and the workflow's actions by commit SHA. `make upgrade` moves `lib/shell-common` to its latest commit and runs its `docker/upgrade` to re-pin each pin the `Dockerfile` names on a `# TRACK FROM` or `# TRACK ARG` line, and each action the workflow names on a `# TRACK USES` line, proposing a re-pinned workflow in `.github/workflows.new/`. It then builds, tests and commits the result as `Upgrade pins`, with a line for each move as the body, as *The make targets* describes; it never pushes. `docker/upgrade` refuses to start while the `Dockerfile` has changes not committed or a workflow proposal is pending. It runs on the host, so `make upgrade` needs `curl`, `jq`, `sha256sum` and `timeout` there:
 
 ```sh
 make upgrade
+```
+
+Where the build or tests fail, fix them, then finish the upgrade:
+
+```sh
+make upgrade-post
+```
+
+## Approving workflows
+
+A change to a workflow is proposed as the whole file in `.github/workflows.new/`, since GitHub refuses an agent's push touching `.github/workflows/`, and CI fails while one is pending. `make workflows-approve` shows each proposal as a diff against its live workflow, asks whether to approve it, then moves it into place, commits that move and pushes:
+
+```sh
+make workflows-approve
 ```
 
 ## Licence
