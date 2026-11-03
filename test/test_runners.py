@@ -5,7 +5,9 @@ They run from the root of a fabricated repository whose bin/ links to them.
 
 import os
 import pathlib
+import signal
 import subprocess
+import tempfile
 import textwrap
 import time
 import urllib.error
@@ -191,6 +193,48 @@ class PassSelectionTest(Repository):
                 self.assertFails(
                     self.run_bin("lint"), f"bin/settings: {name} names nothing"
                 )
+
+
+class SetFileTest(Repository):
+    """read_set's file is gone from TMPDIR before the settings function runs.
+
+    The JSON lint pass reads the set, and neither jq nor diff writes to TMPDIR.
+    """
+
+    def setUp(self):
+        super().setUp()
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.tmp = pathlib.Path(directory.name)
+        self.write("a.json", '{\n  "a": 1\n}\n')
+
+    def run_lint(self):
+        return self.run_bin("lint", env={"TMPDIR": str(self.tmp)})
+
+    def test_a_signal_leaves_no_file_behind(self):
+        # $$ in the background job is still the runner's process ID, so the runner is
+        # killed while it waits on the job, once the set is written.
+        self.settings("function json_files { printf '%s\\0' a.json; kill -TERM $$; }\n")
+        result = self.run_lint()
+        self.assertEqual(
+            result.returncode, -signal.SIGTERM, result.stdout + result.stderr
+        )
+        self.assertEqual(list(self.tmp.iterdir()), [])
+
+    def test_the_file_is_gone_while_the_function_runs(self):
+        self.settings(
+            "function json_files {\n"
+            '    if [ -n "$(ls -A -- "$TMPDIR")" ]; then\n'
+            '        echo "TMPDIR is not empty" >&2\n'
+            "        return 1\n"
+            "    fi\n"
+            "    printf '%s\\0' a.json\n"
+            "}\n"
+        )
+        result = self.run_lint()
+        self.assertPasses(result)
+        self.assertEqual(self.sections(result), ["LINT JSON"])
+        self.assertEqual(list(self.tmp.iterdir()), [])
 
 
 class FormatThenLintTest(Repository):
