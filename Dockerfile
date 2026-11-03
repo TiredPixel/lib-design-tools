@@ -15,8 +15,7 @@
 #
 # dev copies nothing in, so a repository taking this one as a submodule builds
 # the same image, through a Dockerfile symlinked to this one, and runs it on its
-# own tree; test adds that tree for the gate. README.md, Building, describes
-# both stages.
+# own tree; test adds that tree for the gate.
 #===============================================================================
 FROM docker.io/library/debian@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1 AS dev
 
@@ -26,8 +25,8 @@ SHELL ["/bin/bash", "-Eeuo", "pipefail", "-O", "inherit_errexit", "-O", "failglo
 
 # Without python3-psutil, which nothing here installs, xdist's -n auto counts
 # the CPUs the container may use rather than the machine's physical cores.
-# DL3008: the versions are those of the Debian snapshot the base image's digest
-# pins, which make upgrade moves.
+# DL3008: the packages float within the Debian release the base image's digest
+# pins, so the release's updates reach the image on each build.
 # hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -65,8 +64,8 @@ ENV PYTHONDONTWRITEBYTECODE=1
 
 ENV PATH=/home/x/r/bin:$PATH
 
-# mikefarah's yq, which bin/format and lint/yaml-keys need: Debian's yq is the
-# Python wrapper.
+# mikefarah's yq, which bin/format, lib/shell-common/lint/yaml-keys and
+# tools/palette-generate need: Debian's yq is the Python wrapper.
 ARG YQ_VERSION=4.54.1
 RUN curl -fsL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_$(dpkg --print-architecture)" -o /usr/local/bin/yq \
     && chmod +x /usr/local/bin/yq \

@@ -4,7 +4,6 @@
 # root of the repository they serve. That repository's bin/ holds symlinks to
 # them, so this one is found by resolving the link, and its own bin/settings
 # turns each pass on by defining what the pass reads (README.md, Settings).
-# Nothing runs that bin/settings does not name.
 #
 # Read only by the runners that source this one, so they look unused here.
 # shellcheck disable=SC2034
@@ -36,10 +35,10 @@ function defines {
 # Reads the NUL-separated output of the function named by $1 into the array
 # named by $2. The function runs as a background job into a file and its status
 # is checked through wait: bash can lose a process substitution's status, and
-# under || or in a pipeline errexit would be off inside the function, so a
-# failure before its last command would pass unseen. An empty result fails too,
-# unless $3 is "may-be-empty": a set of files that is defined and names nothing
-# is a mistake, never a clean pass.
+# under ||, errexit would be off inside the function, so a failure before its
+# last command would pass unseen. An empty result fails too, unless $3 is
+# "may-be-empty": a set of files that is defined and names nothing is a mistake,
+# never a clean pass.
 function read_set {
     local -n read_set_into=$2
     local read_set_out read_set_status

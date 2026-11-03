@@ -1,7 +1,5 @@
-# The make targets every repository using these tools shares, taken with
-# `include` from its Makefile, which adds its own upgrade-pre. Paths here are
-# found from this file's own location, so the same include works wherever the
-# submodule sits.
+# upgrade-pre is the including Makefile's own. Paths here are found from this
+# file's own location, so the same include works wherever the submodule sits.
 DESIGN_TOOLS := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
 
 # Recipes in strict bash rather than make's default /bin/sh, here and in every

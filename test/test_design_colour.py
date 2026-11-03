@@ -39,7 +39,7 @@ class ContrastTest(unittest.TestCase):
         )
 
     def test_a_known_pair(self):
-        # #767676 on white is the conventional greyest text passing AA, at 4.54:1.
+        # #767676 on white is the conventional lightest grey text passing AA, at 4.54:1.
         self.assertAlmostEqual(
             design_colour.contrast("#767676", "#FFFFFF"), 4.54, places=2
         )

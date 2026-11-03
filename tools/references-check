@@ -96,12 +96,14 @@ NON_LOADING_RELATIONS = frozenset(
 )
 
 # Matched against CSS whose comments and unquoted url() are blanked and whose strings
-# hold only spaces between their quotes, so a string's value is read from the table.
+# hold only spaces between their quotes, so a string's value is read from the strings
+# _scan_css records.
 _CSS_URL = re.compile(r"""(?<![\w-])url\(\s*("[^"]*"|'[^']*')\s*\)""", re.IGNORECASE)
-_CSS_UNQUOTED_URL = re.compile(r"""(?<![\w-])url\(\s*(?=[^\s"'])""", re.IGNORECASE)
-_CSS_SPACE = " \t\n\r\f"
 _CSS_IMPORT_STRING = re.compile(r"""@import\s+("[^"]*"|'[^']*')""", re.IGNORECASE)
 _CSS_IMAGE_SET = re.compile(r"(?<![\w-])(?:-webkit-)?image-set\(", re.IGNORECASE)
+
+_CSS_UNQUOTED_URL = re.compile(r"""(?<![\w-])url\(\s*(?=[^\s"'])""", re.IGNORECASE)
+_CSS_SPACE = " \t\n\r\f"
 _CSS_ESCAPE = re.compile(r"\\(?:([0-9A-Fa-f]{1,6})[ \t\n\r\f]?|(\n)|(.))", re.DOTALL)
 
 # One attribute of a start tag, its value skipped whole, so that a name written inside

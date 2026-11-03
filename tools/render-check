@@ -3,7 +3,8 @@
 
 A page fails when it records a failed resource load, an uncaught error, an unhandled
 rejection or a console.error call, when an element in its rendered DOM matches the error
-marker, or when Chromium fails or times out on it.
+marker, when the browser cannot report failed loads started from CSS, or when Chromium
+fails or times out on it.
 
 Exit status: 0 when every page is clean, 1 when any page fails, 2 on a usage error or
 when Chromium cannot be found.

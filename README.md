@@ -9,6 +9,7 @@ Working on this repository needs:
 - Docker Engine or Docker Desktop with Compose v2
 - `git` with submodule support
 - `make`
+- `bash` 4.4 or later
 
 ## Installation
 
@@ -24,16 +25,16 @@ cp .env.example .env
 
 Each command prints its usage with `--help`.
 
-- `tools/palette-generate` – the JSON and the CSS from a palette YAML, one custom property per colour; the check option compares them with the files instead of writing. A property is named `--`, the given prefix and a hyphen, then the full YAML key path, lowercased, with `_` written as `-` and list items numbered from 1, so `greys: {warm: [a, b]}` with prefix `x` gives `--x-greys-warm-1` and `--x-greys-warm-2`; a key that would put anything but letters, digits, hyphens or non-ASCII characters in a name fails the run, as does a value starting with `#` that is not a `#RGB`, `#RGBA`, `#RRGGBB` or `#RRGGBBAA` colour, or a value left empty, as an unquoted `#` colour is, since YAML reads it as a comment. Aliases and merge keys are expanded in both outputs alike.
-- `tools/references-check` – every local reference in HTML and CSS resolves under the root: each attribute that loads or links something, such as `href`, `src`, `srcset`, `imagesrcset`, `poster` and `data`, a refresh's target, and each `url()`, `@import` and `image-set()` string. Options refuse anything external a page loads, or require `integrity` and `crossorigin` on every external stylesheet and script. `--unresolved PATH`, repeatable, exempts a `/`-rooted path served by something else, such as a sibling site, for a link, an `area`, a refresh or a `link` whose every `rel` loads nothing, matching wherever a reference lands, query and fragment aside; an exempt path that something loads into the page fails, as does an exemption whose path resolves or that nothing references.
-- `tools/render-check` – each page loaded in headless Chromium, failing on an uncaught error, an unhandled rejection, a `console.error`, a failed load the page or its stylesheets start, such as an image, script, stylesheet, `@import`, font or background image, or an element matching the error marker. A request the page's own script makes, such as `fetch`, is left to the script; the page's icon is not checked, and a load from another origin that does not use CORS counts only where its element reports an error.
-- `tools/preview-serve` – the tree as it is on disk, for previewing while editing: nothing cached, dotfiles refused, directories listed, and `/` redirected to the start path, the page the preview opens on. For development only.
+- `tools/palette-generate` – the JSON and the CSS from a palette YAML, one custom property per colour; `--check` compares them with the files instead of writing. A property is named `--`, the `--prefix` given and a hyphen, then the full YAML key path, lowercased, with `_` written as `-` and list items numbered from 1, so `greys: {warm: [a, b]}` with prefix `x` gives `--x-greys-warm-1` and `--x-greys-warm-2`; a key that would put anything but letters, digits, hyphens or non-ASCII characters in a name fails the run, as does a value starting with `#` that is not a `#RGB`, `#RGBA`, `#RRGGBB` or `#RRGGBBAA` colour, or a value left empty, as an unquoted `#` colour is, since YAML reads it as a comment, as do two leaves that come out with the same name and a YAML that holds no colour at all. Aliases and merge keys are expanded in both outputs alike.
+- `tools/references-check` – every local reference in HTML and CSS resolves under `--root`: each attribute that loads or links something, such as `href`, `src`, `srcset`, `imagesrcset`, `poster` and `data`, a refresh's target, and each `url()`, `@import` and `image-set()` string. A reference that leaves `--root` fails, as does one to a directory with no `index.html`, and so does a file that holds a `<base>` element, which changes how every reference resolves, or that is not valid UTF-8. `--no-external` refuses anything external a page loads, and `--require-integrity` requires `integrity` and `crossorigin` on every external stylesheet and script. `--unresolved PATH`, repeatable, exempts a `/`-rooted path served by something else, such as a sibling site, for a link, an `area`, a refresh or a `link` whose every `rel` loads nothing, matching wherever a reference lands, query and fragment aside; an exempt path that something loads into the page fails, as does an exemption whose path resolves or that nothing references.
+- `tools/render-check` – each page loaded in headless Chromium, failing on an uncaught error, an unhandled rejection, a `console.error`, a failed load the page or its stylesheets start, such as an image, script, stylesheet, `@import`, font or background image, or an element matching `--error-marker`. A request the page's own script makes, such as `fetch`, is left to the script; the page's icon is not checked, and a load from another origin that does not use CORS counts only where its element reports an error.
+- `tools/preview-serve` – the tree as it is on disk, for previewing while editing: nothing cached, dot paths and paths outside the tree refused, directories listed, and `/` redirected to `--start`, the page the preview opens on. For development only.
 
 Importable from a repository's own Python tests, with `tools/` on the path, as `bin/test` puts it:
 
 - `tools/design_colour.py` – colour maths: WCAG luminance and contrast, compositing a translucent colour over a ground, CIELAB lightness, chroma and hue, and CIE76 ΔE.
 - `tools/design_render.py` – the harness under `render-check`: serving a tree, rendering a page or printing it to PDF in headless Chromium, and reading what it reports.
-- `tools/pytest_no_skips.py` – a pytest plugin adding `--no-skips`, which fails a run in which any test skipped.
+- `tools/pytest_no_skips.py` – a pytest plugin, which `bin/test` loads, adding `--no-skips`, which fails a run in which any test skipped.
 
 ## Usage
 
@@ -44,7 +45,7 @@ git submodule add https://github.com/TiredPixel/lib-design-tools.git lib/design-
 git submodule update --init --recursive lib/design-tools
 ```
 
-Each part below is taken on its own. A tool needs nothing else here and can be called directly, in the image, the image needs only its link, and only the parts that run commands in the image depend on others: the services run the runners, and the make targets run the services.
+Each part below is taken on its own. A tool needs nothing here outside `tools/` and can be called directly in the image; the image needs only its link; and only the parts that run commands in the image depend on others: the services run the runners, and the make targets run the services.
 
 ### The image
 
@@ -90,7 +91,7 @@ upgrade-pre:
 
 `make upgrade` runs `upgrade-pre`, then builds and tests, so a change that breaks the repository shows before the bump is committed.
 
-`make test` runs `bin/test` in the `design_test` service, which *Settings* describes; named tests are pytest's arguments, paths from the repository's root:
+`make test` runs `bin/test`, which *Settings* describes, in the `design_test` service; named tests are pytest's arguments, paths from the repository's root:
 
 ```sh
 make test TESTS='test/<file>.py'
@@ -106,7 +107,7 @@ make lint
 
 ### Settings
 
-`bin/settings` is the repository's own, sourced by every runner. Each pass runs only where it defines what the pass reads, so a repository with an empty `bin/settings` gets no pass at all. Each is a function printing NUL-separated paths or arguments; a defined one that fails, or that names no files, fails the run.
+`bin/settings` is the repository's own, sourced by every runner. Each pass runs only where it defines what the pass reads, so a repository with an empty `bin/settings` gets no pass at all. Each is a function printing NUL-separated paths or arguments; a defined one that fails, or that names nothing, fails the run, except `pytest_args`, which may name nothing. `preview_start`, which `bin/preview` requires, is the one variable.
 
 What `bin/format` rewrites and `bin/lint` checks for drift, each to the tool's own style:
 

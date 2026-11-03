@@ -47,7 +47,8 @@ GROUP_EXIT_TIMEOUT_S = 10
 # Loads a stylesheet starts, such as @font-face fonts, background images and @import,
 # fire no event at the element that needs them, so failed responses are also read from
 # Resource Timing. Initiators whose failures an `error` event already reports, or whose
-# responses the page's own script sees, are skipped there. A failed @import does fire
+# responses the page's own script sees, are skipped there, and so is a beacon, which
+# renders nothing and whose failure the page never sees. A failed @import does fire
 # `error` at a <style>, but with no URL, so that event is left to Resource Timing. A
 # no-cors response from another origin reports status 0, so its failure stays unseen. A
 # browser without `responseStatus` is recorded as unable to check, rather than passing

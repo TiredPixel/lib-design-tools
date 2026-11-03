@@ -16,7 +16,7 @@ _HEX = re.compile(r"#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})")
 # The CIE standard illuminant D65 white point, Y normalised to 1.
 D65 = (0.95047, 1.0, 1.08883)
 
-# Linear sRGB to CIE XYZ under D65, from IEC 61966-2-1.
+# Linear sRGB to CIE XYZ, derived from the IEC 61966-2-1 primaries and D65 above.
 SRGB_TO_XYZ = (
     (0.4124564, 0.3575761, 0.1804375),
     (0.2126729, 0.7151522, 0.0721750),
