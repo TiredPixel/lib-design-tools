@@ -73,6 +73,9 @@ REFERENCE_ATTRIBUTES = {
 
 SRCSET_ATTRIBUTES = frozenset({"imagesrcset", "srcset"})
 
+# The attribute a stylesheet or script loads from, which is what integrity covers.
+INTEGRITY_ATTRIBUTES = {"link": "href", "script": "src"}
+
 # The pages a static server answers a directory with.
 _INDEX_PAGES = http.server.SimpleHTTPRequestHandler.index_pages
 
@@ -470,10 +473,8 @@ class _HtmlReferences(html.parser.HTMLParser):
             if "stylesheet" not in relations:
                 return
             what = "stylesheet"
-        elif tag == "script":
-            what = "script"
         else:
-            return
+            what = "script"
         reference = attributes[name]
         if classify(reference)[0] != "external":
             return
@@ -519,7 +520,11 @@ class _HtmlReferences(html.parser.HTMLParser):
             for reference in references:
                 self._check(line, reference, loads)
             # Refused outright under --no-external, so not reported twice.
-            if self._require_integrity and not (self._no_external and loads):
+            if (
+                self._require_integrity
+                and name == INTEGRITY_ATTRIBUTES.get(tag)
+                and not (self._no_external and loads)
+            ):
                 self._check_integrity(tag, name, attributes)
         if attributes.get("style"):
             self._check_css(self._attribute_line("style"), attributes["style"])

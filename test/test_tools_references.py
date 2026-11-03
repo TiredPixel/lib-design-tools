@@ -365,6 +365,15 @@ class HtmlTest(ReferencesTestCase):
             ],
         )
 
+    def test_integrity_covers_a_stylesheets_href_not_its_imagesrcset(self) -> None:
+        self.assertEqual(
+            self.html_problems(
+                '<link rel="stylesheet" href="a.css" imagesrcset="https://cdn/x.png">',
+                require_integrity=True,
+            ),
+            [],
+        )
+
     def test_local_script_needs_no_integrity(self) -> None:
         self.assertEqual(
             self.html_problems(
