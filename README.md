@@ -13,13 +13,15 @@ Working on this repository needs:
 
 ## Installation
 
-Clone the repository with its submodules, and copy `.env.example` to `.env`, which sets local options for Compose. Set `DC_BIND_USER=0:0` in `.env` where Docker is rootless or the host user's uid is not 1000, so that `make format` can write to the tree:
+Clone the repository with its submodules, and copy `.env.example` to `.env`, which sets local options for Compose:
 
 ```sh
 git clone --recurse-submodules https://github.com/TiredPixel/lib-design-tools.git
 cd lib-design-tools
 cp .env.example .env
 ```
+
+Set `DC_BIND_USER=0:0` in `.env` where Docker is rootless or the host user's uid is not 1000, so that `make format` can write to the tree.
 
 ## Tools
 
@@ -49,7 +51,9 @@ Each part below is taken on its own. A tool needs nothing here outside `tools/` 
 
 ### The image
 
-A repository builds it, as *Building* describes, through a `Dockerfile` that links to this one:
+The image builds two stages. `dev` is the formatting, linting and test toolchain, headless Chromium included, running as the unprivileged user `x`; it copies nothing in, so a repository builds it through its symlinked `Dockerfile` and runs it on its own tree. `test` adds a copy of the repository's tree to it.
+
+A repository builds it through a `Dockerfile` that links to this one:
 
 ```sh
 ln -s lib/design-tools/Dockerfile Dockerfile
@@ -74,6 +78,8 @@ This repository's `docker-compose.yml` holds the `design`, `design_test` and `pr
 ln -s lib/design-tools/docker-compose.yml docker-compose.yml
 ```
 
+The `design` and `design_test` services sit under the `test` profile, which `make build`, `make format`, `make lint` and `make test` pass, and the `preview` service under the `preview` profile, which `make preview` selects, so a bare `docker compose up` starts no service. The `design` service runs `bin/format` from `dev` on the tree mounted read-write, since its rewrites must reach it, and the `preview` service `bin/preview` on the tree mounted read-only. The `design_test` service runs the gates from `test` on its own copy, with no mount and no network.
+
 A repository whose YAML pass would cover `docker-compose.yml` leaves the link out of `yaml_files`, since `bin/format` would rewrite this repository's file through it.
 
 The test stage copies the whole tree, so the repository's `.dockerignore` keeps `.git`, `.env` and anything local out of it, and must not exclude the submodule. Excluding every top-level dot path, `/.*`, and letting the repository's own dot files back in by name, such as `!/.github`, keeps a per-user directory such as `.claude` out without naming it.
@@ -97,13 +103,15 @@ upgrade-pre:
 make test TESTS='test/<file>.py'
 ```
 
+`PYTEST_XDIST_AUTO_NUM_WORKERS` in `.env` sets the worker count for pytest-xdist's `-n auto`, where the repository's pytest configuration uses it.
+
 `make lint` runs the lint alone:
 
 ```sh
 make lint
 ```
 
-`PYTEST_XDIST_AUTO_NUM_WORKERS` in `.env` sets the worker count for pytest-xdist's `-n auto`, where the repository's pytest configuration uses it.
+*Formatting* gives `make format`, and *Previewing* gives `make preview`.
 
 ### Settings
 
@@ -179,15 +187,13 @@ docker compose port preview 8080
 
 ## Testing
 
-`make test` runs this repository's lint, then its tests, in the `design_test` container (*Building*). The lint fails where anything is unformatted; `make format` (*Formatting*) fixes it.
+`make test` runs this repository's lint, then its tests, in the `design_test` container (*The services*). The lint fails where anything is unformatted; `make format` (*Formatting*) fixes it.
 
 ```sh
 make test
 ```
 
-The tests run under pytest, side by side on one worker for each CPU the container may use, unless `.env` sets the worker count (*The make targets*). A test that skips fails the run: the image carries everything the tests look for, so a skip means something is missing.
-
-*The make targets* gives how to name tests and run the lint alone.
+The tests run under pytest, side by side on one worker for each CPU the container may use, unless `.env` sets the worker count (*The make targets*). A test that skips fails the run: the image carries everything the tests look for, so a skip means something is missing. *The make targets* gives how to name tests and run the lint alone.
 
 ## Formatting
 
@@ -199,11 +205,7 @@ make format
 
 ## Building
 
-The image builds two stages. `dev` is the formatting, linting and test toolchain, headless Chromium included, running as the unprivileged user `x`; it copies nothing in, so a repository builds it through its symlinked `Dockerfile` and runs it on its own tree. `test` adds a copy of the repository's tree to it.
-
-The `design` and `design_test` services sit under the `test` profile, which `make build`, `make format`, `make lint` and `make test` pass, and the `preview` service under the `preview` profile, which `make preview` selects, so a bare `docker compose up` starts no service. The `design` service runs `bin/format` from `dev` on the tree mounted read-write, since its rewrites must reach it, and the `preview` service `bin/preview` on the tree mounted read-only. The `design_test` service runs the gates from `test` on its own copy, with no mount and no network.
-
-`make build` builds both stages:
+`make build` builds both stages (*The image*):
 
 ```sh
 make build
@@ -211,7 +213,7 @@ make build
 
 ## Upgrading
 
-Base images are pinned by digest, and tools from outside Debian's repositories by `ARG`. `make upgrade` moves `lib/shell-common` to its latest commit and runs its `docker/upgrade` to re-pin each pin the `Dockerfile` names on a `FROMFREEZE` or `ARGFREEZE` line, then builds and tests, so a bump that breaks the repository shows before it is committed. `docker/upgrade` runs on the host, so `make upgrade` needs `curl` and `jq` there:
+Base images are pinned by digest, and tools from outside Debian's repositories by `ARG`. `make upgrade` moves `lib/shell-common` to its latest commit and runs its `docker/upgrade` to re-pin each pin the `Dockerfile` names on a `FROMFREEZE` or `ARGFREEZE` line, then builds and tests, as *The make targets* describes. `docker/upgrade` runs on the host, so `make upgrade` needs `curl` and `jq` there:
 
 ```sh
 make upgrade
