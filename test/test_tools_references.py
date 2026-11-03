@@ -176,7 +176,18 @@ class HtmlTest(ReferencesTestCase):
     def test_directory_needs_index(self) -> None:
         self.assertEqual(
             self.html_problems('<a href="empty/">e</a>'),
-            [(1, "empty/ is a directory with no index.html")],
+            [(1, "empty/ is a directory with no index.html or index.htm")],
+        )
+
+    def test_a_directory_holding_only_index_htm_resolves(self) -> None:
+        self.write("site/htm/index.htm", "")
+        self.assertEqual(self.html_problems('<a href="htm/">h</a>'), [])
+
+    def test_a_directory_holding_neither_index_page_fails(self) -> None:
+        self.write("site/other/page.html", "")
+        self.assertEqual(
+            self.html_problems('<a href="other/">o</a>'),
+            [(1, "other/ is a directory with no index.html or index.htm")],
         )
 
     def test_outside_root(self) -> None:
@@ -354,6 +365,42 @@ class HtmlTest(ReferencesTestCase):
             ],
         )
 
+    def test_require_integrity_checks_preloaded_stylesheets_and_scripts(self) -> None:
+        markup = (
+            '<link rel="modulepreload" href="https://cdn/a.js">\n'
+            '<link rel="preload" as="script" href="https://cdn/b.js">\n'
+            '<link rel="Preload" as="STYLE" href="https://cdn/c.css">\n'
+            f'<link rel="modulepreload" href="https://cdn/d.js" {SRI}>\n'
+            f'<link rel="preload" as="script" href="https://cdn/e.js" {SRI}>\n'
+            f'<link rel="preload" as="style" href="https://cdn/f.css" {SRI}>\n'
+            '<link rel="preload" as="image" href="https://cdn/g.png">\n'
+            '<link rel="preload" as="font" href="https://cdn/h.woff2">\n'
+            '<link rel="preload" href="https://cdn/i.js">\n'
+            '<link rel="modulepreload" href="/top.js">\n'
+            '<link rel="preload" as="style" href="a.css">\n'
+            '<link rel="modulepreload" as="image" href="https://cdn/j.png">\n'
+            '<link rel="modulepreload" as="Worker" href="https://cdn/k.js">\n'
+        )
+        lacks = "lacks integrity and crossorigin"
+        self.assertEqual(
+            self.html_problems(markup, require_integrity=True),
+            [
+                (1, f"external script https://cdn/a.js {lacks}"),
+                (2, f"external script https://cdn/b.js {lacks}"),
+                (3, f"external stylesheet https://cdn/c.css {lacks}"),
+                (13, f"external script https://cdn/k.js {lacks}"),
+            ],
+        )
+
+    def test_integrity_covers_a_stylesheets_href_not_its_imagesrcset(self) -> None:
+        self.assertEqual(
+            self.html_problems(
+                '<link rel="stylesheet" href="a.css" imagesrcset="https://cdn/x.png">',
+                require_integrity=True,
+            ),
+            [],
+        )
+
     def test_local_script_needs_no_integrity(self) -> None:
         self.assertEqual(
             self.html_problems(
@@ -377,6 +424,8 @@ class HtmlTest(ReferencesTestCase):
             '<img src="img/x.png"><img src="gone.png">\n'
             '<video src="https://cdn/v.mp4"></video>\n'
             '<img srcset="img/x.png 1x, https://cdn/x2.png 2x">\n'
+            '<link rel="modulepreload" href="https://cdn/m.js">\n'
+            '<link rel="preload" as="style" href="https://cdn/p.css">\n'
         )
         refused = "which --no-external refuses"
         self.assertEqual(
@@ -392,6 +441,8 @@ class HtmlTest(ReferencesTestCase):
                 (11, "gone.png does not exist"),
                 (12, f"external https://cdn/v.mp4, {refused}"),
                 (13, f"external https://cdn/x2.png, {refused}"),
+                (14, f"external https://cdn/m.js, {refused}"),
+                (15, f"external https://cdn/p.css, {refused}"),
             ],
         )
         # A load refused outright is not reported again for lacking integrity.
@@ -768,6 +819,17 @@ class UnresolvedTest(ReferencesTestCase):
             "--unresolved /site/dir/ resolves, so needs no exemption\n"
             "--unresolved /site/empty matches no reference\n"
             "checked 1 file(s): 4 problem(s)\n",
+        )
+
+    def test_an_exempt_directory_holding_only_index_htm_is_stale(self) -> None:
+        self.write("site/htm/index.htm", "")
+        page = self.write("site/p.html", '<a href="/site/htm/">a</a>\n')
+        status, output = self.run_exempt(["/site/htm/"], page)
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            output,
+            "--unresolved /site/htm/ resolves, so needs no exemption\n"
+            "checked 1 file(s): 1 problem(s)\n",
         )
 
     def test_an_unreadable_file_leaves_only_resolving_exemptions_stale(

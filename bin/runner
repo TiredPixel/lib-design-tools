@@ -36,23 +36,27 @@ function defines {
 # named by $2. The function runs as a background job into a file and its status
 # is checked through wait: bash can lose a process substitution's status, and
 # under ||, errexit would be off inside the function, so a failure before its
-# last command would pass unseen. An empty result fails too, unless $3 is
-# "may-be-empty": a set of files that is defined and names nothing is a mistake,
-# never a clean pass.
+# last command would pass unseen. The file is removed once it is open for both,
+# so no later exit, by a signal included, leaves it behind. An empty result
+# fails too, unless $3 is "may-be-empty": a set of files that is defined and
+# names nothing is a mistake, never a clean pass.
 function read_set {
     local -n read_set_into=$2
-    local read_set_out read_set_status
+    local read_set_out read_set_write read_set_read read_set_status
 
     read_set_out=$(mktemp)
-    "$1" >"$read_set_out" &
+    exec {read_set_write}>"$read_set_out"
+    exec {read_set_read}<"$read_set_out"
+    rm -- "$read_set_out"
+    "$1" >&"$read_set_write" &
     wait $! || {
         read_set_status=$?
-        rm -- "$read_set_out"
         echo "bin/settings: $1 failed ($read_set_status)" >&2
         exit 1
     }
-    mapfile -t -d '' read_set_into <"$read_set_out"
-    rm -- "$read_set_out"
+    exec {read_set_write}>&-
+    mapfile -t -d '' read_set_into <&"$read_set_read"
+    exec {read_set_read}<&-
     if [ ${#read_set_into[@]} -eq 0 ] && [ "${3:-}" != may-be-empty ]; then
         echo "bin/settings: $1 names nothing" >&2
         exit 1

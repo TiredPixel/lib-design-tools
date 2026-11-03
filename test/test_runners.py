@@ -5,7 +5,9 @@ They run from the root of a fabricated repository whose bin/ links to them.
 
 import os
 import pathlib
+import signal
 import subprocess
+import tempfile
 import textwrap
 import time
 import urllib.error
@@ -193,6 +195,48 @@ class PassSelectionTest(Repository):
                 )
 
 
+class SetFileTest(Repository):
+    """read_set's file is gone from TMPDIR before the settings function runs.
+
+    The JSON lint pass reads the set, and neither jq nor diff writes to TMPDIR.
+    """
+
+    def setUp(self):
+        super().setUp()
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.tmp = pathlib.Path(directory.name)
+        self.write("a.json", '{\n  "a": 1\n}\n')
+
+    def run_lint(self):
+        return self.run_bin("lint", env={"TMPDIR": str(self.tmp)})
+
+    def test_a_signal_leaves_no_file_behind(self):
+        # $$ in the background job is still the runner's process ID, so the runner is
+        # killed while it waits on the job, once the set is written.
+        self.settings("function json_files { printf '%s\\0' a.json; kill -TERM $$; }\n")
+        result = self.run_lint()
+        self.assertEqual(
+            result.returncode, -signal.SIGTERM, result.stdout + result.stderr
+        )
+        self.assertEqual(list(self.tmp.iterdir()), [])
+
+    def test_the_file_is_gone_while_the_function_runs(self):
+        self.settings(
+            "function json_files {\n"
+            '    if [ -n "$(ls -A -- "$TMPDIR")" ]; then\n'
+            '        echo "TMPDIR is not empty" >&2\n'
+            "        return 1\n"
+            "    fi\n"
+            "    printf '%s\\0' a.json\n"
+            "}\n"
+        )
+        result = self.run_lint()
+        self.assertPasses(result)
+        self.assertEqual(self.sections(result), ["LINT JSON"])
+        self.assertEqual(list(self.tmp.iterdir()), [])
+
+
 class FormatThenLintTest(Repository):
     """Each writing pass: lint fails, format fixes the file, and lint then passes."""
 
@@ -332,6 +376,97 @@ class FormatThenLintTest(Repository):
         self.assertPasses(self.run_bin("lint"))
         self.write("p.yml", 'a: "#FFFFFF"\n')
         self.assertFails(self.run_bin("lint"), "palette files are stale.")
+
+
+class FormatCarriesOnTest(Repository):
+    """A failing pass fails the format run, and every later pass still runs."""
+
+    def assertText(self, name, text):
+        self.assertEqual((self.root / name).read_text(encoding="utf-8"), text)
+
+    def test_an_unfixable_python_finding_is_still_formatted(self):
+        self.settings(
+            "function python_files { printf '%s\\0' a.py; }\n"
+            "function yaml_files { printf '%s\\0' a.yml; }\n"
+        )
+        self.write("a.py", "x = ( undefined )\n")
+        self.write("a.yml", UNSORTED_YAML)
+        self.assertFails(self.run_bin("format"), "F821")
+        self.assertText("a.py", "x = undefined\n")
+        self.assertText("a.yml", SORTED_YAML)
+
+    def test_a_python_syntax_error_leaves_the_later_passes_to_run(self):
+        self.settings(
+            "function python_files { printf '%s\\0' a.py; }\n"
+            "function yaml_files { printf '%s\\0' a.yml; }\n"
+        )
+        self.write("a.py", "x = (\n")
+        self.write("a.yml", UNSORTED_YAML)
+        self.assertFails(self.run_bin("format"), "invalid-syntax")
+        self.assertText("a.py", "x = (\n")
+        self.assertText("a.yml", SORTED_YAML)
+
+    def test_an_unfixable_javascript_finding_leaves_the_later_passes_to_run(self):
+        self.settings(
+            "function js_files { printf '%s\\0' a.js; }\n"
+            "function toml_files { printf '%s\\0' a.toml; }\n"
+        )
+        self.write("a.js", "foo()\n")
+        self.write("a.toml", "a=1\n")
+        self.assertFails(self.run_bin("format"), "no-undef")
+        self.assertText("a.js", "foo();\n")
+        self.assertText("a.toml", "a = 1\n")
+
+    def test_each_pass_s_failure_leaves_the_last_pass_to_run(self):
+        # Each set names a file its tool cannot parse, or one that is missing, where
+        # before is None. after is what the file holds once the run is over.
+        cases = (
+            (
+                "palette_args",
+                "gone.yml --prefix x --json p.json --css p.css",
+                None,
+                None,
+                "PALETTE",
+            ),
+            ("shell_files", "a.sh", "f() {\n", "f() {\n", "SHELL"),
+            ("python_files", "a.py", "x = (\n", "x = (\n", "PYTHON"),
+            ("yaml_files", "a.yml", "a: [\n", "a: [\n", "YAML"),
+            ("json_files", "a.json", '{"a": }\n', '{"a": }\n', "JSON"),
+            ("js_files", "a.js", "foo()\n", "foo();\n", "JAVASCRIPT"),
+            ("css_files", "gone.css", None, None, "CSS AND HTML"),
+            ("md_files", "gone.md", None, None, "MARKDOWN"),
+            ("toml_files", "a.toml", "a =\n", "a =\n", "TOML"),
+        )
+        for name, args, before, after, section in cases:
+            with self.subTest(name=name):
+                self.settings(
+                    f"function {name} {{ printf '%s\\0' {args}; }}\n"
+                    "function docker_files { printf '%s\\0' Dockerfile; }\n"
+                )
+                if before is not None:
+                    self.write(args, before)
+                self.write("Dockerfile", UNFORMATTED_DOCKERFILE)
+                result = self.run_bin("format")
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(
+                    self.sections(result), [f"FORMAT {section}", "FORMAT DOCKER"]
+                )
+                if after is not None:
+                    self.assertText(args, after)
+                self.assertText("Dockerfile", FORMATTED_DOCKERFILE)
+
+    def test_a_failing_last_pass_fails_the_run(self):
+        # The other tests end on a Docker pass that succeeds, so only this one fails
+        # the last pass, whose recorded failure no later pass can show.
+        self.settings(
+            "function toml_files { printf '%s\\0' a.toml; }\n"
+            "function docker_files { printf '%s\\0' gone; }\n"
+        )
+        self.write("a.toml", "a=1\n")
+        result = self.run_bin("format")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.sections(result), ["FORMAT TOML", "FORMAT DOCKER"])
+        self.assertText("a.toml", "a = 1\n")
 
 
 class CheckingPassTest(Repository):

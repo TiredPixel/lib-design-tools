@@ -435,24 +435,28 @@ def _end_group(process: subprocess.Popen, chromium: str) -> None:
 
     Chromium's renderer, GPU and crashpad processes outlive the browser process, and go
     on writing to the profile, whose removal would then fail. Once the leader is reaped,
-    the group's other members are reaped by whatever adopts them.
+    the group's other members are reaped by whatever adopts them. Waiting for the leader
+    and then for the group to be gone share one bound of ``GROUP_EXIT_TIMEOUT_S``.
     """
     with contextlib.suppress(ProcessLookupError):
         os.killpg(process.pid, signal.SIGKILL)
     process.stdout.close()
     process.stderr.close()
-    process.wait()
+    survived = (
+        f"processes {chromium} started survived SIGKILL for {GROUP_EXIT_TIMEOUT_S}s"
+    )
     deadline = time.monotonic() + GROUP_EXIT_TIMEOUT_S
+    try:
+        process.wait(timeout=deadline - time.monotonic())
+    except subprocess.TimeoutExpired as error:
+        raise RenderError(survived) from error
     while True:
         try:
             os.killpg(process.pid, 0)
         except ProcessLookupError:
             return
         if time.monotonic() > deadline:
-            raise RenderError(
-                f"processes {chromium} started survived SIGKILL for "
-                f"{GROUP_EXIT_TIMEOUT_S}s"
-            )
+            raise RenderError(survived)
         time.sleep(0.05)
 
 

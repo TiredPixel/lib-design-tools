@@ -9,8 +9,8 @@ refresh. CSS, whether a stylesheet, a ``<style>`` element or a ``style`` attribu
 read for ``url(...)``, ``@import`` and each string in ``image-set()``.
 A relative reference resolves against the referencing file and a ``/``-rooted one
 against ``--root``; neither may leave ``--root``, since nothing outside it is served. A
-reference to a directory needs an ``index.html`` in it, which is what a static server
-would answer with.
+directory resolves only where it holds an index page, so the page loads rather than a
+listing.
 
 With ``--require-integrity``, every external stylesheet and script must also carry
 ``integrity`` and ``crossorigin``, so a changed or compromised CDN file fails to load
@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import html.parser
+import http.server
 import pathlib
 import posixpath
 import re
@@ -71,6 +72,26 @@ REFERENCE_ATTRIBUTES = {
 }
 
 SRCSET_ATTRIBUTES = frozenset({"imagesrcset", "srcset"})
+
+# The attribute a stylesheet or script loads from, which is what integrity covers.
+INTEGRITY_ATTRIBUTES = {"link": "href", "script": "src"}
+
+# The script-like destinations of the HTML standard, and none, which a modulepreload
+# reads as script.
+MODULEPRELOAD_SCRIPT_DESTINATIONS = frozenset(
+    {
+        "",
+        "audioworklet",
+        "paintworklet",
+        "script",
+        "serviceworker",
+        "sharedworker",
+        "worker",
+    }
+)
+
+# The pages a static server answers a directory with.
+_INDEX_PAGES = http.server.SimpleHTTPRequestHandler.index_pages
 
 # Schemes whose target is never fetched from a server: the page itself, an object the
 # page holds, inline data, script, or a handler outside the browser.
@@ -347,8 +368,8 @@ def _resolve_key(path: str, key: str, root: pathlib.Path) -> str | None:
     if not target.is_relative_to(root.resolve()):
         return f"{path} resolves outside --root"
     if target.is_dir():
-        if not (target / "index.html").is_file():
-            return f"{path} is a directory with no index.html"
+        if not any((target / name).is_file() for name in _INDEX_PAGES):
+            return f"{path} is a directory with no {' or '.join(_INDEX_PAGES)}"
         return None
     if not target.is_file():
         return f"{path} does not exist"
@@ -463,13 +484,23 @@ class _HtmlReferences(html.parser.HTMLParser):
     ) -> None:
         if tag == "link":
             relations = _relations(attributes)
-            if "stylesheet" not in relations:
+            # Only a script or a stylesheet runs or restyles the page, so a preloaded
+            # image or font is not held to integrity. A modulepreload fetches nothing
+            # unless its destination is script-like.
+            destination = (attributes.get("as") or "").lower()
+            if "stylesheet" in relations or (
+                "preload" in relations and destination == "style"
+            ):
+                what = "stylesheet"
+            elif (
+                "modulepreload" in relations
+                and destination in MODULEPRELOAD_SCRIPT_DESTINATIONS
+            ) or ("preload" in relations and destination == "script"):
+                what = "script"
+            else:
                 return
-            what = "stylesheet"
-        elif tag == "script":
-            what = "script"
         else:
-            return
+            what = "script"
         reference = attributes[name]
         if classify(reference)[0] != "external":
             return
@@ -515,7 +546,11 @@ class _HtmlReferences(html.parser.HTMLParser):
             for reference in references:
                 self._check(line, reference, loads)
             # Refused outright under --no-external, so not reported twice.
-            if self._require_integrity and not (self._no_external and loads):
+            if (
+                self._require_integrity
+                and name == INTEGRITY_ATTRIBUTES.get(tag)
+                and not (self._no_external and loads)
+            ):
                 self._check_integrity(tag, name, attributes)
         if attributes.get("style"):
             self._check_css(self._attribute_line("style"), attributes["style"])
