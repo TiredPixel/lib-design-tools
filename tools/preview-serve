@@ -2,9 +2,9 @@
 """Serve a tree as it is on disk, for previewing it while it is edited.
 
 Every response carries ``Cache-Control: no-store``, so a reload always shows the file as
-saved. A directory without an ``index.html`` is listed. ``/`` is redirected to
-``--start``, the page a preview opens on. A path ``design_render.refused`` names, such
-as one through ``.git``, is answered 404. ``.webmanifest`` is served as
+saved. A directory without an ``index.html`` or ``index.htm`` is listed. ``/`` is
+redirected to ``--start``, the page a preview opens on. A path ``design_render.refused``
+names, such as one through ``.git``, is answered 404. ``.webmanifest`` is served as
 ``application/manifest+json``, which a browser needs to read a web app manifest rather
 than download it.
 

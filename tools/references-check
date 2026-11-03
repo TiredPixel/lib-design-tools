@@ -9,8 +9,8 @@ refresh. CSS, whether a stylesheet, a ``<style>`` element or a ``style`` attribu
 read for ``url(...)``, ``@import`` and each string in ``image-set()``.
 A relative reference resolves against the referencing file and a ``/``-rooted one
 against ``--root``; neither may leave ``--root``, since nothing outside it is served. A
-reference to a directory needs an ``index.html`` in it, which is what a static server
-would answer with.
+directory resolves only where it holds an index page, so the page loads rather than a
+listing.
 
 With ``--require-integrity``, every external stylesheet and script must also carry
 ``integrity`` and ``crossorigin``, so a changed or compromised CDN file fails to load
@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import html.parser
+import http.server
 import pathlib
 import posixpath
 import re
@@ -71,6 +72,9 @@ REFERENCE_ATTRIBUTES = {
 }
 
 SRCSET_ATTRIBUTES = frozenset({"imagesrcset", "srcset"})
+
+# The pages a static server answers a directory with.
+_INDEX_PAGES = http.server.SimpleHTTPRequestHandler.index_pages
 
 # Schemes whose target is never fetched from a server: the page itself, an object the
 # page holds, inline data, script, or a handler outside the browser.
@@ -347,8 +351,8 @@ def _resolve_key(path: str, key: str, root: pathlib.Path) -> str | None:
     if not target.is_relative_to(root.resolve()):
         return f"{path} resolves outside --root"
     if target.is_dir():
-        if not (target / "index.html").is_file():
-            return f"{path} is a directory with no index.html"
+        if not any((target / name).is_file() for name in _INDEX_PAGES):
+            return f"{path} is a directory with no {' or '.join(_INDEX_PAGES)}"
         return None
     if not target.is_file():
         return f"{path} does not exist"

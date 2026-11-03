@@ -176,7 +176,18 @@ class HtmlTest(ReferencesTestCase):
     def test_directory_needs_index(self) -> None:
         self.assertEqual(
             self.html_problems('<a href="empty/">e</a>'),
-            [(1, "empty/ is a directory with no index.html")],
+            [(1, "empty/ is a directory with no index.html or index.htm")],
+        )
+
+    def test_a_directory_holding_only_index_htm_resolves(self) -> None:
+        self.write("site/htm/index.htm", "")
+        self.assertEqual(self.html_problems('<a href="htm/">h</a>'), [])
+
+    def test_a_directory_holding_neither_index_page_fails(self) -> None:
+        self.write("site/other/page.html", "")
+        self.assertEqual(
+            self.html_problems('<a href="other/">o</a>'),
+            [(1, "other/ is a directory with no index.html or index.htm")],
         )
 
     def test_outside_root(self) -> None:
@@ -768,6 +779,17 @@ class UnresolvedTest(ReferencesTestCase):
             "--unresolved /site/dir/ resolves, so needs no exemption\n"
             "--unresolved /site/empty matches no reference\n"
             "checked 1 file(s): 4 problem(s)\n",
+        )
+
+    def test_an_exempt_directory_holding_only_index_htm_is_stale(self) -> None:
+        self.write("site/htm/index.htm", "")
+        page = self.write("site/p.html", '<a href="/site/htm/">a</a>\n')
+        status, output = self.run_exempt(["/site/htm/"], page)
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            output,
+            "--unresolved /site/htm/ resolves, so needs no exemption\n"
+            "checked 1 file(s): 1 problem(s)\n",
         )
 
     def test_an_unreadable_file_leaves_only_resolving_exemptions_stale(
