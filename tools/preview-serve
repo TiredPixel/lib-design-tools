@@ -89,6 +89,18 @@ def make_server(
     return http.server.ThreadingHTTPServer((address, port), handler)
 
 
+def resolved_path(start: str) -> str:
+    """The path a browser requests for a Location of ``start``.
+
+    A browser reads ``\\`` as ``/`` and ``%2e`` as ``.``, then removes dot segments, so
+    ``/a/..`` and ``/%2e/`` both reach ``/``.
+    """
+    browser_form = start.replace("\\", "/").replace("%2e", ".").replace("%2E", ".")
+    return urllib.parse.urlsplit(
+        urllib.parse.urljoin("http://host/", browser_form)
+    ).path
+
+
 def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="preview-serve",
@@ -111,6 +123,22 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
         parser.error(f"--root {arguments.root} is not a directory")
     if not arguments.start.startswith("/"):
         parser.error(f"--start {arguments.start} is not a /-rooted path")
+    # send_header checks nothing, so a control character would corrupt the header, and
+    # one outside ASCII fails every request when the header is encoded.
+    if not (arguments.start.isascii() and arguments.start.isprintable()):
+        parser.error(
+            f"--start {arguments.start!r} holds a character outside printable ASCII;"
+            " percent-encode it"
+        )
+    # A browser reads a Location opening with two of / or \ as another host's, so /
+    # would redirect off the server.
+    leading = arguments.start[:2]
+    if len(leading) == 2 and all(character in "/\\" for character in leading):
+        parser.error(f"--start {arguments.start} names another host")
+    if resolved_path(arguments.start) == "/":
+        parser.error(
+            f"--start {arguments.start} resolves to /, which would redirect to itself"
+        )
     if not 0 <= arguments.port <= 65535:
         parser.error(f"--port {arguments.port} is not a port")
     return arguments

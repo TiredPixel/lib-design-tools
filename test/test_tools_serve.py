@@ -167,7 +167,7 @@ class ArgumentsTest(unittest.TestCase):
     def test_usage_errors(self) -> None:
         self.assertIn(
             "is not a directory",
-            self.run_usage_error("--root", "/no/such", "--start", "/"),
+            self.run_usage_error("--root", "/no/such", "--start", "/p/"),
         )
         self.assertIn(
             "is not a /-rooted path",
@@ -176,10 +176,77 @@ class ArgumentsTest(unittest.TestCase):
         self.assertIn(
             "is not a port",
             self.run_usage_error(
-                "--root", self.root, "--start", "/", "--port", "70000"
+                "--root", self.root, "--start", "/p/", "--port", "70000"
             ),
         )
-        self.assertIn("required", self.run_usage_error("--start", "/"))
+        self.assertIn("required", self.run_usage_error("--start", "/p/"))
+
+    def test_start_on_another_host_is_a_usage_error(self) -> None:
+        cases = {
+            "//example.com/": "names another host",
+            "/\\example.com/": "names another host",
+            "\\/example.com/": "is not a /-rooted path",
+            "///example.com/": "names another host",
+        }
+        for start, expected in cases.items():
+            with self.subTest(start=start):
+                self.assertIn(
+                    expected,
+                    self.run_usage_error("--root", self.root, "--start", start),
+                )
+
+    def test_start_outside_printable_ascii_is_a_usage_error(self) -> None:
+        for start in (
+            "/\t/example.com/",
+            "/p/\r\nSet-Cookie: x=1",
+            "/p/\n",
+            "/p/\x00",
+            "/p/\x7f",
+            "/café/",
+        ):
+            with self.subTest(start=start):
+                self.assertIn(
+                    "percent-encode it",
+                    self.run_usage_error("--root", self.root, "--start", start),
+                )
+
+    def test_start_on_root_itself_is_a_usage_error(self) -> None:
+        for start in (
+            "/",
+            "/?x",
+            "/#a",
+            "/.",
+            "/./",
+            "/..",
+            "/../?x",
+            "/a/..",
+            "/a/../",
+            "/p\\..\\",
+            "/%2e/",
+            "/%2E",
+            "/.%2e/#a",
+        ):
+            with self.subTest(start=start):
+                self.assertIn(
+                    "which would redirect to itself",
+                    self.run_usage_error("--root", self.root, "--start", start),
+                )
+
+    def test_start_on_this_host_is_accepted(self) -> None:
+        for start in (
+            "/p/",
+            "/p//q/",
+            "/p/?x=1#a",
+            "/caf%C3%A9/",
+            "/a/../p/",
+            "/%2e/p/",
+            "/p?x=/../",
+        ):
+            with self.subTest(start=start):
+                arguments = preview_serve.parse_arguments(
+                    ["--root", self.root, "--start", start]
+                )
+                self.assertEqual(arguments.start, start)
 
     def test_main_serves_until_interrupted(self) -> None:
         server = mock.Mock(server_address=("0.0.0.0", 1234))
