@@ -1,5 +1,7 @@
-"""bin/format, bin/lint, bin/test and bin/preview, run as another repository runs them:
-from the root of a fabricated repository whose bin/ links to them."""
+"""bin/format, bin/lint, bin/test and bin/preview, run as another repository runs them.
+
+They run from the root of a fabricated repository whose bin/ links to them.
+"""
 
 import os
 import pathlib
@@ -192,8 +194,7 @@ class PassSelectionTest(Repository):
 
 
 class FormatThenLintTest(Repository):
-    """Each writing pass: lint fails on the unformatted file, format fixes it, and lint
-    then passes."""
+    """Each writing pass: lint fails, format fixes the file, and lint then passes."""
 
     def assertFormatFixes(self, name, before, after, section, count=1):
         self.write(name, before)

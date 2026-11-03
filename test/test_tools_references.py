@@ -684,7 +684,8 @@ class UnresolvedTest(ReferencesTestCase):
     def test_a_link_is_exempt_with_a_query_or_fragment(self) -> None:
         page = self.write(
             "site/p.html",
-            '<a href="/es/">a</a>\n<a href="/es?x=1#f">b</a>\n<a href="/es#top">c</a>\n',
+            '<a href="/es/">a</a>\n<a href="/es?x=1#f">b</a>\n'
+            '<a href="/es#top">c</a>\n',
         )
         self.assertEqual(
             self.run_exempt(["/es"], page), (0, "checked 1 file(s): 0 problem(s)\n")

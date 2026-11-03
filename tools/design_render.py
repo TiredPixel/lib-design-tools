@@ -285,8 +285,7 @@ def find_marked(dom: str, class_name: str) -> list[tuple[str, int]]:
 
 
 def refused(directory: str, url: str, path: str) -> bool:
-    """Whether a request for ``url``, which a server of ``directory`` maps to ``path``,
-    is refused.
+    """Whether a server of ``directory`` refuses ``url``, which it maps to ``path``.
 
     The tree served is usually a whole repository, so a segment starting ``.``, as
     ``.git`` and ``.env`` have, is refused in the URL and in the real path, symlinks
@@ -432,8 +431,7 @@ def _chromium(
 
 
 def _end_group(process: subprocess.Popen, chromium: str) -> None:
-    """Kill what is left of the process group ``process`` leads, and wait until it is
-    gone.
+    """Kill the rest of the process group ``process`` leads, and wait until it is gone.
 
     Chromium's renderer, GPU and crashpad processes outlive the browser process, and go
     on writing to the profile, whose removal would then fail. Once the leader is reaped,
@@ -484,8 +482,10 @@ def print_pdf(
     budget_ms: int = DEFAULT_BUDGET_MS,
     timeout_s: float = DEFAULT_TIMEOUT_S,
 ) -> bytes:
-    """Print ``url`` as headless Chromium's print does, without its header and footer,
-    and return the PDF."""
+    """Print ``url`` as headless Chromium's print does, and return the PDF.
+
+    The header and footer Chromium prints by default are left out.
+    """
     with tempfile.TemporaryDirectory(prefix="design-render-") as profile:
         out = pathlib.Path(profile) / "print.pdf"
         _chromium(
@@ -502,8 +502,10 @@ def print_pdf(
 
 
 def sheet_count(pdf: bytes) -> int:
-    """The number of pages in a PDF Chromium printed, read from its page objects;
-    Chromium writes them uncompressed."""
+    """The number of pages in a PDF Chromium printed.
+
+    Read from its page objects, which Chromium writes uncompressed.
+    """
     return len(_PDF_PAGE.findall(pdf))
 
 

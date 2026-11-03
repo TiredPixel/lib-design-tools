@@ -1,4 +1,7 @@
 [lint]
-# The performance rules, and RUF100 so an unused suppression fails, on top of
-# ruff's defaults.
-extend-select = ["PERF", "RUF100"]
+# On top of ruff's defaults: the performance rules; RUF100, so an unused
+# suppression fails; D205 and D209, so a docstring keeps PEP 257's one-line
+# summary, with any description after a blank line and the closing quotes on a
+# line of their own; and E501, since the formatter keeps code to the line length
+# but leaves comments and docstrings to run past it.
+extend-select = ["D205", "D209", "E501", "PERF", "RUF100"]

@@ -55,8 +55,10 @@ def contrast(a: str, b: str) -> float:
 
 
 def composite(colour: str, percent: float, ground: str) -> str:
-    """COLOUR at PERCENT opacity over GROUND, mixed in sRGB as browsers do, as #RRGGBB
-    rounded to 8 bits per channel."""
+    """COLOUR at PERCENT opacity over GROUND, as #RRGGBB.
+
+    Mixed in sRGB as browsers do, and rounded to 8 bits per channel.
+    """
     if not 0 <= percent <= 100:
         raise ValueError(f"{percent}% is not an opacity")
     mixed = (
@@ -108,8 +110,10 @@ def hue_gap(a: float, b: float) -> float:
 
 
 def hue_spread(colours: Iterable[str]) -> float:
-    """The widest hue gap between any two of COLOURS; ValueError for fewer than
-    two."""
+    """The widest hue gap between any two of COLOURS.
+
+    ValueError for fewer than two.
+    """
     colours = list(colours)
     if len(colours) < 2:
         raise ValueError("hue_spread needs at least two colours")

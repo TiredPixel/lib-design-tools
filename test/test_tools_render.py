@@ -57,7 +57,9 @@ while not (pathlib.Path(profile) / "Default").is_dir():
     if child.poll() is not None:
         sys.exit(f"profile writer exited {child.returncode} before writing")
     time.sleep(0.01)
-pathlib.Path(sys.argv[0]).with_name("child.pid").write_text(str(child.pid), encoding="utf-8")
+pathlib.Path(sys.argv[0]).with_name("child.pid").write_text(
+    str(child.pid), encoding="utf-8"
+)
 """
 
 
