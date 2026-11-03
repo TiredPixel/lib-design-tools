@@ -52,6 +52,12 @@ class CompositeTest(unittest.TestCase):
         self.assertEqual(design_colour.composite("#123456", 0, "#ABCDEF"), "#ABCDEF")
         self.assertEqual(design_colour.composite("#fff", 25, "#000"), "#404040")
 
+    def test_rounds_a_half_up(self):
+        # 126.5, where rounding to even would give 126.
+        self.assertEqual(design_colour.composite("#FDFDFD", 50, "#000000"), "#7F7F7F")
+        # 162.5, which 14 * 0.01 + 164 * 0.99 in floats puts just below the half.
+        self.assertEqual(design_colour.composite("#0E0E0E", 1, "#A4A4A4"), "#A3A3A3")
+
     def test_refuses_an_opacity_out_of_range(self):
         for percent in (-1, 100.5):
             with (

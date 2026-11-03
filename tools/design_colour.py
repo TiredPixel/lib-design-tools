@@ -57,12 +57,15 @@ def contrast(a: str, b: str) -> float:
 def composite(colour: str, percent: float, ground: str) -> str:
     """COLOUR at PERCENT opacity over GROUND, as #RRGGBB.
 
-    Mixed in sRGB as browsers do, and rounded to 8 bits per channel.
+    Mixed in sRGB, as CSS specifies, and rounded half up to 8 bits per channel. This is
+    the specified value, not a rendered pixel: a browser that quantises the opacity
+    first can draw a channel 1 away. The mix is formed over 100 before dividing, so a
+    whole PERCENT whose mix lands on a half rounds up rather than taking float error.
     """
     if not 0 <= percent <= 100:
         raise ValueError(f"{percent}% is not an opacity")
     mixed = (
-        round(c * percent / 100 + g * (1 - percent / 100))
+        math.floor((c * percent + g * (100 - percent)) / 100 + 0.5)
         for c, g in zip(channels(colour), channels(ground), strict=True)
     )
     return "#" + "".join(f"{c:02X}" for c in mixed)
