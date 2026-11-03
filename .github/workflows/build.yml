@@ -1,4 +1,6 @@
 ---
+# TRACK USES actions/checkout@v7
+# TRACK USES docker/login-action@v4
 concurrency:
   cancel-in-progress: true
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,11 +21,16 @@ jobs:
     steps:
       # No app token: the submodules are public, cloned over HTTPS with no
       # credential.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           submodules: recursive
-      - uses: docker/login-action@v4
+      # Fails while a proposal waits in .github/workflows.new/, so none is left
+      # unapproved.
+      - name: Check no workflow is pending
+        run: |
+          lib/shell-common/github/workflows-pending
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
         with:
           password: ${{ secrets.GITHUB_TOKEN }}
           registry: ghcr.io
@@ -52,11 +59,11 @@ jobs:
       packages: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           submodules: recursive
-      - uses: docker/login-action@v4
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
         with:
           password: ${{ secrets.GITHUB_TOKEN }}
           registry: ghcr.io
