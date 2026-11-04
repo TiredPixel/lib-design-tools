@@ -499,6 +499,18 @@ class CheckingPassTest(Repository):
         self.write("Dockerfile", "FROM debian:13\nWORKDIR /tmp\n")
         self.assertPasses(self.run_bin("lint"))
 
+    def test_dockerfile_locks(self):
+        self.settings("function docker_files { printf '%s\\0' Dockerfile; }\n")
+        # Pinned, so hadolint passes it and the failure is the lock lint's.
+        self.write(
+            "Dockerfile", "FROM debian:13\nRUN npm install --global prettier@3.9.10\n"
+        )
+        self.assertFails(
+            self.run_bin("lint"), "Dockerfile:2: npm install resolves versions itself"
+        )
+        self.write("Dockerfile", "FROM debian:13\nRUN npm ci --prefix /opt/js\n")
+        self.assertPasses(self.run_bin("lint"))
+
     def test_compose(self):
         self.settings("function compose_files { printf '%s\\0' a.yml; }\n")
         self.write("a.yml", "services:\n  a:\n    image: debian\n    bogus: 1\n")

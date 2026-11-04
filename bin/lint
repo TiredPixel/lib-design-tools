@@ -108,6 +108,7 @@ if defines docker_files; then
     echo "checking ${#docker[@]} Docker file(s)" >&2
     dockerfmt "${dockerfmt_args[@]}" --check "${docker[@]}"
     hadolint "${docker[@]}"
+    "$design_tools/lib/shell-common/lint/dockerfile-locks" -- "${docker[@]}"
 fi
 
 if defines compose_files; then

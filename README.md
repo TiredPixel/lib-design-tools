@@ -131,7 +131,7 @@ What `bin/format` rewrites and `bin/lint` checks for drift, each to the tool's o
 - `css_files` and `html_files` – Prettier, under the repository's own Prettier configuration.
 - `md_files` – mdformat, with its GFM and front matter plugins, one paragraph per line.
 - `toml_files` – taplo, under the repository's own taplo configuration.
-- `docker_files` – dockerfmt, ending each file with a newline; `bin/lint` also runs hadolint, under the repository's own hadolint configuration. It never names the link to this repository's `Dockerfile` (*The image*).
+- `docker_files` – dockerfmt, ending each file with a newline; `bin/lint` also runs hadolint, under the repository's own hadolint configuration, and shell-common's `lint/dockerfile-locks`, which fails an install from PyPI or npm that no hashed lock pins. It never names the link to this repository's `Dockerfile` (*The image*).
 
 A tool that fails, on a finding it cannot fix or a file it cannot parse, fails `bin/format`, but only once every later pass has run.
 
