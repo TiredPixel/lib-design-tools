@@ -11,23 +11,39 @@
 # TRACK ARG HADOLINT_SHA256_AMD64 sha256:https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64 https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/checksums.sha256
 # TRACK ARG HADOLINT_SHA256_ARM64 sha256:https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-arm64 https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/checksums.sha256
 # TRACK ARG HADOLINT_VERSION github:hadolint/hadolint
-# TRACK ARG MDFORMAT_FRONTMATTER_VERSION pypi:mdformat-frontmatter
-# TRACK ARG MDFORMAT_GFM_VERSION pypi:mdformat-gfm
-# TRACK ARG MDFORMAT_VERSION pypi:mdformat
-# TRACK ARG PRETTIER_VERSION npm:prettier
-# TRACK ARG RUFF_VERSION pypi:ruff
-# TRACK ARG SEMISTANDARD_VERSION npm:semistandard
-# TRACK ARG SNAZZY_VERSION npm:snazzy
 # TRACK ARG TAPLO_SHA256_AMD64 sha256:https://github.com/tamasfe/taplo/releases/download/${TAPLO_VERSION}/taplo-linux-x86_64.gz
 # TRACK ARG TAPLO_SHA256_ARM64 sha256:https://github.com/tamasfe/taplo/releases/download/${TAPLO_VERSION}/taplo-linux-aarch64.gz
 # TRACK ARG TAPLO_VERSION github:tamasfe/taplo
 # TRACK ARG YQ_SHA256_AMD64 sha256:https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64 https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/checksums-bsd
 # TRACK ARG YQ_SHA256_ARM64 sha256:https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_arm64 https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/checksums-bsd
 # TRACK ARG YQ_VERSION github:mikefarah/yq
+# TRACK LOCK js npm:prettier npm:semistandard npm:snazzy
+# TRACK LOCK mdformat pypi:mdformat pypi:mdformat-gfm pypi:mdformat-frontmatter
+# TRACK LOCK ruff pypi:ruff
 #
-# dev copies nothing in, so a repository taking this one as a submodule builds
-# the same image, through a Dockerfile symlinked to this one, and runs it on its
-# own tree; test adds that tree for the gate.
+# wheels downloads the wheels Dockerfile.lock/mdformat and Dockerfile.lock/ruff
+# name, each checked against its hash, for dev to install offline. dev copies
+# nothing in, reading the locks only through bind mounts, so a repository taking
+# this one as a submodule builds the same image, through a Dockerfile and a
+# Dockerfile.lock symlinked to this one's, and runs it on its own tree; test
+# adds that tree for the gate.
+#===============================================================================
+FROM docker.io/library/debian@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1 AS wheels
+
+SHELL ["/bin/bash", "-Eeuo", "pipefail", "-O", "inherit_errexit", "-O", "failglob", "-c"]
+
+# DL3008: the packages float within the Debian release the base image's digest
+# pins, so the release's updates reach the image on each build.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN --mount=type=bind,source=Dockerfile.lock/mdformat,target=/lock/mdformat \
+    --mount=type=bind,source=Dockerfile.lock/ruff,target=/lock/ruff \
+    python3 -m pip download --disable-pip-version-check --require-hashes \
+    --no-deps --only-binary=:all: -d /wheels \
+    -r /lock/mdformat/requirements.txt -r /lock/ruff/requirements.txt
 #===============================================================================
 FROM docker.io/library/debian@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1 AS dev
 
@@ -96,12 +112,6 @@ RUN case $(dpkg --print-architecture) in \
     && rm /tmp/yq \
     && yq --version \
     && yq --version | grep -qF "version v${YQ_VERSION}"
-
-# Global, as mdformat below, so ruff is on the PATH of x, who runs it.
-ARG RUFF_VERSION=0.17.3
-RUN pipx install --global "ruff==${RUFF_VERSION}" \
-    && ruff --version \
-    && ruff --version | grep -qFx "ruff ${RUFF_VERSION}"
 
 ARG ACTIONLINT_VERSION=1.7.12
 ARG ACTIONLINT_SHA256_AMD64=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
@@ -185,39 +195,48 @@ RUN case $(dpkg --print-architecture) in \
     && taplo --version \
     && taplo --version | grep -qFx "taplo ${TAPLO_VERSION}"
 
-# Global, so mdformat sits outside root's home and on the PATH of x, who runs
-# it.
-ARG MDFORMAT_FRONTMATTER_VERSION=2.2.0
-ARG MDFORMAT_GFM_VERSION=1.0.0
-ARG MDFORMAT_VERSION=1.0.0
-RUN pipx install --global "mdformat==${MDFORMAT_VERSION}" \
-    && pipx inject --global mdformat \
-        "mdformat-frontmatter==${MDFORMAT_FRONTMATTER_VERSION}" \
-        "mdformat-gfm==${MDFORMAT_GFM_VERSION}" \
-    && mdformat --version \
-    && pipx list --global --json \
-    | jq -e \
-        --arg m "${MDFORMAT_VERSION}" \
-        --arg f "${MDFORMAT_FRONTMATTER_VERSION}" \
-        --arg g "${MDFORMAT_GFM_VERSION}" \
-        '.venvs.mdformat.metadata | \
-    .main_package.package_version == $m and \
-    .injected_packages."mdformat-frontmatter".package_version == $f and \
-    .injected_packages."mdformat-gfm".package_version == $g'
+# ruff, and mdformat with its gfm and frontmatter plugins, from pipx outside
+# root's home and on the PATH of x, who runs them. Offline, pip can take only
+# the wheels the wheels stage downloaded, so every version is the lock's. pipx's
+# shared venv is made here, from Debian's bundled pip, since pipx would
+# otherwise fetch pip unpinned to make it, and in the same RUN as every pipx
+# call, since pipx upgrades it from PyPI once its pip is 30 days old. DL3013
+# asks for each version written here, which the locks alone pin.
+# hadolint ignore=DL3013
+RUN --network=none \
+    --mount=type=bind,from=wheels,source=/wheels,target=/wheels \
+    export PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin \
+    && python3 -m venv "$PIPX_HOME/shared" \
+    && pipx install \
+        --pip-args='--disable-pip-version-check --no-index --find-links=/wheels' \
+        ruff \
+    && pipx install \
+        --pip-args='--disable-pip-version-check --no-index --find-links=/wheels' \
+        mdformat \
+    && pipx inject \
+        --pip-args='--disable-pip-version-check --no-index --find-links=/wheels' \
+        mdformat mdformat-gfm mdformat-frontmatter \
+    && "$PIPX_HOME/venvs/ruff/bin/python" -m pip check \
+    && "$PIPX_HOME/venvs/mdformat/bin/python" -m pip check \
+    && ruff --version \
+    && version=$(mdformat --version) \
+    && echo "$version" \
+    && echo "$version" | grep -qF 'mdformat-gfm ' \
+    && echo "$version" | grep -qF 'mdformat_frontmatter '
 
-# Global packages, so nothing npm writes lands in the mounted tree.
-ARG PRETTIER_VERSION=3.9.10
-ARG SEMISTANDARD_VERSION=17.0.0
-ARG SNAZZY_VERSION=9.0.0
-RUN npm install --global \
-    "prettier@${PRETTIER_VERSION}" \
-    "semistandard@${SEMISTANDARD_VERSION}" \
-    "snazzy@${SNAZZY_VERSION}" \
-    && npm ls --global --depth=0 >/tmp/npm-ls \
-    && grep -qF "prettier@${PRETTIER_VERSION}" /tmp/npm-ls \
-    && grep -qF "semistandard@${SEMISTANDARD_VERSION}" /tmp/npm-ls \
-    && grep -qF "snazzy@${SNAZZY_VERSION}" /tmp/npm-ls \
-    && rm /tmp/npm-ls
+# npm ci, the one npm command that installs a lock as given, outside the
+# mounted tree. The mount is read-only, so the lock files are linked into a
+# directory of their own. node -p checks snazzy installed, since snazzy
+# --version prints nothing.
+RUN --mount=type=bind,source=Dockerfile.lock/js,target=/lock \
+    mkdir /opt/js \
+    && ln -s /lock/package.json /lock/package-lock.json /opt/js/ \
+    && npm ci --prefix /opt/js --ignore-scripts --no-audit --no-fund \
+    && /opt/js/node_modules/.bin/prettier --version \
+    && /opt/js/node_modules/.bin/semistandard --version \
+    && node -p "require('/opt/js/node_modules/snazzy/package.json').version"
+
+ENV PATH=/opt/js/node_modules/.bin:$PATH
 
 # uid 1000 so a bind-mounted tree is writable from a host whose user is the
 # usual 1000.

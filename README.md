@@ -51,12 +51,13 @@ Each part below is taken on its own. A tool needs nothing here outside `tools/` 
 
 ### The image
 
-The image builds two stages. `dev` is the formatting, linting and test toolchain, headless Chromium included, running as the unprivileged user `x`; it copies nothing in, so a repository builds it through its symlinked `Dockerfile` and runs it on its own tree. `test` adds a copy of the repository's tree to it.
+The image builds three stages. `wheels` downloads the Python tools' locked wheels. `dev` is the formatting, linting and test toolchain, headless Chromium included, running as the unprivileged user `x`; it installs the Python and npm tools from the locks in `Dockerfile.lock/` through bind mounts and copies nothing in, so a repository builds it through its symlinked `Dockerfile` and runs it on its own tree. `test` adds a copy of the repository's tree to it.
 
-A repository builds it through a `Dockerfile` that links to this one:
+A repository builds it through a `Dockerfile` and a `Dockerfile.lock` that link to this one's, since the build reads the locks from the repository's own context:
 
 ```sh
 ln -s lib/design-tools/Dockerfile Dockerfile
+ln -s lib/design-tools/Dockerfile.lock Dockerfile.lock
 ```
 
 A repository leaves the link out of `docker_files`, since `bin/format` would rewrite this repository's `Dockerfile` through it.
@@ -217,7 +218,7 @@ make build
 
 ## Upgrading
 
-Base images are pinned by digest, tools from outside Debian's repositories by `ARG` and checked against a SHA-256 pinned beside each, and the workflow's actions by commit SHA. `make upgrade` moves `lib/shell-common` to its latest commit and runs its `docker/upgrade` to re-pin each pin the `Dockerfile` names on a `# TRACK FROM` or `# TRACK ARG` line, and each action the workflow names on a `# TRACK USES` line, proposing a re-pinned workflow in `.github/workflows.new/`. It then builds, tests and commits the result as `Upgrade pins`, with a line for each move as the body, as *The make targets* describes; it never pushes. `docker/upgrade` refuses to start while the `Dockerfile` has changes not committed or a workflow proposal is pending. It runs on the host, so `make upgrade` needs `curl`, `jq`, `sha256sum` and `timeout` there:
+Base images are pinned by digest, tools downloaded from releases by `ARG` and checked against a SHA-256 pinned beside each, Python and npm tools by a hashed lock in `Dockerfile.lock/`, and the workflow's actions by commit SHA. `make upgrade` moves `lib/shell-common` to its latest commit and runs its `docker/upgrade` to re-pin each pin the `Dockerfile` names on a `# TRACK FROM` or `# TRACK ARG` line, rebuild each lock it names on a `# TRACK LOCK` line, and re-pin each action the workflow names on a `# TRACK USES` line, proposing a re-pinned workflow in `.github/workflows.new/`. It then builds, tests and commits the result as `Upgrade pins`, with a line for each move as the body, as *The make targets* describes; it never pushes. `docker/upgrade` refuses to start while the `Dockerfile` or `Dockerfile.lock/` has changes not committed or a workflow proposal is pending. It runs on the host, so `make upgrade` needs `curl`, `jq`, `sha256sum` and `timeout` there:
 
 ```sh
 make upgrade
