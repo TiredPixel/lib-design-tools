@@ -1,29 +1,31 @@
 # The services, which this repository uses itself and another repository links
 # as its own docker-compose.yml. Compose resolves paths against the folder
 # holding the link, so every path here is that repository's: its tree, and its
-# Dockerfile, a link to this one's.
+# Dockerfile, a link to this one's. Each service runs on the tree the test stage
+# copied, which carries the submodules the linked runners resolve into, and
+# none mounts the whole tree.
 ---
 services:
-  # Runs bin/format and bin/coverage, whose writes have to reach the host tree,
-  # which only this mount carries there. The whole tree is bound rather than
-  # file by file, since a single-file bind pins an inode and goes stale when an
-  # editor saves by rename.
+  # Runs bin/format, whose writes reach the host only through the paths
+  # bin/format-host mounts by name over the copy, which make format runs; it
+  # sets the variable bin/format refuses to run without, so a bare run formats
+  # nothing. A mount here would need a fixed list, which no tree linking this
+  # file shares.
   design:
     build:
       context: .
-      target: dev
+      target: test
     init: true
     network_mode: none
     profiles:
       - test
     user: ${DC_BIND_USER:-}
-    volumes:
-      - .:/home/x/r
-  # Runs bin/lint and bin/test on the tree the test stage copied: no mount, so
-  # what a run checks cannot change under it, and no network, so nothing a page
-  # loads can come from outside the tree. init, as PID 1, reaps the Chromium
-  # processes a timeout's kill orphans, and passes make test's signals on, where
-  # bin/test as PID 1 would ignore a TERM or INT it sets no trap for.
+  # Runs bin/lint, bin/test and bin/coverage on the copy: no mount, so what a
+  # run checks cannot change under it and nothing it writes reaches the host,
+  # and no network, so nothing a page loads can come from outside the tree.
+  # init, as PID 1, reaps the Chromium processes a timeout's kill orphans, and
+  # passes make test's signals on, where bin/test as PID 1 would ignore a TERM
+  # or INT it sets no trap for.
   design_test:
     build:
       context: .
@@ -34,15 +36,18 @@ services:
     network_mode: none
     profiles:
       - test
-  # bin/preview on the tree as it is on disk, read-only, so an edit shows on
-  # reload. Under a profile of its own, which make preview selects, so a bare
-  # docker compose up starts nothing a repository has not asked for. An init
-  # process forwards the stop signal, which Python running as PID 1 would
-  # ignore. README.md, Previewing pages, gives the host port and address.
+  # bin/preview on the copy, with src/ and preview/, which README.md says hold
+  # everything a preview loads, mounted read-only over it, so an edit there
+  # shows on reload. create_host_path is off, so a missing directory fails the
+  # start rather than being created empty. Under a profile of its own, which
+  # make preview selects, so a bare docker compose up starts nothing a
+  # repository has not asked for. An init process forwards the stop signal,
+  # which Python running as PID 1 would ignore. README.md, Previewing pages,
+  # gives the host port and address.
   preview:
     build:
       context: .
-      target: dev
+      target: test
     command:
       - preview
     healthcheck:
@@ -57,7 +62,15 @@ services:
     profiles:
       - preview
     volumes:
-      - read_only: true
-        source: .
-        target: /home/x/r
+      - bind:
+          create_host_path: false
+        read_only: true
+        source: ./src
+        target: /home/x/r/src
+        type: bind
+      - bind:
+          create_host_path: false
+        read_only: true
+        source: ./preview
+        target: /home/x/r/preview
         type: bind

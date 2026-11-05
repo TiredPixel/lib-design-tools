@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+#
+# Runs bin/format in the design service, on the host, from the root of the
+# repository, with the repository's own paths bind-mounted by name over the
+# image's copy of its tree, so the formatters' writes reach the host and nothing
+# else of the container does. Each top-level entry git lists, tracked or
+# untracked but not ignored, is mounted whole, except a directory holding a
+# submodule or an ignored path, whose entries are taken the same way in turn:
+# so a submodule, tmp/ and ignored state are never mounted, and a sibling of a
+# submodule still is. An untracked entry whose name starts with a dot is taken
+# for per-user state and left out, as are a symlink, which the image's copy
+# already carries, and a path missing on disk, which a bind would create as a
+# directory. A path is never mounted relative, since Docker reads a relative
+# source as a named volume.
+set -Eeuo pipefail
+shopt -s inherit_errexit failglob
+
+if [ $# -gt 0 ]; then
+    echo "Usage: format-host" >&2
+    exit 2
+fi
+
+die() {
+    echo "format-host: $*" >&2
+    exit 1
+}
+
+prefix=$(git rev-parse --show-prefix)
+[ -z "$prefix" ] || die "run from the root of the repository, not $prefix"
+
+lists=$(mktemp -d)
+trap 'rm -rf -- "$lists"' EXIT
+
+# Into files rather than through process substitution, whose status bash can
+# lose, so a failed listing stops the run.
+git ls-files -z --cached >"$lists/cached"
+git ls-files -z --others --exclude-standard >"$lists/others"
+git ls-files -z --others --ignored --exclude-standard --directory \
+    >"$lists/ignored"
+git ls-files -z --stage >"$lists/stage"
+
+mapfile -t -d '' cached <"$lists/cached"
+mapfile -t -d '' others <"$lists/others"
+mapfile -t -d '' ignored <"$lists/ignored"
+mapfile -t -d '' stage <"$lists/stage"
+
+declare -A gitlink=() descend=() entries=()
+
+function descend_into_parents {
+    local path=${1%/}
+
+    while [[ $path == */* ]]; do
+        path=${path%/*}
+        descend[$path]=1
+    done
+}
+
+# The entry a listed path is mounted through: its first leading directory that
+# is not descended into, or nothing where that is a submodule. A tracked path
+# marks its entry tracked, whatever an untracked one marked it.
+function add_entry {
+    local rest=${1%/} entry=""
+
+    while :; do
+        entry=${entry:+$entry/}${rest%%/*}
+        [ -n "${descend[$entry]+set}" ] || break
+        [[ $rest == */* ]] || return 0
+        rest=${rest#*/}
+    done
+    [ -z "${gitlink[$entry]+set}" ] || return 0
+    if [ "$2" = tracked ] || [ -z "${entries[$entry]+set}" ]; then
+        entries[$entry]=$2
+    fi
+}
+
+# --stage lists each entry as MODE OBJECT STAGE, a tab, then the path; 160000 is
+# a gitlink, a submodule's commit.
+for record in "${stage[@]}"; do
+    if [[ $record == 160000\ * ]]; then
+        path=${record#*$'\t'}
+        gitlink[$path]=1
+        descend_into_parents "$path"
+    fi
+done
+for path in "${ignored[@]}"; do
+    descend_into_parents "$path"
+done
+
+for path in "${cached[@]}"; do
+    add_entry "$path" tracked
+done
+for path in "${others[@]}"; do
+    add_entry "$path" untracked
+done
+
+volumes=()
+if [ ${#entries[@]} -gt 0 ]; then
+    printf '%s\0' "${!entries[@]}" >"$lists/entries"
+    sort -z -o "$lists/entries" "$lists/entries"
+    mapfile -t -d '' sorted <"$lists/entries"
+    for entry in "${sorted[@]}"; do
+        if [ "${entries[$entry]}" = untracked ] && [[ ${entry##*/} == .* ]]; then
+            continue
+        fi
+        if [ -L "$entry" ] || ! [ -e "$entry" ]; then
+            continue
+        fi
+        # -v splits on the colon, and nothing escapes one.
+        if [[ $PWD/$entry == *:* ]]; then
+            die "$PWD/$entry: cannot bind-mount a path holding a colon"
+        fi
+        volumes+=(-v "$PWD/$entry:/home/x/r/$entry")
+    done
+fi
+[ ${#volumes[@]} -gt 0 ] || die "git lists nothing to mount"
+
+# Removed here, since exec replaces the shell before its EXIT trap can run.
+rm -rf -- "$lists"
+trap - EXIT
+
+# DESIGN_TOOLS_FORMAT_MOUNTS tells bin/format the tree is mounted, which it
+# refuses to run without, since it would otherwise format the image's copy.
+exec docker compose --profile test run --rm --build \
+    -e DESIGN_TOOLS_FORMAT_MOUNTS=1 "${volumes[@]}" design format

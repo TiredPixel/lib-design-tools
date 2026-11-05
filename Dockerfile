@@ -28,8 +28,8 @@
 # name, each checked against its hash, for dev to install offline. dev copies
 # nothing in, reading the locks only through bind mounts, so a repository taking
 # this one as a submodule builds the same image, through a Dockerfile and a
-# Dockerfile.lock symlinked to this one's, and runs it on its own tree; test
-# adds that tree for the gate.
+# Dockerfile.lock symlinked to this one's; test adds that repository's tree,
+# which every service runs on.
 #===============================================================================
 FROM docker.io/library/debian@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 AS wheels
 
@@ -52,7 +52,8 @@ LABEL org.opencontainers.image.source=https://github.com/TiredPixel/lib-design-t
 SHELL ["/bin/bash", "-Eeuo", "pipefail", "-O", "inherit_errexit", "-O", "failglob", "-c"]
 
 # Without python3-psutil, which nothing here installs, xdist's -n auto counts
-# the CPUs the container may use rather than the machine's physical cores.
+# the CPUs the container may use rather than the machine's physical cores. git
+# is for the tests of bin/format-host, which runs on the host.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -60,6 +61,7 @@ RUN apt-get update \
         curl \
         diffutils \
         docker-compose \
+        git \
         jq \
         kcov \
         npm \
@@ -78,8 +80,8 @@ ENV LANG=C.UTF-8 \
     LANGUAGE=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-# Otherwise ruff caches into the tree, which the design service's mount carries
-# to the host under make format and make coverage.
+# Otherwise ruff caches into the tree, where the paths make format mounts could
+# carry it to the host.
 ENV RUFF_CACHE_DIR=/tmp/ruff-cache
 
 # The same for Python's own cache, which would otherwise land beside the modules

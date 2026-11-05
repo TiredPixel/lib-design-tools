@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 #
 # Runs bin/test, with any tests it is given as bin/test takes them, measuring
-# the shell under kcov and the Python under pytest-cov, and writes both reports
-# to tmp/coverage/, replacing the last ones, since kcov otherwise merges into
-# whatever is there. Measures only files under the repository's root, and the
-# shell report leaves out what is not the repository's own: in a repository
-# linking this runner, this one's copy. Runs from the root of the repository.
+# the shell under kcov and the Python under pytest-cov, and prints both reports
+# to the terminal: pytest-cov's as the tests finish, then kcov's through
+# tools/kcov-report. Their data stays in a temporary directory, removed on exit,
+# so a run writes nothing to the tree. Measures only files under the
+# repository's root, and the shell report leaves out what is not the
+# repository's own: in a repository linking this runner, this one's copy. Runs
+# from the root of the repository.
 #
 # ShellCheck sees no assignment for the names bin/runner sets, since it does not
 # follow bin/runner. Suppressed here for the reason bin/test gives.
@@ -17,36 +19,39 @@ shopt -s inherit_errexit failglob
 # shellcheck source=/dev/null
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
 
-out=$PWD/tmp/coverage
-
 # This repository's own submodules, under lib/, measure their own coverage.
 if [ "$design_tools" = "$PWD" ]; then
-    exclude=$out,$PWD/lib
+    exclude=$PWD/lib
 else
-    exclude=$out,$design_tools
+    exclude=$design_tools
 fi
 
-if [ -e "$out" ]; then
-    echo "coverage: removing ${out:?}" >&2
-    rm -rf -- "${out:?}"
-fi
-mkdir -p -- "$out"
+out=$(mktemp -d)
+trap 'rm -rf -- "$out"' EXIT
 
 # Through PYTEST_ADDOPTS, since bin/test takes pytest's options from
 # bin/settings alone; quoted, since pytest splits it as a shell would.
 # pytest-cov carries the measurement into Python subprocesses through its own
-# environment, and COVERAGE_FILE keeps its data in the report's directory.
+# environment, and COVERAGE_FILE keeps its data out of the tree.
 export COVERAGE_FILE=$out/python.data
-printf -v cov_args '%q ' "--cov=$PWD" --cov-report=term \
-    "--cov-report=html:$out/python"
+printf -v cov_args '%q ' "--cov=$PWD" --cov-report=term-missing
 export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:+$PYTEST_ADDOPTS }${cov_args% }"
 
 echo "coverage: running bin/test under kcov" >&2
-kcov --include-path="$PWD" --exclude-path="$exclude" "$out/shell" \
-    "$design_tools/bin/test" "$@"
+kcov --cobertura-only --include-path="$PWD" --exclude-path="$exclude" \
+    "$out/shell" "$design_tools/bin/test" "$@"
 
-echo "coverage: shell report written to tmp/coverage/shell/index.html" >&2
-# No pytest runs where bin/settings defines no pytest_args.
-if [ -e "$out/python/index.html" ]; then
-    echo "coverage: python report written to tmp/coverage/python/index.html" >&2
+# --cobertura-only writes the one report, cov.xml, and no kcov-merged/. It
+# holds no <class> where no shell of the repository's own ran, which
+# kcov-report would fail as measuring no file.
+report=$out/shell/cov.xml
+if ! [ -f "$report" ]; then
+    echo "coverage: kcov wrote no report" >&2
+    exit 1
+fi
+if grep -qF '<class ' -- "$report"; then
+    echo "coverage: reporting the shell's coverage" >&2
+    "$tools/kcov-report" "$report" "$PWD"
+else
+    echo "coverage: no shell of the repository's own ran" >&2
 fi
