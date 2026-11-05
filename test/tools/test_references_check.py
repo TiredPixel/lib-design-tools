@@ -501,6 +501,7 @@ class CssTest(ReferencesTestCase):
             '@import "a.css";\n'
             "@import url(gone.css);\n"
             "@IMPORT 'gone2.css' screen;\n"
+            '@import"gone3.css";\n'
             "/* url(x.png)\n   still a comment url(y.png) */\n"
             ".a { background: URL( 'img/x.png' ) }\n"
             '.b { background: url("/site/img/x.png#f"), url(data:image/png;b64,A) }\n'
@@ -513,7 +514,8 @@ class CssTest(ReferencesTestCase):
             [
                 (3, "gone.css does not exist"),
                 (4, "gone2.css does not exist"),
-                (10, "missing.svg does not exist"),
+                (5, "gone3.css does not exist"),
+                (11, "missing.svg does not exist"),
             ],
         )
 
@@ -609,6 +611,109 @@ class CssTest(ReferencesTestCase):
             self.css_problems(css),
             [(4, "gone 10.png does not exist"), (5, 'gone-11".png does not exist')],
         )
+
+    def test_escapes_outside_strings_are_read_as_part_of_an_ident(self) -> None:
+        css = (
+            'a\\"b { background: url(gone-1.png) }\n'
+            ".a { background: \\75rl(gone-2.png) }\n"
+            ".a { background: url(gone-3.png) }\n"
+            "a\\/* { background: url(gone-4.png) }\n"
+            ".b::after { content: '*/' }\n"
+        )
+        self.assertEqual(
+            self.css_problems(css),
+            [
+                (1, "gone-1.png does not exist"),
+                (2, "gone-2.png does not exist"),
+                (3, "gone-3.png does not exist"),
+                (4, "gone-4.png does not exist"),
+            ],
+        )
+
+    def test_names_are_read_with_their_escapes(self) -> None:
+        for css in (
+            ".a { background: \\75rl(gone.png) }",
+            '.a { background: \\75rl("gone.png") }',
+            ".a { background: \\75 rl(gone.png) }",
+            ".a { background: \\000075rl(gone.png) }",
+            ".a { background: u\\rl(gone.png) }",
+            ".a { background: \\55 RL(gone.png) }",
+            '@\\69mport "gone.png";',
+            "@\\49MPORT 'gone.png';",
+            '.a { background: \\69mage-set("gone.png" 1x) }',
+            '.a { background: -WEBKIT-\\49mage-set("gone.png" 1x) }',
+            '.a { background: image-set(a\\) "gone.png" 1x) }',
+            '#a\\"b { background: url(gone.png) }',
+            '1\\"b { background: url(gone.png) }',
+            ".url(gone.png)",
+            "# url(gone.png)",
+            "@ url(gone.png)",
+            "- url(gone.png)",
+            "1 url(gone.png)",
+            "\u00b2url(gone.png)",
+            "\u00a0url(gone.png)",
+            "a\\\furl(gone.png)",
+            '<div style="background: \\75rl(gone.png)"></div>',
+        ):
+            with self.subTest(css=css):
+                if css.startswith("<"):
+                    problems = self.html_problems(css)
+                else:
+                    problems = self.css_problems(css)
+                self.assertEqual(problems, [(1, "gone.png does not exist")])
+
+    def test_a_reference_after_an_escape_ending_in_a_newline(self) -> None:
+        for css in (
+            ".a { background: \\75\nrl(gone.png) }",
+            ".a\\\nurl(gone.png)",
+        ):
+            with self.subTest(css=css):
+                self.assertEqual(
+                    self.css_problems(css), [(2, "gone.png does not exist")]
+                )
+
+    def test_a_name_within_a_longer_token_is_not_a_reference(self) -> None:
+        for css in (
+            ".a\\ url(gone.png)",
+            ".x\\.url(gone.png)",
+            'a\\ url("gone.png")',
+            'a\\ image-set("gone.png")',
+            "\\2d url(gone.png)",
+            "a\\\\url(gone.png)",
+            '\\@import "gone.png";',
+            '\\40 import "gone.png";',
+            "1url(gone.png)",
+            "-1url(gone.png)",
+            "+1url(gone.png)",
+            ".5url(gone.png)",
+            "1e3url(gone.png)",
+            "1\\75rl(gone.png)",
+            "#url(gone.png)",
+            "#\\75rl(gone.png)",
+            "@url(gone.png)",
+            "@\\75rl(gone.png)",
+            "-url(gone.png)",
+            "--url(gone.png)",
+            "-\\75rl(gone.png)",
+            "\\75  rl(gone.png)",
+            "\\0000075rl(gone.png)",
+            "url (gone.png)",
+            "\\75rl (gone.png)",
+            "url\\28 gone.png)",
+            "\u00e9url(gone.png)",
+            "\u00b7url(gone.png)",
+            '-we\u212ait-image-set("gone.png")',
+            '@import\u00a0"gone.png";',
+            'url(\u00a0"gone.png")',
+            "url(  ",
+        ):
+            with self.subTest(css=css):
+                self.assertEqual(self.css_problems(css), [])
+
+    def test_an_escape_ending_the_input_outside_a_string(self) -> None:
+        for css in ("a\\", "#\\", "@\\", "1\\", "-\\", "url\\"):
+            with self.subTest(css=css):
+                self.assertEqual(self.css_problems(css), [])
 
     def test_an_invalid_unquoted_url_is_dropped_whole(self) -> None:
         css = (
