@@ -44,6 +44,7 @@ import http.server
 import pathlib
 import posixpath
 import re
+import string
 import sys
 import urllib.parse
 from collections.abc import Iterator
@@ -116,20 +117,29 @@ NON_LOADING_RELATIONS = frozenset(
     }
 )
 
-# Matched against CSS whose comments and unquoted url() are blanked and whose strings
-# hold only spaces between their quotes, so a string's value is read from the strings
+# Matched against _scan_css's masked CSS, after a url( or @import it records, where a
+# string holds only spaces between its quotes, so its value is read from the strings
 # _scan_css records. A string that end of input cuts off keeps only its opening quote,
 # and end of input closes a url() as CSS Syntax closes any function.
 _CSS_STRING = r"""("[^"]*(?:"|\Z)|'[^']*(?:'|\Z))"""
-_CSS_URL = re.compile(
-    rf"""(?<![\w-])url\(\s*{_CSS_STRING}\s*(?:\)|\Z)""", re.IGNORECASE
-)
-_CSS_IMPORT_STRING = re.compile(rf"""@import\s+{_CSS_STRING}""", re.IGNORECASE)
-_CSS_IMAGE_SET = re.compile(r"(?<![\w-])(?:-webkit-)?image-set\(", re.IGNORECASE)
+_CSS_URL_STRING = re.compile(rf"[ \t\n\r\f]*{_CSS_STRING}[ \t\n\r\f]*(?:\)|\Z)")
+_CSS_IMPORT_STRING = re.compile(rf"[ \t\n\r\f]*{_CSS_STRING}")
+_CSS_IMAGE_SETS = frozenset({"image-set", "-webkit-image-set"})
 
-_CSS_UNQUOTED_URL = re.compile(r"""(?<![\w-])url\(\s*(?=[^\s"'])""", re.IGNORECASE)
 _CSS_SPACE = " \t\n\r\f"
 _CSS_ESCAPE = re.compile(r"\\(?:([0-9A-Fa-f]{1,6})[ \t\n\r\f]?|(\n)|(.))", re.DOTALL)
+# CSS Syntax's non-ASCII ident code points, the code points allowed in an HTML custom
+# element name.
+_CSS_NON_ASCII_IDENT = (
+    r"\u00b7\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u037d\u037f-\u1fff\u200c\u200d"
+    r"\u203f\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd"
+    r"\U00010000-\U0010ffff"
+)
+_CSS_IDENT_START = re.compile(rf"[A-Z_a-z{_CSS_NON_ASCII_IDENT}]")
+_CSS_IDENT = re.compile(rf"[-0-9A-Z_a-z{_CSS_NON_ASCII_IDENT}]")
+_CSS_NUMBER = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:[Ee][+-]?[0-9]+)?")
+# CSS matches names ASCII case-insensitively, so no other code point folds.
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 
 _TAG_NAME = re.compile(r"<[^\s/>]+")
 # One attribute of a start tag, its value skipped whole, so that a name written inside
@@ -200,7 +210,7 @@ def refresh_url(content: str) -> str:
 
 
 def _css_unescape(value: str) -> str:
-    """Return a CSS string's value with its escapes read, as CSS Syntax reads them."""
+    """Return CSS text with its escapes read, as CSS Syntax reads them."""
 
     def character(match: re.Match) -> str:
         if match[1] is not None:
@@ -213,20 +223,86 @@ def _css_unescape(value: str) -> str:
     return _CSS_ESCAPE.sub(character, value)
 
 
-def _scan_css(css: str) -> tuple[str, dict[int, str], dict[int, str]]:
-    """Return ``css`` masked, with the values of its strings and unquoted ``url()``.
+def _css_valid_escape(css: str, index: int) -> bool:
+    """Return whether a valid escape starts at ``index``, as CSS Syntax checks.
 
-    Its comments and unquoted ``url()`` are blanked and its strings' contents made
-    spaces; each string's value is keyed by the offset of its opening quote, and each
-    unquoted ``url()``'s value by its own offset.
+    A ``\\`` ending the input starts one, read as U+FFFD; one before a newline or a form
+    feed, which CSS reads as a newline, does not.
+    """
+    return css[index : index + 1] == "\\" and css[index + 1 : index + 2] not in (
+        "\n",
+        "\f",
+    )
+
+
+def _css_starts_ident(css: str, index: int) -> bool:
+    """Return whether an ident sequence starts at ``index``, as CSS Syntax checks."""
+    first = css[index : index + 1]
+    if first == "-":
+        second = css[index + 1 : index + 2]
+        return (
+            second == "-"
+            or _CSS_IDENT_START.fullmatch(second) is not None
+            or _css_valid_escape(css, index + 1)
+        )
+    return _CSS_IDENT_START.fullmatch(first) is not None or _css_valid_escape(
+        css, index
+    )
+
+
+def _css_ident_end(css: str, index: int) -> int:
+    """Return the offset where the ident sequence from ``index`` ends."""
+    while index < len(css):
+        if _CSS_IDENT.fullmatch(css[index]) is not None:
+            index += 1
+        elif _css_valid_escape(css, index):
+            escape = _CSS_ESCAPE.match(css, index)
+            # Only a "\" ending the input fails to match.
+            index = len(css) if escape is None else escape.end()
+        else:
+            break
+    return index
+
+
+def _css_name(ident: str) -> str:
+    """Return an ident's value, unescaped and ASCII lower-cased, as names compare."""
+    return _css_unescape(ident).translate(_ASCII_LOWER)
+
+
+@dataclasses.dataclass
+class _ScannedCss:
+    """CSS as ``_scan_css`` reads it, its offsets the same in ``css`` and ``masked``."""
+
+    masked: str
+    strings: dict[int, str]
+    urls: dict[int, str]
+    functions: dict[int, str]
+    at_keywords: dict[int, str]
+
+
+def _scan_css(css: str) -> _ScannedCss:
+    """Return ``css`` masked, with what it names and the values it holds.
+
+    Its comments are blanked and its strings' contents made spaces. Its unquoted
+    ``url()``, ident sequences, hashes, at-keywords and units are filled with ``_``
+    instead, so a token between two others still parts them. Each string's value is
+    keyed by the offset of its opening quote, each unquoted ``url()``'s value by its own
+    offset, each function's name by the offset of its ``(`` and each at-keyword's name
+    by the offset just after it.
+
+    Ident sequences are read as CSS Syntax reads them, with their escapes, so a ``\\"``
+    or ``\\/`` in a selector starts no string or comment, ``\\75rl(`` is ``url(``, and
+    a name is never read inside a number, a hash, a longer ident or one ``\\`` ends. A
+    name is unescaped and ASCII lower-cased. Ident code points are CSS Syntax's own,
+    not Python's ``\\w``.
 
     Newlines are kept, so lines still count, and so is each quote of a string that a
     newline does not end, though a string that end of input cuts off has only its
     opening quote. Text inside a string is never read as a comment or a reference, nor
     a ``/*`` in an unquoted ``url()``, which CSS reads whole, escapes included. A string
     a newline ends unclosed is invalid CSS, and is blanked, quote and all, with no
-    value, as is an unquoted ``url()`` holding a quote, a ``(``, an escaped newline, or
-    whitespace before more of its value.
+    value; an unquoted ``url()`` holding a quote, a ``(``, an escaped newline, or
+    whitespace before more of its value is invalid too, and has no value.
 
     End of input closes a string or an unquoted ``url()`` with the value read so far. A
     ``\\`` ending the input is dropped from a string, and in an unquoted ``url()`` reads
@@ -235,12 +311,18 @@ def _scan_css(css: str) -> tuple[str, dict[int, str], dict[int, str]]:
     masked = list(css)
     strings: dict[int, str] = {}
     urls: dict[int, str] = {}
+    functions: dict[int, str] = {}
+    at_keywords: dict[int, str] = {}
     position, end = 0, len(css)
 
-    def blank(start: int, stop: int) -> None:
+    def blank(start: int, stop: int, fill: str = " ") -> None:
         for index in range(start, stop):
             if masked[index] != "\n":
-                masked[index] = " "
+                masked[index] = fill
+
+    def mark(start: int, stop: int) -> None:
+        """Blank a token with a mark that is no whitespace, so it still parts others."""
+        blank(start, stop, "_")
 
     def skip(index: int, stops: str) -> int:
         """Return the offset of the first unescaped stop from ``index``, or ``end``."""
@@ -248,34 +330,40 @@ def _scan_css(css: str) -> tuple[str, dict[int, str], dict[int, str]]:
             index += 2 if css[index] == "\\" else 1
         return min(index, end)
 
-    while position < end:
-        url = _CSS_UNQUOTED_URL.match(css, position)
-        if url is not None:
-            start = index = url.end()
-            invalid = False
-            while index < end and css[index] not in ")" + _CSS_SPACE:
-                if css[index] == "\\":
-                    invalid = invalid or css[index + 1 : index + 2] == "\n"
-                    index += 2
-                else:
-                    invalid = invalid or css[index] in "\"'("
-                    index += 1
-            # Only a "\" ending the input carries index past end.
-            escaped_end = index > end
-            stop = min(index, end)
-            index = stop
-            while index < end and css[index] in _CSS_SPACE:
-                index += 1
-            if (index == end or css[index] == ")") and not invalid:
-                if escaped_end:
-                    urls[start] = _css_unescape(css[start : stop - 1]) + "\ufffd"
-                else:
-                    urls[start] = _css_unescape(css[start:stop])
+    def unquoted_url(name: int, start: int) -> int:
+        """Read the unquoted ``url()`` named at ``name``, its value from ``start``.
+
+        Return the offset after it.
+        """
+        index = start
+        invalid = False
+        while index < end and css[index] not in ")" + _CSS_SPACE:
+            if css[index] == "\\":
+                invalid = invalid or css[index + 1 : index + 2] == "\n"
+                index += 2
             else:
-                index = skip(index, ")")
-            position = min(index + 1, end)
-            blank(url.start(), position)
-        elif css.startswith("/*", position):
+                invalid = invalid or css[index] in "\"'("
+                index += 1
+        # Only a "\" ending the input carries index past end.
+        escaped_end = index > end
+        stop = min(index, end)
+        index = stop
+        while index < end and css[index] in _CSS_SPACE:
+            index += 1
+        if (index == end or css[index] == ")") and not invalid:
+            if escaped_end:
+                urls[start] = _css_unescape(css[start : stop - 1]) + "\ufffd"
+            else:
+                urls[start] = _css_unescape(css[start:stop])
+        else:
+            index = skip(index, ")")
+        after = min(index + 1, end)
+        mark(name, after)
+        return after
+
+    while position < end:
+        number = _CSS_NUMBER.match(css, position)
+        if css.startswith("/*", position):
             close = css.find("*/", position + 2)
             stop = end if close < 0 else close + 2
             blank(position, stop)
@@ -293,41 +381,80 @@ def _scan_css(css: str) -> tuple[str, dict[int, str], dict[int, str]]:
                 strings[position] = _css_unescape(value)
                 blank(position + 1, index)
                 position = index + 1
+        elif number is not None:
+            # A dimension's unit names nothing.
+            position = stop = number.end()
+            if _css_starts_ident(css, position):
+                stop = _css_ident_end(css, position)
+            mark(position, stop)
+            position = stop
+        elif css[position] == "#" and (
+            _CSS_IDENT.fullmatch(css[position + 1 : position + 2]) is not None
+            or _css_valid_escape(css, position + 1)
+        ):
+            stop = _css_ident_end(css, position + 1)
+            mark(position, stop)
+            position = stop
+        elif css[position] == "@" and _css_starts_ident(css, position + 1):
+            stop = _css_ident_end(css, position + 1)
+            at_keywords[stop] = _css_name(css[position + 1 : stop])
+            mark(position, stop)
+            position = stop
+        elif _css_starts_ident(css, position):
+            start = position
+            position = _css_ident_end(css, start)
+            name = _css_name(css[start:position])
+            mark(start, position)
+            if css[position : position + 1] == "(":
+                index = position + 1
+                while index < end and css[index] in _CSS_SPACE:
+                    index += 1
+                if name == "url" and index < end and css[index] not in "\"'":
+                    position = unquoted_url(start, index)
+                else:
+                    functions[position] = name
+                    position += 1
         else:
             position += 1
-    return "".join(masked), strings, urls
+    return _ScannedCss("".join(masked), strings, urls, functions, at_keywords)
 
 
-def _image_set_strings(
-    masked: str, strings: dict[int, str]
-) -> Iterator[tuple[int, str]]:
+def _image_set_strings(scanned: _ScannedCss, paren: int) -> Iterator[tuple[int, str]]:
     """Yield the offset and value of each string written directly in an ``image-set()``.
 
-    A string nested deeper, as in ``type("image/avif")``, names no image, and an image
-    given by ``url()`` is found as any other ``url()`` is.
+    The ``image-set()``'s ``(`` is at ``paren``. A string nested deeper, as in
+    ``type("image/avif")``, names no image, and an image given by ``url()`` is found as
+    any other ``url()`` is.
     """
-    for match in _CSS_IMAGE_SET.finditer(masked):
-        position, depth = match.end(), 1
-        while position < len(masked) and depth:
-            if position in strings:
-                if depth == 1:
-                    yield position, strings[position]
-            elif masked[position] == "(":
-                depth += 1
-            elif masked[position] == ")":
-                depth -= 1
-            position += 1
+    masked, strings = scanned.masked, scanned.strings
+    position, depth = paren + 1, 1
+    while position < len(masked) and depth:
+        if position in strings:
+            if depth == 1:
+                yield position, strings[position]
+        elif masked[position] == "(":
+            depth += 1
+        elif masked[position] == ")":
+            depth -= 1
+        position += 1
 
 
 def css_references(css: str) -> Iterator[tuple[int, str]]:
     """Yield the zero-based line and target of each reference in ``css``."""
-    masked, strings, urls = _scan_css(css)
-    found = [
-        (match.start(1), strings[match.start(1)])
-        for match in (*_CSS_URL.finditer(masked), *_CSS_IMPORT_STRING.finditer(masked))
-    ]
-    found.extend(urls.items())
-    found.extend(_image_set_strings(masked, strings))
+    scanned = _scan_css(css)
+    masked, strings = scanned.masked, scanned.strings
+    found = list(scanned.urls.items())
+    for paren, name in scanned.functions.items():
+        if name == "url":
+            match = _CSS_URL_STRING.match(masked, paren + 1)
+            if match is not None:
+                found.append((match.start(1), strings[match.start(1)]))
+        elif name in _CSS_IMAGE_SETS:
+            found.extend(_image_set_strings(scanned, paren))
+    for after, name in scanned.at_keywords.items():
+        match = _CSS_IMPORT_STRING.match(masked, after)
+        if name == "import" and match is not None:
+            found.append((match.start(1), strings[match.start(1)]))
     for start, target in sorted(found):
         yield masked.count("\n", 0, start), target
 
