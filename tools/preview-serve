@@ -11,7 +11,7 @@ than download it.
 For development only: the server is Python's standard one, threaded, with no TLS and no
 access control.
 
-Exit status: 0 when stopped, 2 on a usage error.
+Exit status: 0 when stopped, 1 when it cannot listen, 2 on a usage error.
 """
 
 from __future__ import annotations
@@ -148,9 +148,18 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = parse_arguments(argv)
-    server = make_server(
-        arguments.root.resolve(), arguments.address, arguments.port, arguments.start
-    )
+    try:
+        server = make_server(
+            arguments.root.resolve(), arguments.address, arguments.port, arguments.start
+        )
+    except OSError as error:
+        # Some OSErrors, such as one raised without an errno, carry no strerror.
+        print(
+            f"preview-serve: cannot listen on {arguments.address}:{arguments.port}:"
+            f" {error.strerror or error}",
+            file=sys.stderr,
+        )
+        return 1
     host, port = server.server_address[:2]
     print(
         f"preview-serve: {arguments.root} at http://{host}:{port}/",
