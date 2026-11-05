@@ -706,6 +706,13 @@ class CssTest(ReferencesTestCase):
             '@import\u00a0"gone.png";',
             'url(\u00a0"gone.png")',
             "url(  ",
+            '@import nonsense "gone.png";',
+            '@import #a "gone.png";',
+            '@import url(a.css) "gone.png";',
+            '.a { background: url("gone.png" junk) }',
+            '.a { background: url("gone.png" #a) }',
+            '.a { background: url("gone.png" 1px) }',
+            '.a { background: url("gone.png" \\75rl(img/x.png)) }',
         ):
             with self.subTest(css=css):
                 self.assertEqual(self.css_problems(css), [])

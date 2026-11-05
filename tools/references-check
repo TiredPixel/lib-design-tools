@@ -283,10 +283,12 @@ class _ScannedCss:
 def _scan_css(css: str) -> _ScannedCss:
     """Return ``css`` masked, with what it names and the values it holds.
 
-    Its comments, unquoted ``url()`` and ident sequences are blanked and its strings'
-    contents made spaces; each string's value is keyed by the offset of its opening
-    quote, each unquoted ``url()``'s value by its own offset, each function's name by
-    the offset of its ``(`` and each at-keyword's name by the offset just after it.
+    Its comments are blanked and its strings' contents made spaces. Its unquoted
+    ``url()``, ident sequences, hashes, at-keywords and units are filled with ``_``
+    instead, so a token between two others still parts them. Each string's value is
+    keyed by the offset of its opening quote, each unquoted ``url()``'s value by its own
+    offset, each function's name by the offset of its ``(`` and each at-keyword's name
+    by the offset just after it.
 
     Ident sequences are read as CSS Syntax reads them, with their escapes, so a ``\\"``
     or ``\\/`` in a selector starts no string or comment, ``\\75rl(`` is ``url(``, and
@@ -299,8 +301,8 @@ def _scan_css(css: str) -> _ScannedCss:
     opening quote. Text inside a string is never read as a comment or a reference, nor
     a ``/*`` in an unquoted ``url()``, which CSS reads whole, escapes included. A string
     a newline ends unclosed is invalid CSS, and is blanked, quote and all, with no
-    value, as is an unquoted ``url()`` holding a quote, a ``(``, an escaped newline, or
-    whitespace before more of its value.
+    value; an unquoted ``url()`` holding a quote, a ``(``, an escaped newline, or
+    whitespace before more of its value is invalid too, and has no value.
 
     End of input closes a string or an unquoted ``url()`` with the value read so far. A
     ``\\`` ending the input is dropped from a string, and in an unquoted ``url()`` reads
@@ -313,10 +315,14 @@ def _scan_css(css: str) -> _ScannedCss:
     at_keywords: dict[int, str] = {}
     position, end = 0, len(css)
 
-    def blank(start: int, stop: int) -> None:
+    def blank(start: int, stop: int, fill: str = " ") -> None:
         for index in range(start, stop):
             if masked[index] != "\n":
-                masked[index] = " "
+                masked[index] = fill
+
+    def mark(start: int, stop: int) -> None:
+        """Blank a token with a mark that is no whitespace, so it still parts others."""
+        blank(start, stop, "_")
 
     def skip(index: int, stops: str) -> int:
         """Return the offset of the first unescaped stop from ``index``, or ``end``."""
@@ -352,7 +358,7 @@ def _scan_css(css: str) -> _ScannedCss:
         else:
             index = skip(index, ")")
         after = min(index + 1, end)
-        blank(name, after)
+        mark(name, after)
         return after
 
     while position < end:
@@ -380,25 +386,25 @@ def _scan_css(css: str) -> _ScannedCss:
             position = stop = number.end()
             if _css_starts_ident(css, position):
                 stop = _css_ident_end(css, position)
-            blank(position, stop)
+            mark(position, stop)
             position = stop
         elif css[position] == "#" and (
             _CSS_IDENT.fullmatch(css[position + 1 : position + 2]) is not None
             or _css_valid_escape(css, position + 1)
         ):
             stop = _css_ident_end(css, position + 1)
-            blank(position, stop)
+            mark(position, stop)
             position = stop
         elif css[position] == "@" and _css_starts_ident(css, position + 1):
             stop = _css_ident_end(css, position + 1)
             at_keywords[stop] = _css_name(css[position + 1 : stop])
-            blank(position, stop)
+            mark(position, stop)
             position = stop
         elif _css_starts_ident(css, position):
             start = position
             position = _css_ident_end(css, start)
             name = _css_name(css[start:position])
-            blank(start, position)
+            mark(start, position)
             if css[position : position + 1] == "(":
                 index = position + 1
                 while index < end and css[index] in _CSS_SPACE:
