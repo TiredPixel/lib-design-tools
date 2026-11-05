@@ -133,6 +133,26 @@ class PaletteGenerateTest(Workspace):
         self.assertIn("#000000", result.stdout)
         self.assertEqual((self.root / "p.css").read_text(encoding="utf-8"), before)
 
+    def test_check_fails_on_absent_output_and_writes_nothing(self):
+        self.write("p.yml", self.YAML)
+        result = self.generate("--check")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "palette-generate: p.json or p.css is stale against p.yml\n", result.stderr
+        )
+        self.assertFalse((self.root / "p.json").exists())
+        self.assertFalse((self.root / "p.css").exists())
+
+    def test_keeps_a_rgba_leaf_verbatim_in_both_outputs(self):
+        self.write("p.yml", 'veil: "#ABCD"\n')
+        result = self.generate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "  --x-veil: #ABCD;", (self.root / "p.css").read_text(encoding="utf-8")
+        )
+        document = json.loads((self.root / "p.json").read_text(encoding="utf-8"))
+        self.assertEqual(document["veil"], "#ABCD")
+
     def test_fails_on_a_name_collision(self):
         self.write("p.yml", 'a_b: "#000000"\na-b: "#FFFFFF"\n')
         result = self.generate()
