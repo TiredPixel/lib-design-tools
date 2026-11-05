@@ -4,7 +4,7 @@
 # run from the root of the repository they serve. That repository's bin/ holds
 # symlinks to them, so this one is found by resolving the link, and its own
 # bin/settings turns each pass on by defining what the pass reads (README.md,
-# Settings).
+# Configuring the passes).
 #
 # Variables read only by the runners that source this file look unused here.
 # shellcheck disable=SC2034
