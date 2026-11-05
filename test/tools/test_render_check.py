@@ -95,7 +95,7 @@ class TempDirTestCase(temp_tree.TempTreeTestCase):
         return self.fake_chromium(f"sys.stdout.write({dom!r})\n")
 
     def time_out_once_ready(self) -> None:
-        """Start each Chromium's timeout only once its writer has started, or it exited.
+        """Start each Chromium's timeout only once it has started its writer or exited.
 
         Waiting in the test, before the real timeout begins, means the timeout cannot
         fire before the fake records its writer, however loaded the machine is.
@@ -849,8 +849,8 @@ class RenderCheckTest(TempDirTestCase):
             capture_output=True,
             text=True,
             check=False,
-            # Generous, so a hung child fails the test rather than stalling a
-            # worker; not a measure of how long it should take.
+            # Generous, so a hung child fails the test rather than stalling a worker;
+            # not a measure of how long it should take.
             timeout=300,
         )
         self.assertEqual(result.returncode, 0, result.stderr)

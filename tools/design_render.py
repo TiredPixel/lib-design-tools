@@ -8,8 +8,8 @@ resource loads, uncaught errors, unhandled rejections and ``console.error`` call
 ``data-render-errors`` attribute on ``<html>``. Chromium's ``--dump-dom`` then hands
 back the DOM after scripts have run, attribute included.
 
-Everything except the Chromium call itself is plain text processing, so it can be tested
-without a browser.
+Only the Chromium call itself needs a browser, so everything else can be tested without
+one.
 """
 
 from __future__ import annotations
@@ -366,8 +366,8 @@ def served_path(root: pathlib.Path, page: pathlib.Path) -> str:
 
     A symlinked page keeps its own path, so that it is requested where the link is and
     its relative references resolve beside the link, not its target. Where ``root`` is
-    named through a symlink, or the page through one, their real paths are compared
-    instead. Raises ValueError when ``page`` is not inside ``root``.
+    named through a symlink, or the page's directory through one, their real paths are
+    compared instead. Raises ValueError when ``page`` is not inside ``root``.
     """
     page_path = pathlib.Path(os.path.abspath(page))
     real_root = root.resolve()
@@ -432,7 +432,7 @@ def _chromium(
 
 
 def _end_group(process: subprocess.Popen, chromium: str) -> None:
-    """Kill the rest of the process group ``process`` leads, and wait until it is gone.
+    """Kill the process group ``process`` leads, and wait until it is gone.
 
     Chromium's renderer, GPU and crashpad processes outlive the browser process, and go
     on writing to the profile, whose removal would then fail. Once the leader is reaped,

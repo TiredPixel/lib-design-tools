@@ -23,7 +23,9 @@ source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
 
 tests=("$@")
 
-# xdist only warns at a count it cannot read, and runs on every CPU instead.
+# xdist takes an empty count as unset, and one it cannot read with only a
+# warning, running on every CPU for either, and takes 0 or a negative count as
+# given.
 if [ -n "${PYTEST_XDIST_AUTO_NUM_WORKERS+set}" ] &&
     ! [[ $PYTEST_XDIST_AUTO_NUM_WORKERS =~ ^[1-9][0-9]*$ ]]; then
     printf 'test: PYTEST_XDIST_AUTO_NUM_WORKERS is %q, not a whole number' \

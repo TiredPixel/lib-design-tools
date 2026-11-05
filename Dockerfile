@@ -78,8 +78,8 @@ ENV LANG=C.UTF-8 \
     LANGUAGE=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-# Otherwise ruff caches into the tree, which make format's mount carries to the
-# host.
+# Otherwise ruff caches into the tree, which the design service's mount carries
+# to the host under make format and make coverage.
 ENV RUFF_CACHE_DIR=/tmp/ruff-cache
 
 # The same for Python's own cache, which would otherwise land beside the modules
@@ -214,8 +214,9 @@ RUN case $(dpkg --print-architecture) in \
 # the wheels the wheels stage downloaded, so every version is the lock's. pipx's
 # shared venv is made here, from Debian's bundled pip, since pipx would
 # otherwise fetch pip unpinned to make it, and in the same RUN as every pipx
-# call, since pipx upgrades it from PyPI once its pip is 30 days old. DL3013
-# asks for each version written here, which the locks alone pin.
+# call, since pipx upgrades it from PyPI once its pip is older than pipx's
+# SHARED_LIBS_MAX_AGE_SEC. DL3013 asks for each version written here, which the
+# locks alone pin.
 # hadolint ignore=DL3013
 RUN --network=none \
     --mount=type=bind,from=wheels,source=/wheels,target=/wheels \
@@ -238,9 +239,9 @@ RUN --network=none \
     && echo "$version" | grep -qF 'mdformat-gfm ' \
     && echo "$version" | grep -qF 'mdformat_frontmatter '
 
-# npm ci, the one npm command that installs a lock as given, outside the
-# mounted tree. The mount is read-only, so the lock files are linked into a
-# directory of their own.
+# npm ci, the one npm command that installs a lock as given, outside the mounted
+# tree. The mount is read-only, so the lock files are linked into a directory of
+# their own.
 RUN --mount=type=bind,source=Dockerfile.lock/js,target=/lock \
     mkdir /opt/js \
     && ln -s /lock/package.json /lock/package-lock.json /opt/js/ \

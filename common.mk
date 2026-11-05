@@ -29,8 +29,8 @@ upgrade:
 	$(MAKE) upgrade-pre
 	$(MAKE) upgrade-post
 # Alone, it finishes an upgrade whose build or tests failed, once fixed.
-# UPGRADE_COMMIT, where the including Makefile sets it, commits what
-# upgrade-pre moved.
+# UPGRADE_COMMIT, where the including Makefile sets it, commits what upgrade-pre
+# moved.
 upgrade-post:
 	$(MAKE) build
 	$(MAKE) test

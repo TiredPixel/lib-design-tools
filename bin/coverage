@@ -32,7 +32,7 @@ if [ -e "$out" ]; then
 fi
 mkdir -p -- "$out"
 
-# Through PYTEST_ADDOPTS, since bin/test builds pytest's command line from
+# Through PYTEST_ADDOPTS, since bin/test takes pytest's options from
 # bin/settings alone; quoted, since pytest splits it as a shell would.
 # pytest-cov carries the measurement into Python subprocesses through its own
 # environment, and COVERAGE_FILE keeps its data in the report's directory.

@@ -96,7 +96,7 @@ def chroma(hex_colour: str) -> float:
 
 
 def hue(hex_colour: str) -> float:
-    """CIELAB h(ab), in degrees from 0 to 360."""
+    """CIELAB h(ab), in degrees from 0 up to, not including, 360."""
     _, a, b = lab(hex_colour)
     return math.degrees(math.atan2(b, a)) % 360
 

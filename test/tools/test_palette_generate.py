@@ -10,9 +10,9 @@ import tools_loader
 
 USAGE = "Usage: palette-generate YAML --prefix P --json OUT --css OUT [--check]\n"
 
-# Set by kcov under bin/coverage. The trace descriptor BASH_XTRACEFD names is not
-# open here, since xdist starts its workers without it, so a child bash given
-# them would write its trace, and a complaint, into the stderr tested.
+# Set by kcov under bin/coverage. The trace descriptor BASH_XTRACEFD names is not open
+# here, since xdist starts its workers without it, so a child bash given these variables
+# would write its trace, and a complaint, into the stderr tested.
 KCOV_TRACING = ("BASH_ENV", "BASH_XTRACEFD")
 
 
@@ -25,8 +25,8 @@ def run(*args, cwd, env=None):
         capture_output=True,
         text=True,
         check=False,
-        # Generous, so a hung child fails the test rather than stalling a
-        # worker; not a measure of how long it should take.
+        # Generous, so a hung child fails the test rather than stalling a worker; not a
+        # measure of how long it should take.
         timeout=300,
     )
 

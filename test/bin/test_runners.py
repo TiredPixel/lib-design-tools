@@ -57,8 +57,8 @@ SKIPPING_TEST = (
 # Set by bin/coverage, for its own pytest and the shell kcov traces, and dropped for
 # each runner run here. A nested pytest would take the options and write into the same
 # data; and the trace descriptor BASH_XTRACEFD names is not open here, since xdist
-# starts its workers without it, so a bash given these would write its trace, and a
-# complaint, into the output tested.
+# starts its workers without it, so a bash given BASH_ENV and BASH_XTRACEFD would write
+# its trace, and a complaint, into the output tested.
 COVERAGE_ENVIRONMENT = ("BASH_ENV", "BASH_XTRACEFD", "PYTEST_ADDOPTS")
 
 
@@ -275,7 +275,7 @@ class SetFileTest(Repository):
 
 
 class FormatThenLintTest(Repository):
-    """Each writing pass: lint fails, format fixes the file, and lint then passes."""
+    """Each writing pass: lint fails a file format would change or cannot fix."""
 
     def assertFormatFixes(self, name, before, after, kind, count=1):
         self.write(name, before)
@@ -486,9 +486,9 @@ class FormatCarriesOnTest(Repository):
         self.assertText("a.toml", "a = 1\n")
 
     def test_each_pass_s_failure_leaves_the_last_pass_to_run(self):
-        # Each set names a file its tool cannot parse, or one that is missing, where
-        # before is None. after is what the file holds once the run is over, and kind
-        # what the pass says it formats, None for the palette, which counts no files.
+        # Each set names a file its tool fails on, or one that is missing, where before
+        # is None. after is what the file holds once the run is over, and kind what the
+        # pass says it formats, None for the palette, which counts no files.
         cases = (
             (
                 "palette_args",
@@ -531,8 +531,8 @@ class FormatCarriesOnTest(Repository):
                 self.assertText("Dockerfile", FORMATTED_DOCKERFILE)
 
     def test_a_failing_last_pass_fails_the_run(self):
-        # The other tests end on a Docker pass that succeeds, so only this one fails
-        # the last pass, whose recorded failure no later pass can show.
+        # The other tests end on a pass that succeeds, so only this one fails the last
+        # pass, whose recorded failure no later pass can show.
         self.settings(
             "function toml_files { printf '%s\\0' a.toml; }\n"
             "function docker_files { printf '%s\\0' gone; }\n"
