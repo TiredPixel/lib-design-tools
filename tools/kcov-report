@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""Print a kcov Cobertura report as pytest-cov's term-missing report.
+
+kcov prints no per-file report to the terminal, so this reads the Cobertura one it
+writes and prints, on stdout, a header, one line per measured file, sorted by name, with
+its statements, misses, percentage covered and missing lines, and a TOTAL line. Each
+file is named by its ``filename`` joined to the report's one ``<source>``, relative to
+``ROOT`` where it lies inside it. A line counts as covered where any of its entries has
+a hit. Missing lines run together into a range wherever no covered statement lies
+between them, and a percentage rounds to neither 0 nor 100 unless it is exactly that, as
+coverage.py's do.
+
+Exit status: 0 when the report is printed, 1 when the file cannot be read, is not a kcov
+Cobertura report or measures no file, and 2 on a usage error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import pathlib
+import sys
+from xml.etree import ElementTree
+
+import design_render
+
+HEADER = ("Name", "Stmts", "Miss", "Cover", "Missing")
+
+
+class ReportError(Exception):
+    """The file is not a kcov Cobertura report this tool can read."""
+
+
+def read_lines(
+    path: pathlib.Path,
+) -> tuple[pathlib.PurePosixPath, dict[str, dict[int, bool]]]:
+    """The report's source, and each filename's line numbers mapped to whether hit."""
+    try:
+        tree = ElementTree.parse(path)
+    except ElementTree.ParseError as error:
+        raise ReportError(f"not XML: {error}") from error
+    except OSError as error:
+        raise ReportError(f"cannot read: {error.strerror or error}") from error
+    root = tree.getroot()
+    if root.tag != "coverage":
+        raise ReportError(f"root element is <{root.tag}>, not <coverage>")
+    sources = root.findall("sources/source")
+    if len(sources) != 1:
+        raise ReportError(f"holds {len(sources)} <source> elements, not one")
+    if not (sources[0].text or "").strip():
+        raise ReportError("<source> is empty")
+    source = pathlib.PurePosixPath(sources[0].text.strip())
+    files: dict[str, dict[int, bool]] = {}
+    for class_ in root.iter("class"):
+        filename = class_.get("filename")
+        if not filename:
+            raise ReportError(f"<class name={class_.get('name')!r}> has no filename")
+        lines = files.setdefault(filename, {})
+        for line in class_.iter("line"):
+            try:
+                number = int(line.get("number", ""))
+                hits = int(line.get("hits", ""))
+            except ValueError as error:
+                raise ReportError(
+                    f"{filename}: <line> without integer number and hits"
+                ) from error
+            lines[number] = lines.get(number, False) or hits > 0
+    if not files:
+        raise ReportError("measures no file")
+    return source, files
+
+
+def display_name(
+    source: pathlib.PurePosixPath, filename: str, root: pathlib.PurePosixPath
+) -> str:
+    path = source / filename
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def percentage(statements: int, misses: int) -> str:
+    """Covered over statements, whole, as coverage.py rounds it; 100 for none."""
+    if statements == 0 or misses == 0:
+        return "100%"
+    if misses == statements:
+        return "0%"
+    covered = 100 * (statements - misses) / statements
+    return f"{min(max(round(covered), 1), 99)}%"
+
+
+def missing_ranges(lines: dict[int, bool]) -> str:
+    """The missing statements, with each run holding no covered one as ``A-B``."""
+    ranges: list[list[int]] = []
+    previous_missed = False
+    for number in sorted(lines):
+        if lines[number]:
+            previous_missed = False
+            continue
+        if previous_missed:
+            ranges[-1][1] = number
+        else:
+            ranges.append([number, number])
+        previous_missed = True
+    return ", ".join(
+        str(first) if first == last else f"{first}-{last}" for first, last in ranges
+    )
+
+
+def report(
+    source: pathlib.PurePosixPath,
+    files: dict[str, dict[int, bool]],
+    root: pathlib.PurePosixPath,
+) -> list[str]:
+    rows = []
+    total_statements = total_misses = 0
+    for filename, lines in files.items():
+        statements = len(lines)
+        misses = sum(not hit for hit in lines.values())
+        total_statements += statements
+        total_misses += misses
+        rows.append(
+            (
+                display_name(source, filename, root),
+                str(statements),
+                str(misses),
+                percentage(statements, misses),
+                missing_ranges(lines),
+            )
+        )
+    rows.sort()
+    total = (
+        "TOTAL",
+        str(total_statements),
+        str(total_misses),
+        percentage(total_statements, total_misses),
+        "",
+    )
+    width = max(len(row[0]) for row in (HEADER, *rows, total))
+
+    def line(row: tuple[str, ...]) -> str:
+        name, statements, misses, cover, missing = row
+        return (
+            f"{name:<{width}}{statements:>8}{misses:>7}{cover:>7}   {missing}".rstrip()
+        )
+
+    header = line(HEADER)
+    rule = "-" * len(header)
+    return [header, rule, *map(line, rows), rule, line(total)]
+
+
+def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        formatter_class=design_render.UsageFormatter,
+        prog="kcov-report",
+        description="Print a kcov Cobertura report as a term-missing summary.",
+    )
+    parser.add_argument(
+        "report", type=pathlib.Path, metavar="COBERTURA_XML", help="kcov's report"
+    )
+    parser.add_argument(
+        "root",
+        type=pathlib.Path,
+        metavar="ROOT",
+        help="the directory files are named relative to",
+    )
+    arguments = parser.parse_args(argv)
+    if not arguments.report.is_file():
+        parser.error(f"{arguments.report} is not a file")
+    if not arguments.root.is_dir():
+        parser.error(f"{arguments.root} is not a directory")
+    return arguments
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parse_arguments(argv)
+    try:
+        source, files = read_lines(arguments.report)
+    except ReportError as error:
+        print(f"kcov-report: {arguments.report}: {error}", file=sys.stderr)
+        return 1
+    root = pathlib.PurePosixPath(arguments.root.absolute())
+    for line in report(source, files, root):
+        print(line)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

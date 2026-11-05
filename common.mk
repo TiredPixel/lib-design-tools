@@ -9,14 +9,15 @@ SHELL := bash
 
 # --profile test so the design and design_test services are built here rather
 # than on demand by the --build the other targets carry. preview, under a
-# profile of its own, builds the same dev stage as design on demand.
+# profile of its own, builds the same test stage on demand.
 build:
 	$(DESIGN_TOOLS)/lib/shell-common/docker/build-compose --profile test
-# In design, whose mount carries the report to tmp/coverage/ on the host.
+# In design_test, since the report goes to the terminal and nothing to the tree.
 coverage:
-	docker compose --profile test run --rm --build design coverage $(TESTS)
+	docker compose --profile test run --rm --build design_test coverage $(TESTS)
+# On the host, which mounts the paths format rewrites into the design service.
 format:
-	docker compose --profile test run --rm --build design format
+	$(DESIGN_TOOLS)/bin/format-host
 lint:
 	docker compose --profile test run --rm --build design_test lint
 # Naming the service selects its profile.

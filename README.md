@@ -21,6 +21,7 @@ Each command prints its usage with `--help`.
 - `tools/references-check` – every local reference in HTML and CSS resolves under `--root`: each attribute that loads or links something, such as `href`, `src`, `srcset`, `imagesrcset`, `poster` and `data`, a refresh's target, and each `url()`, `@import` and `image-set()` string. A reference that leaves `--root` fails, as does one to a directory with no `index.html` or `index.htm`, and so does a file that holds a `<base>` element, which changes how every reference resolves, or that is not valid UTF-8. `--no-external` refuses anything external a page loads, and `--require-integrity` requires `integrity` and `crossorigin` on every external stylesheet and script. `--unresolved PATH`, repeatable, exempts a `/`-rooted path served by something else, such as a sibling site, for a link, an `area`, a refresh or a `link` whose every `rel` loads nothing, matching wherever a reference lands, query and fragment aside; an exempt path that something loads into the page fails, as does an exemption whose path resolves or that nothing references.
 - `tools/render-check` – each page loaded in headless Chromium, failing on an uncaught error, an unhandled rejection, a `console.error`, a failed load the page or its stylesheets start, such as an image, script, stylesheet, `@import`, font or background image, or an element matching `--error-marker`, and on a page Chromium fails or times out on, or where the browser cannot report failed loads started from CSS. A request the page's own script makes, such as `fetch`, is left to the script; the page's icon is not checked, and a load from another origin that does not use CORS counts only where its element reports an error.
 - `tools/preview-serve` – the tree as it is on disk, for previewing while editing: nothing cached, dot paths and paths outside the tree refused, directories listed, and `/` redirected to `--start`, the page the preview opens on. For development only.
+- `tools/kcov-report` – a kcov Cobertura report, such as `bin/coverage` has kcov write, printed as pytest-cov's term-missing report: a header, a line for each file, named relative to `ROOT` where it lies inside it, with its statements, misses, percentage covered and missing lines, and a `TOTAL` line. A file it cannot read, that is not a kcov Cobertura report or that measures no file fails the run.
 
 Importable from a repository's own Python tests, with `tools/` on the path, as `bin/test` puts it:
 
@@ -39,9 +40,13 @@ git submodule update --init --recursive lib/design-tools
 
 Each part below is taken on its own. A tool needs nothing here outside `tools/` and can be called directly in the image; the image needs only the links to its `Dockerfile` and `Dockerfile.lock`; and only the parts that run commands in the image depend on others: the services run the runners, and the make targets run the services.
 
+### Laying out the repository
+
+A repository using the services keeps its designs in `src/` and the page the preview opens on in `preview/`, and everything a preview loads in one of the two, since the `preview` service mounts only those (*Previewing pages*). A file a pass generates, such as a palette's CSS and JSON, lives in a directory `make format` mounts whole, such as `src/`, one holding no ignored path and no submodule: it mounts only the paths that exist when it starts, and takes any other directory entry by entry (*Running the make targets*), so a new file written anywhere else stays in the container's copy and is lost without a word.
+
 ### Linking the image
 
-The image builds three stages. `wheels` downloads the Python tools' locked wheels. `dev` is the formatting, linting and test toolchain, headless Chromium included, running as the unprivileged user `x`; it installs the Python and npm tools from the locks in `Dockerfile.lock/` through bind mounts and copies nothing in, so a repository runs it on its own tree. `test` adds a copy of the repository's tree to it.
+The image builds three stages. `wheels` downloads the Python tools' locked wheels. `dev` is the formatting, linting and test toolchain, headless Chromium included, running as the unprivileged user `x`; it installs the Python and npm tools from the locks in `Dockerfile.lock/` through bind mounts and copies nothing in, so a repository linking the `Dockerfile` builds the same toolchain. `test` adds a copy of the repository's tree to it, submodules included, which every service runs on (*Linking the services*).
 
 A repository builds it through a `Dockerfile` and a `Dockerfile.lock` that link to this one's, since the build reads the locks from the repository's own context:
 
@@ -50,7 +55,7 @@ ln -s lib/design-tools/Dockerfile Dockerfile
 ln -s lib/design-tools/Dockerfile.lock Dockerfile.lock
 ```
 
-A repository leaves the link out of `docker_files`, since `bin/format` would rewrite this repository's `Dockerfile` through it.
+A repository leaves the link out of `docker_files`, since the file is not its own: `make format` never mounts the submodule, so a rewrite through the link would reach only the image's copy and be lost.
 
 The test stage copies the whole tree, and the `wheels` and `dev` stages bind-mount `Dockerfile.lock` from it, so the repository's `.dockerignore` keeps `.git`, `.env`, `tmp/` and anything local out of it, and must not exclude `Dockerfile.lock` or the submodule. Excluding every top-level dot path, `/.*`, and letting the repository's own dot files back in by name, such as `!/.github`, keeps a per-user directory such as `.claude` out without naming it.
 
@@ -71,9 +76,9 @@ This repository's `docker-compose.yml` holds the `design`, `design_test` and `pr
 ln -s lib/design-tools/docker-compose.yml docker-compose.yml
 ```
 
-The `design` and `design_test` services sit under the `test` profile, which `make build`, `make coverage`, `make format`, `make lint` and `make test` pass, and the `preview` service under the `preview` profile, which `make preview` selects, so a bare `docker compose up` starts no service. The `design` service runs `bin/format` and `bin/coverage` from `dev` on the tree mounted read-write, since their writes must reach it, and the `preview` service `bin/preview` on the tree mounted read-only. The `design_test` service runs the gates from `test` on its own copy, with no mount and no network.
+The `design` and `design_test` services sit under the `test` profile, which `make build`, `make coverage`, `make format`, `make lint` and `make test` pass, and the `preview` service under the `preview` profile, which `make preview` selects, so a bare `docker compose up` starts no service. Every service runs from `test`, on the image's copy of the tree, and none mounts the whole tree. The `design` service runs `bin/format`, with the paths it rewrites mounted by name, which only `make format` gives it (*Running the make targets*). The `design_test` service runs the gates and `bin/coverage` on its copy, with no mount and no network. The `preview` service runs `bin/preview` with `src/` and `preview/` mounted read-only over its copy (*Previewing pages*).
 
-A repository whose YAML pass would cover `docker-compose.yml` leaves the link out of `yaml_files`, since `bin/format` would rewrite this repository's file through it.
+A repository whose YAML pass would cover `docker-compose.yml` leaves the link out of `yaml_files`, since the file is not its own and a rewrite through the link would reach only the image's copy, as with `docker_files` (*Linking the image*).
 
 ### Configuring the passes
 
@@ -105,7 +110,7 @@ What `bin/lint` checks only:
 
 What `bin/test` runs, after the lint unless tests are named:
 
-- `pytest_args` – pytest's options, which may be none, for the repository's own tests under its own pytest configuration; `--no-skips` fails a run in which a test skipped. Unless tests are named, `bin/test` passes pytest no paths, so a configuration that does not confine collection, as `testpaths` does, also collects this repository's own tests from `lib/design-tools`. Where it is not defined, naming tests fails the run, and `make coverage` writes no Python report.
+- `pytest_args` – pytest's options, which may be none, for the repository's own tests under its own pytest configuration; `--no-skips` fails a run in which a test skipped. Unless tests are named, `bin/test` passes pytest no paths, so a configuration that does not confine collection, as `testpaths` does, also collects this repository's own tests from `lib/design-tools`. Where it is not defined, naming tests fails the run, and `make coverage` prints no Python report.
 
 And `bin/preview`:
 
@@ -121,7 +126,7 @@ A `bin/settings` for a design system with a preview page and a palette:
 preview_start=/preview/
 
 function palette_args {
-    printf '%s\0' palette/palette.yml --prefix x --json palette/palette.json --css palette/palette.css
+    printf '%s\0' src/palette/palette.yml --prefix x --json src/palette/palette.json --css src/palette/palette.css
 }
 
 function css_files {
@@ -168,13 +173,13 @@ make test TESTS='test/<file>.py'
 make lint
 ```
 
-`make format` rewrites the tree in place with the passes `bin/format` runs:
+`make format` rewrites the tree in place with the passes `bin/format` runs. It runs `bin/format-host` on the host, which reads git's list of the tracked paths and the untracked ones not ignored, and mounts each top-level entry by name over the `design` service's copy of the tree, taking a directory that holds a submodule or an ignored path entry by entry instead. A submodule, `tmp/`, anything ignored, an untracked dot path, a symlink and a path missing on disk are never mounted. `bin/format` refuses to run without those mounts, so a bare `docker compose run design format` fails rather than formatting a copy:
 
 ```sh
 make format
 ```
 
-`make coverage` runs `bin/test`, taking `TESTS` as `make test` does, in the `design` service, measuring the shell under kcov and the Python under pytest-cov, and writes the reports to the repository's own `tmp/coverage/shell/` and `tmp/coverage/python/`, replacing the last ones. It measures only files under the repository's root, and its shell report leaves out the copy of this repository. Like `make format`, it writes to the tree, so the repository ignores `tmp/` and sets `DC_BIND_USER` as the list below says:
+`make coverage` runs `bin/test`, taking `TESTS` as `make test` does, in the `design_test` service, measuring the shell under kcov and the Python under pytest-cov, and prints both reports, in pytest-cov's term-missing form: the Python one as the tests finish, then the shell one, through `tools/kcov-report`. It measures only files under the repository's root, and its shell report leaves out the copy of this repository. It writes nothing to the tree, keeping the measurements in a temporary directory in the container:
 
 ```sh
 make coverage
@@ -188,13 +193,13 @@ kcov traces a script only where its trace descriptor, the one `BASH_XTRACEFD` na
 
 `.env` sets local options for Compose, read against the repository holding the link:
 
-- `DC_BIND_USER=0:0` where Docker is rootless or the host user's uid is not 1000, so that `make format` and `make coverage` can write to the tree.
-- `PYTEST_XDIST_AUTO_NUM_WORKERS`, the worker count for pytest-xdist's `-n auto` under `make test`, where the repository's pytest configuration uses it.
+- `DC_BIND_USER=0:0` where Docker is rootless or the host user's uid is not 1000, so that `make format` can write to the tree.
+- `PYTEST_XDIST_AUTO_NUM_WORKERS`, the worker count for pytest-xdist's `-n auto` under `make test` and `make coverage`, where the repository's pytest configuration uses it.
 - `DC_PREVIEW_PORT` and `DC_PREVIEW_HOST`, where `make preview` publishes its port (*Previewing pages*).
 
 ### Previewing pages
 
-`make preview` serves the tree read-only with `bin/preview`, on a free host port, or on `DC_PREVIEW_PORT` where `.env` sets one. The port is published on `127.0.0.1` only; `DC_PREVIEW_HOST` in `.env` publishes it on another address, such as `0.0.0.0` to reach a VM's preview from its host:
+`make preview` serves the repository with `bin/preview`, from the image's copy of its tree with `src/` and `preview/` mounted read-only over it, so an edit in either shows on reload, while an edit anywhere else needs `make preview` again; a repository missing either directory fails to start it (*Laying out the repository*). It serves on a free host port, or on `DC_PREVIEW_PORT` where `.env` sets one. The port is published on `127.0.0.1` only; `DC_PREVIEW_HOST` in `.env` publishes it on another address, such as `0.0.0.0` to reach a VM's preview from its host:
 
 ```sh
 make preview
@@ -232,7 +237,7 @@ The tests run under pytest, side by side on one worker for each CPU the containe
 
 ### Measuring its coverage
 
-`make coverage` (*Running the make targets*) measures the shell in `bin/` and the Python in `tools/` and `test/`:
+`make coverage` (*Running the make targets*) measures the shell in `bin/` and the Python in `tools/` and `test/`, and prints both reports:
 
 ```sh
 make coverage

@@ -16,6 +16,14 @@ shopt -s inherit_errexit failglob
 # shellcheck source=/dev/null
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
 
+# Set by bin/format-host, which make format runs, alongside the mounts that
+# carry the writes to the host; without them, the run would format the image's
+# copy of the tree and throw the result away.
+if [ "${DESIGN_TOOLS_FORMAT_MOUNTS:-}" != 1 ]; then
+    echo "format: the tree is not mounted; run make format" >&2
+    exit 1
+fi
+
 # Each tool's failure is recorded here and the run carries on, so a finding no
 # tool can fix, or a file a formatter cannot parse, leaves no later pass's files
 # unformatted; the run fails once every pass has run.
@@ -30,7 +38,26 @@ fi
 if defines shell_files; then
     read_files shell_files shell
     echo "format: formatting ${#shell[@]} shell file(s)" >&2
-    shfmt "${shfmt_args[@]}" -w "${shell[@]}" || status=1
+    # make format may mount any file on its own, a top-level one or one in a
+    # directory holding a submodule or an ignored path, and shfmt -w cannot
+    # replace a single-file bind by rename, so every file is formatted through
+    # stdin and written back in place, and only where it changed.
+    shfmt_out=$(mktemp)
+    trap 'rm -f -- "$shfmt_out"' EXIT
+    for f in "${shell[@]}"; do
+        # shfmt reads the file and writes the temporary one; --filename only
+        # names the file in its messages.
+        # shellcheck disable=SC2094
+        if shfmt "${shfmt_args[@]}" --filename "$f" <"$f" >"$shfmt_out"; then
+            if ! cmp -s -- "$shfmt_out" "$f"; then
+                cat -- "$shfmt_out" >"$f" || status=1
+            fi
+        else
+            status=1
+        fi
+    done
+    rm -f -- "$shfmt_out"
+    trap - EXIT
 fi
 
 if defines python_files; then

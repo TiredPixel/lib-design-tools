@@ -6,6 +6,7 @@ import contextlib
 import http.client
 import io
 import pathlib
+import socket
 import tempfile
 import threading
 import unittest
@@ -276,4 +277,34 @@ class ArgumentsTest(unittest.TestCase):
         self.assertEqual(
             stderr.getvalue(),
             f"preview-serve: {self.root} at http://0.0.0.0:1234/\n",
+        )
+
+    def run_main(self, *arguments: str) -> tuple[int, str]:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            status = preview_serve.main(
+                ["--root", self.root, "--start", "/p/", *arguments]
+            )
+        return status, stderr.getvalue()
+
+    def test_main_fails_on_a_port_in_use(self) -> None:
+        held = self.enterContext(socket.socket())
+        held.bind(("127.0.0.1", 0))
+        held.listen()
+        port = held.getsockname()[1]
+        status, stderr = self.run_main("--port", str(port))
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            stderr,
+            f"preview-serve: cannot listen on 127.0.0.1:{port}:"
+            " Address already in use\n",
+        )
+
+    def test_main_fails_on_an_address_it_does_not_hold(self) -> None:
+        # 192.0.2.1 is reserved for documentation, so no host holds it, and as a
+        # numeric address it needs no lookup.
+        status, stderr = self.run_main("--address", "192.0.2.1", "--port", "0")
+        self.assertEqual(status, 1)
+        self.assertRegex(
+            stderr, r"\Apreview-serve: cannot listen on 192\.0\.2\.1:0: \S.*\n\Z"
         )

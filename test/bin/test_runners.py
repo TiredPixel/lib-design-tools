@@ -5,6 +5,7 @@ They run from the root of a fabricated repository whose bin/ links to them.
 
 import os
 import pathlib
+import re
 import signal
 import subprocess
 import tempfile
@@ -66,6 +67,11 @@ def child_environment(dropping=COVERAGE_ENVIRONMENT):
     return {k: v for k, v in os.environ.items() if k not in dropping}
 
 
+# What bin/format-host sets alongside its mounts, which bin/format refuses to run
+# without; the fabricated repositories here are the tree itself, so need no mount.
+MOUNTED = {"DESIGN_TOOLS_FORMAT_MOUNTS": "1"}
+
+
 class Repository(temp_tree.TempTreeTestCase):
     def setUp(self):
         super().setUp()
@@ -79,11 +85,17 @@ class Repository(temp_tree.TempTreeTestCase):
     def settings(self, text):
         self.write("bin/settings", "# shellcheck shell=bash\n" + text)
 
-    def run_bin(self, runner, *args, env=None, dropping=COVERAGE_ENVIRONMENT):
+    def run_bin(
+        self, runner, *args, env=None, dropping=COVERAGE_ENVIRONMENT, mounted=True
+    ):
         return subprocess.run(
             [f"bin/{runner}", *args],
             cwd=self.root,
-            env={**child_environment(dropping), **(env or {})},
+            env={
+                **child_environment((*dropping, *MOUNTED)),
+                **(MOUNTED if mounted else {}),
+                **(env or {}),
+            },
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
@@ -550,6 +562,109 @@ class FormatCarriesOnTest(Repository):
         self.assertText("a.toml", "a = 1\n")
 
 
+class FormatMountsTest(Repository):
+    def test_refuses_to_run_without_the_mounts(self):
+        self.settings("function yaml_files { printf '%s\\0' a.yml; }\n")
+        self.write("a.yml", UNSORTED_YAML)
+        for env in ({}, {"DESIGN_TOOLS_FORMAT_MOUNTS": ""}):
+            with self.subTest(env=env):
+                result = self.run_bin("format", env=env, mounted=False)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(
+                    result.stderr, "format: the tree is not mounted; run make format\n"
+                )
+                self.assertEqual(
+                    (self.root / "a.yml").read_text(encoding="utf-8"), UNSORTED_YAML
+                )
+
+
+class ShellInPlaceTest(Repository):
+    """A shell file is rewritten in place, as a single-file bind needs.
+
+    make format binds a file on its own at the top level and in a directory
+    holding a submodule or an ignored path, such as a consumer's lib/own.sh.
+    """
+
+    UNFORMATTED = "#!/bin/bash\nf() {\n  echo a > /dev/null\n}\n"
+    FORMATTED = "#!/bin/bash\nf() {\n    echo a >/dev/null\n}\n"
+
+    def text(self, name):
+        return (self.root / name).read_text(encoding="utf-8")
+
+    def test_an_unformatted_file_keeps_its_inode(self):
+        for name in ("a.sh", "-a.sh", "lib/own.sh"):
+            with self.subTest(name=name):
+                self.settings(f"function shell_files {{ printf '%s\\0' {name}; }}\n")
+                inode = self.write(name, self.UNFORMATTED).stat().st_ino
+                result = self.run_bin("format")
+                self.assertPasses(result)
+                self.assertEqual(
+                    self.runner_lines(result), ["format: formatting 1 shell file(s)"]
+                )
+                self.assertEqual(self.text(name), self.FORMATTED)
+                self.assertEqual((self.root / name).stat().st_ino, inode)
+
+    def test_a_formatted_file_is_left_untouched(self):
+        self.settings("function shell_files { printf '%s\\0' a.sh; }\n")
+        path = self.write("a.sh", self.FORMATTED)
+        os.utime(path, ns=(0, 0))
+        before = path.stat()
+        self.assertPasses(self.run_bin("format"))
+        after = path.stat()
+        self.assertEqual(
+            (after.st_ino, after.st_mtime_ns), (before.st_ino, before.st_mtime_ns)
+        )
+        self.assertEqual(self.text("a.sh"), self.FORMATTED)
+
+    def test_top_level_and_nested_files_are_formatted_together(self):
+        self.settings("function shell_files { printf '%s\\0' a.sh d/b.sh; }\n")
+        self.write("a.sh", self.UNFORMATTED)
+        self.write("d/b.sh", self.UNFORMATTED)
+        result = self.run_bin("format")
+        self.assertPasses(result)
+        self.assertEqual(
+            self.runner_lines(result), ["format: formatting 2 shell file(s)"]
+        )
+        self.assertEqual(self.text("a.sh"), self.FORMATTED)
+        self.assertEqual(self.text("d/b.sh"), self.FORMATTED)
+
+    def test_a_file_shfmt_cannot_parse_leaves_the_next_one_to_format(self):
+        self.settings("function shell_files { printf '%s\\0' a.sh b.sh d/c.sh; }\n")
+        self.write("a.sh", "f() {\n")
+        self.write("b.sh", self.UNFORMATTED)
+        self.write("d/c.sh", self.UNFORMATTED)
+        result = self.run_bin("format")
+        self.assertFails(result, "a.sh")
+        self.assertEqual(self.text("a.sh"), "f() {\n")
+        self.assertEqual(self.text("b.sh"), self.FORMATTED)
+        self.assertEqual(self.text("d/c.sh"), self.FORMATTED)
+
+    def test_the_shell_and_json_passes_together_leave_tmpdir_empty(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        tmp = pathlib.Path(directory.name)
+        self.settings(
+            "function shell_files { printf '%s\\0' a.sh; }\n"
+            "function json_files { printf '%s\\0' a.json; }\n"
+        )
+        self.write("a.sh", self.UNFORMATTED)
+        # Formatted as a bare word, which names a file in the root.
+        self.write("a.json", "1\n")
+        self.write("1", "kept\n")
+        result = self.run_bin("format", env={"TMPDIR": str(tmp)})
+        self.assertPasses(result)
+        self.assertEqual(
+            self.runner_lines(result),
+            [
+                "format: formatting 1 shell file(s)",
+                "format: formatting 1 JSON file(s)",
+            ],
+        )
+        self.assertEqual(self.text("a.sh"), self.FORMATTED)
+        self.assertEqual(self.text("1"), "kept\n")
+        self.assertEqual(list(tmp.iterdir()), [])
+
+
 class CheckingPassTest(Repository):
     """The passes that only check: each passes a sound tree and fails a broken one."""
 
@@ -760,13 +875,17 @@ class CoverageTest(Repository):
 
     def setUp(self):
         super().setUp()
-        self.out = pathlib.Path(os.path.realpath(self.root)) / "tmp" / "coverage"
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.tmp = pathlib.Path(directory.name)
 
     def run_coverage(self, *args):
-        # Without the coverage of a run around this one, so the run measures on its own.
+        # Without the coverage of a run around this one, so the run measures on its own;
+        # TMPDIR of its own, so what the run leaves there shows.
         return self.run_bin(
             "coverage",
             *args,
+            env={"TMPDIR": str(self.tmp)},
             dropping=(
                 *COVERAGE_ENVIRONMENT,
                 "COVERAGE_FILE",
@@ -775,14 +894,22 @@ class CoverageTest(Repository):
         )
 
     def tree(self):
-        """Every path outside tmp/, so a run's writes elsewhere show."""
+        """Every path in the tree, with its contents, so any write shows."""
         return sorted(
-            str(p.relative_to(self.root))
+            (str(p.relative_to(self.root)), p.is_file() and p.read_bytes())
             for p in self.root.rglob("*")
-            if p.relative_to(self.root).parts[0] != "tmp"
         )
 
-    def test_writes_both_reports_of_the_repository_s_own_files(self):
+    def assertLeavesNothing(self, before):
+        self.assertEqual(self.tree(), before)
+        self.assertEqual(list(self.tmp.iterdir()), [])
+
+    def assertReports(self, output, *patterns):
+        for pattern in patterns:
+            with self.subTest(pattern=pattern):
+                self.assertRegex(output, re.compile(pattern, re.MULTILINE))
+
+    def test_prints_both_reports_of_the_repository_s_own_files(self):
         self.settings("function pytest_args { :; }\n")
         self.write("test/test_a.py", self.TRACING_TEST)
         self.write("bin/hello", "#!/usr/bin/env bash\necho hello\n").chmod(0o755)
@@ -794,51 +921,51 @@ class CoverageTest(Repository):
             [
                 "coverage: running bin/test under kcov",
                 "test: running pytest",
-                "coverage: shell report written to tmp/coverage/shell/index.html",
-                "coverage: python report written to tmp/coverage/python/index.html",
+                "coverage: reporting the shell's coverage",
             ],
         )
         self.assertIn("1 passed", result.stdout)
-        self.assertEqual(self.tree(), before)
-        (shell,) = self.out.glob("shell/test.*/cobertura.xml")
-        shell_report = shell.read_text(encoding="utf-8")
-        self.assertIn("hello", shell_report)
-        # This repository's runners, which a linking repository does not own.
-        for runner in ("runner", "settings", "test"):
-            with self.subTest(runner=runner):
-                self.assertNotIn(f'filename="{runner}"', shell_report)
-                self.assertNotIn(str(BIN / runner), shell_report)
-        self.assertIn(
-            "test_a.py",
-            (self.out / "python" / "index.html").read_text(encoding="utf-8"),
+        self.assertReports(
+            result.stdout,
+            r"^test/test_a\.py +\d+ +0 +100%$",
+            r"^bin/hello +1 +0 +100%$",
         )
-        self.assertTrue((self.out / "python.data").is_file())
+        self.assertEqual(result.stdout.count("\nTOTAL "), 2)
+        # This repository's runners, which a linking repository does not own.
+        self.assertNotIn(str(BIN), result.stdout)
+        self.assertLeavesNothing(before)
 
-    def test_replaces_the_last_report(self):
-        self.settings("")
-        self.write("tmp/coverage/stale", "")
-        self.write("tmp/coverage/shell/stale", "")
-        self.write("tmp/kept", "")
-        result = self.run_coverage()
-        self.assertPasses(result)
-        self.assertEqual(self.runner_lines(result)[0], f"coverage: removing {self.out}")
-        self.assertFalse((self.out / "stale").exists())
-        self.assertFalse((self.out / "shell" / "stale").exists())
-        self.assertTrue((self.out / "shell" / "index.html").is_file())
-        self.assertTrue((self.root / "tmp" / "kept").is_file())
-
-    def test_without_pytest_args_writes_only_the_shell_report(self):
-        self.settings("")
+    def test_without_pytest_args_prints_only_the_shell_report(self):
+        # The settings file is the repository's own shell, which every runner sources.
+        self.settings("# shellcheck disable=SC2034\nunused=1\n")
+        before = self.tree()
         result = self.run_coverage()
         self.assertPasses(result)
         self.assertEqual(
             self.runner_lines(result),
             [
                 "coverage: running bin/test under kcov",
-                "coverage: shell report written to tmp/coverage/shell/index.html",
+                "coverage: reporting the shell's coverage",
             ],
         )
-        self.assertFalse((self.out / "python").exists())
+        self.assertReports(result.stdout, r"^bin/settings +1 +0 +100%$")
+        self.assertEqual(result.stdout.count("TOTAL "), 1)
+        self.assertLeavesNothing(before)
+
+    def test_reports_no_shell_where_none_of_the_repository_s_own_ran(self):
+        self.settings("")
+        before = self.tree()
+        result = self.run_coverage()
+        self.assertPasses(result)
+        self.assertEqual(
+            self.runner_lines(result),
+            [
+                "coverage: running bin/test under kcov",
+                "coverage: no shell of the repository's own ran",
+            ],
+        )
+        self.assertEqual(result.stdout, "")
+        self.assertLeavesNothing(before)
 
     def test_a_failing_test_fails_the_run(self):
         self.settings("function pytest_args { :; }\n")
@@ -846,9 +973,11 @@ class CoverageTest(Repository):
             "test/test_a.py",
             PASSING_TEST.replace("pass", "self.fail('fails')"),
         )
+        before = self.tree()
         result = self.run_coverage("test/test_a.py")
         self.assertFails(result, "1 failed")
-        self.assertNotIn("report written", result.stderr)
+        self.assertNotIn("coverage: reporting", result.stderr)
+        self.assertLeavesNothing(before)
 
     def test_named_tests_without_pytest_args_fail(self):
         self.settings("")
@@ -903,3 +1032,192 @@ class PreviewTest(Repository):
         )
         listening = {(line.split()[1], line.split()[3]) for line in table}
         self.assertIn(("00000000:1F90", "0A"), listening)
+
+
+# Stands in for docker, recording its arguments NUL-separated, so the run
+# bin/format-host would start shows without starting it.
+STUB_DOCKER = """#!/usr/bin/env bash
+printf '%s\\0' "$@" >"$STUB_ARGV"
+exit "${STUB_STATUS:-0}"
+"""
+
+# A git that reads no configuration but the repository's own, so the host's ignore
+# rules count for nothing.
+GIT_ENVIRONMENT = {
+    "GIT_AUTHOR_EMAIL": "a@example.com",
+    "GIT_AUTHOR_NAME": "a",
+    "GIT_COMMITTER_EMAIL": "a@example.com",
+    "GIT_COMMITTER_NAME": "a",
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+}
+
+
+class FormatHostTest(temp_tree.TempTreeTestCase):
+    """bin/format-host, on a git repository, with docker stubbed."""
+
+    def setUp(self):
+        super().setUp()
+        # Physical, as bash's $PWD is once a child starts in it.
+        self.root = pathlib.Path(os.path.realpath(self.root))
+        stub = tempfile.TemporaryDirectory()
+        self.addCleanup(stub.cleanup)
+        self.stub = pathlib.Path(stub.name)
+        self.argv = self.stub / "argv"
+        (self.stub / "docker").write_text(STUB_DOCKER, encoding="utf-8")
+        (self.stub / "docker").chmod(0o755)
+        self.env = {
+            **child_environment(),
+            **GIT_ENVIRONMENT,
+            # So git finds no repository above the test's own.
+            "GIT_CEILING_DIRECTORIES": str(self.root.parent),
+            "PATH": f"{self.stub}:{os.environ['PATH']}",
+            "STUB_ARGV": str(self.argv),
+        }
+        self.git("init", "-q")
+
+    def git(self, *args, cwd=None):
+        subprocess.run(
+            ["git", *args],
+            cwd=cwd or self.root,
+            env=self.env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=True,
+            timeout=WAIT_S,
+        )
+
+    def tracked(self, *names):
+        """Adds each name to the index, written first unless already written."""
+        for name in names:
+            if not (self.root / name).exists():
+                self.write(name, "a\n")
+        self.git("add", "--", *names)
+
+    def run_host(self, *args, cwd=None, env=None):
+        return subprocess.run(
+            [BIN / "format-host", *args],
+            cwd=cwd or self.root,
+            env={**self.env, **(env or {})},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=WAIT_S,
+        )
+
+    def mounts(self, result):
+        """The paths the run would bind, from the docker command it started."""
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        argv = self.argv.read_text(encoding="utf-8").split("\0")[:-1]
+        head = ["compose", "--profile", "test", "run", "--rm", "--build"]
+        head += ["-e", "DESIGN_TOOLS_FORMAT_MOUNTS=1"]
+        self.assertEqual(argv[: len(head)], head)
+        self.assertEqual(argv[-2:], ["design", "format"])
+        volumes = argv[len(head) : -2]
+        self.assertEqual(volumes[::2], ["-v"] * (len(volumes) // 2))
+        paths = []
+        for volume in volumes[1::2]:
+            source, target = volume.split(":")
+            path = target.removeprefix("/home/x/r/")
+            self.assertEqual(source, f"{self.root}/{path}")
+            paths.append(path)
+        return sorted(paths)
+
+    def assertRefuses(self, result, message, status=1):
+        self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+        self.assertIn(message, result.stderr)
+        self.assertFalse(self.argv.exists())
+
+    def test_mounts_each_top_level_entry_by_its_absolute_path(self):
+        self.tracked("README.md", "src/a.css", "src/b/c.css", ".github/w.yml")
+        # Untracked, but not ignored: a new top-level file and directory, and a file
+        # in a tracked directory, which comes with it.
+        self.write("new.md", "a\n")
+        self.write("docs/x.md", "a\n")
+        self.write("src/new.css", "a\n")
+        self.assertEqual(
+            self.mounts(self.run_host()),
+            [".github", "README.md", "docs", "new.md", "src"],
+        )
+
+    def test_leaves_out_ignored_paths_tmp_and_submodules(self):
+        self.write(".gitignore", "/tmp/\n*.log\n")
+        self.tracked(".gitignore", "src/a.css", "lib/own.sh")
+        self.write("tmp/state", "a\n")
+        self.write("debug.log", "a\n")
+        self.write("src/x.log", "a\n")
+        sub = self.root / "lib" / "sub"
+        self.write("lib/sub/f", "a\n")
+        self.git("init", "-q", cwd=sub)
+        self.git("add", "f", cwd=sub)
+        self.git("commit", "-q", "-m", "a", cwd=sub)
+        self.git("add", "lib/sub")
+        self.assertEqual(
+            self.mounts(self.run_host()), [".gitignore", "lib/own.sh", "src/a.css"]
+        )
+
+    def test_drops_a_deleted_file_and_a_symlink(self):
+        self.tracked("kept.md", "gone.md")
+        (self.root / "link").symlink_to("kept.md")
+        self.git("add", "link")
+        (self.root / "gone.md").unlink()
+        (self.root / "untracked-link").symlink_to("kept.md")
+        self.assertEqual(self.mounts(self.run_host()), ["kept.md"])
+
+    def test_leaves_out_an_untracked_dot_entry(self):
+        self.write(".gitignore", "*.log\n")
+        self.tracked(".gitignore", ".env.example", "src/a.css")
+        self.write(".claude/settings.json", "{}\n")
+        self.write(".a.swp", "a\n")
+        # In a directory taken entry by entry, for its ignored file.
+        self.write("src/x.log", "a\n")
+        self.write("src/.a.css.swp", "a\n")
+        self.assertEqual(
+            self.mounts(self.run_host()), [".env.example", ".gitignore", "src/a.css"]
+        )
+
+    def test_leaves_nothing_in_tmpdir(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        tmp = pathlib.Path(directory.name)
+        self.tracked("a.md")
+        self.assertEqual(self.mounts(self.run_host(env={"TMPDIR": str(tmp)})), ["a.md"])
+        self.assertEqual(list(tmp.iterdir()), [])
+
+    def test_passes_on_docker_s_status(self):
+        self.tracked("a.md")
+        result = self.run_host(env={"STUB_STATUS": "3"})
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+
+    def test_refuses_a_path_holding_a_colon(self):
+        self.tracked("a.md", "a:b.md")
+        self.assertRefuses(
+            self.run_host(),
+            f"format-host: {self.root}/a:b.md: cannot bind-mount a path holding a"
+            " colon",
+        )
+
+    def test_refuses_an_empty_list(self):
+        self.assertRefuses(self.run_host(), "format-host: git lists nothing to mount")
+        self.tracked("gone.md")
+        (self.root / "gone.md").unlink()
+        self.assertRefuses(self.run_host(), "format-host: git lists nothing to mount")
+
+    def test_refuses_to_run_outside_a_repository(self):
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        self.assertRefuses(
+            self.run_host(cwd=outside.name), "not a git repository", status=128
+        )
+
+    def test_refuses_to_run_below_the_root(self):
+        self.tracked("src/a.css")
+        self.assertRefuses(
+            self.run_host(cwd=self.root / "src"),
+            "format-host: run from the root of the repository, not src/",
+        )
+
+    def test_refuses_an_argument(self):
+        self.tracked("a.md")
+        self.assertRefuses(self.run_host("x"), "Usage: format-host", status=2)
