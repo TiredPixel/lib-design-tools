@@ -240,10 +240,9 @@ ENV PATH=/opt/js/node_modules/.bin:$PATH
 
 # uid 1000 so a bind-mounted tree is writable from a host whose user is the
 # usual 1000.
-RUN if id -u 1000 > /dev/null 2>&1; then userdel -r "$(id -nu 1000)"; fi && \
-    useradd -u 1000 x -m && \
-    mkdir /home/x/r && \
-    chown -R x:x /home/x
+RUN useradd -u 1000 x -m \
+    && mkdir /home/x/r \
+    && chown -R x:x /home/x
 #-------------------------------------------------------------------------------
 USER 1000
 

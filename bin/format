@@ -5,7 +5,10 @@
 #
 # ShellCheck sees no assignment for the names bin/runner sets, since it does not
 # follow bin/runner, nor for the arrays read_set and the readers built on it
-# assign through a nameref, which it cannot follow.
+# assign through a nameref, which it cannot follow. Suppressed here rather than
+# fixed with a source directive, which cannot reach bin/runner through another
+# repository's link to this runner, or in .shellcheckrc, which would hide the
+# rule in bin/runner and tools/ too.
 # shellcheck disable=SC2154
 set -Eeuo pipefail
 shopt -s inherit_errexit failglob

@@ -9,7 +9,7 @@ SHELL := bash
 
 # --profile test so the design and design_test services are built here rather
 # than on demand by the --build the other targets carry. preview, under a
-# profile of its own, runs the same dev image as design.
+# profile of its own, builds the same dev stage as design on demand.
 build:
 	$(DESIGN_TOOLS)/lib/shell-common/docker/build-compose --profile test
 format:

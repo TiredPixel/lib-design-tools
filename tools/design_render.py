@@ -122,7 +122,7 @@ _CLASS_SELECTOR = re.compile(r"\.(-?[A-Za-z_][A-Za-z0-9_-]*)")
 _PDF_PAGE = re.compile(rb"/Type\s*/Page(?![s\w])")
 
 HTML_SUFFIXES = frozenset({".html", ".htm"})
-_INDEX_NAMES = http.server.SimpleHTTPRequestHandler.index_pages
+_INDEX_PAGES = http.server.SimpleHTTPRequestHandler.index_pages
 
 
 class RenderError(Exception):
@@ -298,7 +298,7 @@ def refused(directory: str, url: str, path: str) -> bool:
     root = pathlib.Path(directory).resolve()
     served = pathlib.Path(path)
     if served.is_dir():
-        indexes = (served / name for name in _INDEX_NAMES)
+        indexes = (served / name for name in _INDEX_PAGES)
         served = next((index for index in indexes if index.is_file()), served)
     target = served.resolve()
     if not target.is_relative_to(root):

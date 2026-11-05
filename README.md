@@ -34,7 +34,7 @@ Each command prints its usage with `--help`.
 
 Importable from a repository's own Python tests, with `tools/` on the path, as `bin/test` puts it:
 
-- `tools/design_colour.py` – colour maths: WCAG luminance and contrast, compositing a translucent colour over a ground, CIELAB lightness, chroma and hue, and CIE76 ΔE.
+- `tools/design_colour.py` – colour maths: WCAG luminance and contrast, compositing a translucent colour over a ground, CIELAB lightness, chroma and hue, the gap and spread between hues and whether one lies on the arc between two others, and CIE76 ΔE.
 - `tools/design_render.py` – the harness under `render-check`: serving a tree, rendering a page or printing it to PDF in headless Chromium, and reading what it reports.
 - `tools/pytest_no_skips.py` – a pytest plugin, which `bin/test` loads, adding `--no-skips`, which fails a run in which any test skipped.
 
@@ -156,6 +156,7 @@ A `bin/settings` for a design system with a preview page and a palette:
 ```bash
 # shellcheck shell=bash
 
+# Read only by bin/preview, so it looks unused here.
 # shellcheck disable=SC2034
 preview_start=/preview/
 
@@ -210,7 +211,7 @@ make format
 
 ## Building
 
-`make build` builds both stages (*The image*):
+`make build` builds the image's three stages (*The image*):
 
 ```sh
 make build

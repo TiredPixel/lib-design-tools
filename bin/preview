@@ -21,7 +21,8 @@ if [ -z "${preview_start:-}" ]; then
     exit 1
 fi
 
-# tools comes from bin/runner, which ShellCheck does not follow.
+# tools comes from bin/runner, which ShellCheck does not follow, and no source
+# directive can reach through another repository's link to this runner.
 # shellcheck disable=SC2154
 exec "$tools/preview-serve" --address=0.0.0.0 --port=8080 --root=. \
     --start="$preview_start"
