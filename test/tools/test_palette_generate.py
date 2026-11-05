@@ -8,6 +8,8 @@ import textwrap
 import temp_tree
 import tools_loader
 
+USAGE = "Usage: palette-generate YAML --prefix P --json OUT --css OUT [--check]\n"
+
 
 def run(*args, cwd, env=None):
     return subprocess.run(
@@ -232,7 +234,7 @@ class PaletteGenerateTest(Workspace):
             with self.subTest(args=args):
                 result = run(*args, cwd=self.root)
                 self.assertEqual(result.returncode, 2)
-                self.assertIn("usage:", result.stderr)
+                self.assertEqual(result.stderr, USAGE)
 
     def test_options_of_the_same_name_in_the_environment_count_for_nothing(self):
         self.write("p.yml", self.YAML)
@@ -247,12 +249,12 @@ class PaletteGenerateTest(Workspace):
         self.assertFalse((self.root / "e.css").exists())
         result = run("p.yml", cwd=self.root, env=environment)
         self.assertEqual(result.returncode, 2)
-        self.assertIn("usage:", result.stderr)
+        self.assertEqual(result.stderr, USAGE)
 
     def test_help_prints_usage_and_succeeds(self):
         for flag in ("--help", "-h"):
             with self.subTest(flag=flag):
                 result = run("p.yml", flag, cwd=self.root)
                 self.assertEqual(result.returncode, 0)
-                self.assertTrue(result.stdout.startswith("usage: palette-generate"))
+                self.assertEqual(result.stdout, USAGE)
                 self.assertEqual(result.stderr, "")

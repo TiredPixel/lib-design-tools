@@ -103,6 +103,7 @@ def resolved_path(start: str) -> str:
 
 def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
+        formatter_class=design_render.UsageFormatter,
         prog="preview-serve",
         description="Serve a tree as it is on disk, for previewing it.",
     )
@@ -150,7 +151,11 @@ def main(argv: list[str] | None = None) -> int:
         arguments.root.resolve(), arguments.address, arguments.port, arguments.start
     )
     host, port = server.server_address[:2]
-    print(f"preview-serve: {arguments.root} at http://{host}:{port}/", flush=True)
+    print(
+        f"preview-serve: {arguments.root} at http://{host}:{port}/",
+        file=sys.stderr,
+        flush=True,
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

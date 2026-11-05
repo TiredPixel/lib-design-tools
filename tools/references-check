@@ -600,6 +600,7 @@ def check_css(
 
 def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
+        formatter_class=design_render.UsageFormatter,
         prog="references-check",
         description="Fail on local references in HTML and CSS that do not resolve.",
     )
@@ -698,7 +699,9 @@ def main(argv: list[str] | None = None) -> int:
                     path, arguments.root, arguments.no_external, exemptions
                 )
         except UnicodeDecodeError as error:
-            print(f"{path}: not valid UTF-8: {error}", file=sys.stderr)
+            print(
+                f"references-check: {path}: not valid UTF-8: {error}", file=sys.stderr
+            )
             failures += 1
             every_file_read = False
             continue
@@ -706,10 +709,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{path}:{line}: {message}", file=sys.stderr)
         failures += len(problems)
     for message in stale_exemptions(exemptions, arguments.root, every_file_read):
-        print(message, file=sys.stderr)
+        print(f"references-check: {message}", file=sys.stderr)
         failures += 1
     print(
-        f"checked {len(arguments.files)} file(s): {failures} problem(s)",
+        f"references-check: checked {len(arguments.files)} file(s): "
+        f"{failures} problem(s)",
         file=sys.stderr,
     )
     return 1 if failures else 0

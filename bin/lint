@@ -19,20 +19,17 @@ shopt -s inherit_errexit failglob
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
 
 if defines palette_args; then
-    echo -e "\n=== LINT PALETTE\n"
-
     read_set palette_args palette
+    echo "lint: running palette-generate --check" >&2
     "$tools/palette-generate" "${palette[@]}" --check || {
-        echo "The generated palette files are stale." >&2
+        echo "lint: generated palette files are stale" >&2
         exit 1
     }
 fi
 
 if defines shell_files; then
-    echo -e "\n=== LINT SHELL\n"
-
     read_files shell_files shell
-    echo "checking ${#shell[@]} shell file(s)" >&2
+    echo "lint: checking ${#shell[@]} shell file(s)" >&2
     # -x, so ShellCheck follows a sourced file the set does not name rather than
     # failing on SC1091.
     shellcheck -x "${shell[@]}"
@@ -40,28 +37,22 @@ if defines shell_files; then
 fi
 
 if defines python_files; then
-    echo -e "\n=== LINT PYTHON\n"
-
     read_files python_files python
-    echo "checking ${#python[@]} Python file(s)" >&2
+    echo "lint: checking ${#python[@]} Python file(s)" >&2
     ruff format --check "${python[@]}"
     ruff check "${python[@]}"
 fi
 
 if defines yaml_files; then
-    echo -e "\n=== LINT YAML\n"
-
     read_files yaml_files yaml
-    echo "checking ${#yaml[@]} YAML file(s)" >&2
+    echo "lint: checking ${#yaml[@]} YAML file(s)" >&2
     printf '%s\0' "${yaml[@]}" | "$design_tools/lib/shell-common/lint/yaml-keys"
     yamllint --strict -- "${yaml[@]}"
 fi
 
 if defines json_files; then
-    echo -e "\n=== LINT JSON\n"
-
     read_files json_files json
-    echo "checking ${#json[@]} JSON file(s)" >&2
+    echo "lint: checking ${#json[@]} JSON file(s)" >&2
     status=0
     for f in "${json[@]}"; do
         if ! jq "${jq_args[@]}" "$f" | diff -u -- "$f" -; then
@@ -73,52 +64,41 @@ if defines json_files; then
 fi
 
 if defines js_files; then
-    echo -e "\n=== LINT JAVASCRIPT\n"
-
     read_files js_files js
-    echo "checking ${#js[@]} JavaScript file(s)" >&2
-    semistandard "${js[@]}" | snazzy
+    echo "lint: checking ${#js[@]} JavaScript file(s)" >&2
+    semistandard "${js[@]}"
 fi
 
 if defines css_files || defines html_files; then
-    echo -e "\n=== LINT CSS AND HTML\n"
-
     read_prettier_files prettied
-    echo "checking ${#prettied[@]} CSS and HTML file(s)" >&2
+    echo "lint: checking ${#prettied[@]} CSS and HTML file(s)" >&2
     prettier --check "${prettied[@]}"
 fi
 
 if defines md_files; then
-    echo -e "\n=== LINT MARKDOWN\n"
-
     read_files md_files md
-    echo "checking ${#md[@]} Markdown file(s)" >&2
+    echo "lint: checking ${#md[@]} Markdown file(s)" >&2
     mdformat "${mdformat_args[@]}" --check "${md[@]}"
 fi
 
 if defines toml_files; then
-    echo -e "\n=== LINT TOML\n"
-
     read_files toml_files toml
-    echo "checking ${#toml[@]} TOML file(s)" >&2
+    echo "lint: checking ${#toml[@]} TOML file(s)" >&2
     taplo fmt --check "${toml[@]}"
 fi
 
 if defines docker_files; then
-    echo -e "\n=== LINT DOCKER\n"
 
     read_files docker_files docker
-    echo "checking ${#docker[@]} Docker file(s)" >&2
+    echo "lint: checking ${#docker[@]} Docker file(s)" >&2
     dockerfmt "${dockerfmt_args[@]}" --check "${docker[@]}"
     hadolint "${docker[@]}"
     "$design_tools/lib/shell-common/lint/dockerfile-locks" -- "${docker[@]}"
 fi
 
 if defines compose_files; then
-    echo -e "\n=== LINT COMPOSE\n"
-
     read_files compose_files compose
-    echo "checking ${#compose[@]} Compose file(s)" >&2
+    echo "lint: checking ${#compose[@]} Compose file(s)" >&2
     # One file at a time, since Compose merges every -f it is given into one
     # project and would check only the merge. Every profile is enabled, since
     # Compose leaves a service under a profile out of the project it checks.
@@ -133,33 +113,25 @@ if defines compose_files; then
 fi
 
 if defines workflow_files; then
-    echo -e "\n=== LINT WORKFLOWS\n"
-
     read_files workflow_files workflow
-    echo "checking ${#workflow[@]} workflow file(s)" >&2
+    echo "lint: checking ${#workflow[@]} workflow file(s)" >&2
     actionlint "${workflow[@]}"
 fi
 
 if defines make_files; then
-    echo -e "\n=== LINT MAKE\n"
-
     read_files make_files make
-    echo "checking ${#make[@]} make file(s)" >&2
+    echo "lint: checking ${#make[@]} make file(s)" >&2
     checkmake "${make[@]}"
 fi
 
 if defines references_args; then
-    echo -e "\n=== LINT REFERENCES\n"
-
     read_set references_args references
+    echo "lint: running references-check" >&2
     "$tools/references-check" "${references[@]}"
 fi
 
 if defines render_args; then
-    echo -e "\n=== LINT RENDER\n"
-
     read_set render_args render
+    echo "lint: running render-check" >&2
     "$tools/render-check" "${render[@]}"
 fi
-
-echo

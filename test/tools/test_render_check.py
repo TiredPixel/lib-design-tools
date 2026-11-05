@@ -517,8 +517,8 @@ class DumpDomTest(TempDirTestCase):
     def test_timeout_kills_the_whole_group(self) -> None:
         chromium = self.fake_chromium(SPAWN_PROFILE_WRITER + "time.sleep(60)\n")
         self.time_out_once_ready()
-        with self.assertRaisesRegex(design_render.RenderError, "within 3s"):
-            design_render.dump_dom("http://x/", chromium=chromium, timeout_s=3)
+        with self.assertRaisesRegex(design_render.RenderError, "within 0.5s"):
+            design_render.dump_dom("http://x/", chromium=chromium, timeout_s=0.5)
         self.assert_writer_gone()
 
     def test_kills_children_left_after_exit(self) -> None:
@@ -636,7 +636,11 @@ class RenderCheckTest(TempDirTestCase):
         ):
             render_check.main(list(arguments))
         self.assertEqual(caught.exception.code, 2)
-        return stderr.getvalue()
+        output = stderr.getvalue()
+        self.assertRegex(
+            output, r"\AUsage: render-check .*\n(.*\n)*render-check: error: .+\n\Z"
+        )
+        return output
 
     def test_clean_pages(self) -> None:
         self.write("a.html", "<p>a</p>")
@@ -653,7 +657,7 @@ class RenderCheckTest(TempDirTestCase):
             str(self.root / "b/c.html"),
         )
         self.assertEqual(status, 0)
-        self.assertEqual(output, "checked 2 page(s): 0 problem(s)\n")
+        self.assertEqual(output, "render-check: checked 2 page(s): 0 problem(s)\n")
 
     def test_captured_errors_fail(self) -> None:
         page = self.write("a.html", "<p>a</p>")
@@ -668,9 +672,9 @@ class RenderCheckTest(TempDirTestCase):
         self.assertEqual(status, 1)
         self.assertEqual(
             output,
-            f"{page}: failed to load <link> http://h/x.css\n"
-            f"{page}: unhandledrejection: nope\n"
-            "checked 1 page(s): 2 problem(s)\n",
+            f"render-check: {page}: failed to load <link> http://h/x.css\n"
+            f"render-check: {page}: unhandledrejection: nope\n"
+            "render-check: checked 1 page(s): 2 problem(s)\n",
         )
 
     def test_error_marker_fails(self) -> None:
@@ -688,7 +692,8 @@ class RenderCheckTest(TempDirTestCase):
         )
         self.assertEqual(status, 1)
         self.assertIn(
-            f"{page}: rendered <div> matching .load-error (rendered DOM line 2)\n",
+            f"render-check: {page}: rendered <div> matching .load-error "
+            "(rendered DOM line 2)\n",
             output,
         )
 
@@ -707,7 +712,7 @@ class RenderCheckTest(TempDirTestCase):
             "--root", str(self.root), "--chromium", chromium, str(page)
         )
         self.assertEqual(status, 1)
-        self.assertIn(f"{page}: ", output)
+        self.assertIn(f"render-check: {page}: ", output)
         self.assertIn("exited 1", output)
 
     def test_timeout_option(self) -> None:
@@ -742,7 +747,7 @@ class RenderCheckTest(TempDirTestCase):
             "--chromium",
             chromium,
             "--timeout-s",
-            "3",
+            "0.5",
             str(hangs),
             str(clean),
         )
@@ -750,9 +755,14 @@ class RenderCheckTest(TempDirTestCase):
         self.assertRegex(
             output,
             "^"
-            + re.escape(f"{hangs}: {chromium} did not finish http://127.0.0.1:")
+            + re.escape(
+                f"render-check: {hangs}: {chromium} did not finish http://127.0.0.1:"
+            )
             + r"\d+"
-            + re.escape("/hangs.html within 3.0s\nchecked 2 page(s): 1 problem(s)\n")
+            + re.escape(
+                "/hangs.html within 0.5s\n"
+                "render-check: checked 2 page(s): 1 problem(s)\n"
+            )
             + "$",
         )
         self.assert_writer_gone()
@@ -818,6 +828,16 @@ class RenderCheckTest(TempDirTestCase):
             with self.subTest(message=message):
                 self.assertIn(message, self.run_usage_error(*arguments))
 
+    def test_help_opens_with_usage(self) -> None:
+        stdout = io.StringIO()
+        with (
+            contextlib.redirect_stdout(stdout),
+            self.assertRaises(SystemExit) as caught,
+        ):
+            render_check.main(["--help"])
+        self.assertEqual(caught.exception.code, 0)
+        self.assertTrue(stdout.getvalue().startswith("Usage: render-check "))
+
     def test_runs_as_a_command(self) -> None:
         page = self.write("a.html", "<p>a</p>")
         chromium = self.printing_chromium(CLEAN_DOM)
@@ -834,7 +854,9 @@ class RenderCheckTest(TempDirTestCase):
             timeout=300,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stderr, "checked 1 page(s): 0 problem(s)\n")
+        self.assertEqual(
+            result.stderr, "render-check: checked 1 page(s): 0 problem(s)\n"
+        )
 
 
 @unittest.skipUnless(

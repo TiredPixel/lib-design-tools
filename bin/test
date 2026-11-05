@@ -26,9 +26,9 @@ tests=("$@")
 # xdist only warns at a count it cannot read, and runs on every CPU instead.
 if [ -n "${PYTEST_XDIST_AUTO_NUM_WORKERS+set}" ] &&
     ! [[ $PYTEST_XDIST_AUTO_NUM_WORKERS =~ ^[1-9][0-9]*$ ]]; then
-    printf 'PYTEST_XDIST_AUTO_NUM_WORKERS is %q, not a whole number of' \
+    printf 'test: PYTEST_XDIST_AUTO_NUM_WORKERS is %q, not a whole number' \
         "$PYTEST_XDIST_AUTO_NUM_WORKERS" >&2
-    printf ' at least 1\n' >&2
+    printf ' of at least 1\n' >&2
     exit 1
 fi
 
@@ -45,13 +45,10 @@ if [ ${#tests[@]} -eq 0 ]; then
 fi
 
 if defines pytest_args; then
-    echo -e "\n=== TEST PYTHON\n"
-
     read_set pytest_args options may-be-empty
+    echo "test: running pytest" >&2
     # The plugin only adds --no-skips, which does nothing unless passed. No
     # cache provider, so a run writes no .pytest_cache into the tree it checks.
     PYTHONPATH=$tools pytest -p no:cacheprovider -p pytest_no_skips \
         "${options[@]}" "${tests[@]}"
 fi
-
-echo

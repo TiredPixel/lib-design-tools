@@ -21,7 +21,7 @@
 set -Eeuo pipefail
 shopt -s inherit_errexit failglob
 
-synopsis="usage: palette-generate YAML --prefix P --json OUT --css OUT [--check]"
+synopsis="Usage: palette-generate YAML --prefix P --json OUT --css OUT [--check]"
 
 usage() {
     echo "$synopsis" >&2

@@ -24,34 +24,27 @@ source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
 status=0
 
 if defines palette_args; then
-    echo -e "\n=== FORMAT PALETTE\n"
-
     read_set palette_args palette
+    echo "format: running palette-generate" >&2
     "$tools/palette-generate" "${palette[@]}" || status=1
 fi
 
 if defines shell_files; then
-    echo -e "\n=== FORMAT SHELL\n"
-
     read_files shell_files shell
-    echo "formatting ${#shell[@]} shell file(s)" >&2
+    echo "format: formatting ${#shell[@]} shell file(s)" >&2
     shfmt "${shfmt_args[@]}" -w "${shell[@]}" || status=1
 fi
 
 if defines python_files; then
-    echo -e "\n=== FORMAT PYTHON\n"
-
     read_files python_files python
-    echo "formatting ${#python[@]} Python file(s)" >&2
+    echo "format: formatting ${#python[@]} Python file(s)" >&2
     ruff check --fix "${python[@]}" || status=1
     ruff format "${python[@]}" || status=1
 fi
 
 if defines yaml_files; then
-    echo -e "\n=== FORMAT YAML\n"
-
     read_files yaml_files yaml
-    echo "formatting ${#yaml[@]} YAML file(s)" >&2
+    echo "format: formatting ${#yaml[@]} YAML file(s)" >&2
     # -P, since yq otherwise keeps each value's flow or block style and quoting,
     # so the same data could pass in several layouts; jq gives JSON one layout
     # by default.
@@ -61,10 +54,8 @@ if defines yaml_files; then
 fi
 
 if defines json_files; then
-    echo -e "\n=== FORMAT JSON\n"
-
     read_files json_files json
-    echo "formatting ${#json[@]} JSON file(s)" >&2
+    echo "format: formatting ${#json[@]} JSON file(s)" >&2
     # Captured before writing, since redirecting jq's output to the file it
     # reads would truncate it before reading; a file jq cannot read is left as
     # it is.
@@ -78,44 +69,34 @@ if defines json_files; then
 fi
 
 if defines js_files; then
-    echo -e "\n=== FORMAT JAVASCRIPT\n"
-
     read_files js_files js
-    echo "formatting ${#js[@]} JavaScript file(s)" >&2
+    echo "format: formatting ${#js[@]} JavaScript file(s)" >&2
     semistandard --fix "${js[@]}" || status=1
 fi
 
 if defines css_files || defines html_files; then
-    echo -e "\n=== FORMAT CSS AND HTML\n"
-
     read_prettier_files prettied
-    echo "formatting ${#prettied[@]} CSS and HTML file(s)" >&2
+    echo "format: formatting ${#prettied[@]} CSS and HTML file(s)" >&2
     prettier --write "${prettied[@]}" || status=1
 fi
 
 if defines md_files; then
-    echo -e "\n=== FORMAT MARKDOWN\n"
-
     read_files md_files md
-    echo "formatting ${#md[@]} Markdown file(s)" >&2
+    echo "format: formatting ${#md[@]} Markdown file(s)" >&2
     mdformat "${mdformat_args[@]}" "${md[@]}" || status=1
 fi
 
 if defines toml_files; then
-    echo -e "\n=== FORMAT TOML\n"
-
     read_files toml_files toml
-    echo "formatting ${#toml[@]} TOML file(s)" >&2
+    echo "format: formatting ${#toml[@]} TOML file(s)" >&2
     taplo fmt "${toml[@]}" || status=1
 fi
 
 if defines docker_files; then
-    echo -e "\n=== FORMAT DOCKER\n"
 
     read_files docker_files docker
-    echo "formatting ${#docker[@]} Docker file(s)" >&2
+    echo "format: formatting ${#docker[@]} Docker file(s)" >&2
     dockerfmt "${dockerfmt_args[@]}" --write "${docker[@]}" || status=1
 fi
 
-echo
 exit "$status"

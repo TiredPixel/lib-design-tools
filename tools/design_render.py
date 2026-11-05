@@ -14,6 +14,7 @@ without a browser.
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import dataclasses
 import functools
@@ -29,7 +30,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 
 ERRORS_ATTRIBUTE = "data-render-errors"
 
@@ -529,3 +530,22 @@ def render(
     """
     with serve(root) as base_url:
         return render_url(page_url(base_url, root, page), **chromium_options)
+
+
+class UsageFormatter(argparse.HelpFormatter):
+    """Argparse's help formatter, with the synopsis opening ``Usage: ``.
+
+    Given as ``formatter_class``, it reaches both the synopsis a usage error prints and
+    the one ``--help`` opens with.
+    """
+
+    def add_usage(
+        self,
+        usage: str | None,
+        actions: Iterable[argparse.Action],
+        groups: Iterable[object],
+        prefix: str | None = None,
+    ) -> None:
+        super().add_usage(
+            usage, actions, groups, "Usage: " if prefix is None else prefix
+        )

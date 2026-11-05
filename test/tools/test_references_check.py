@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import io
 import pathlib
+import re
 import subprocess
 import tempfile
 import unittest
@@ -38,7 +39,12 @@ class ReferencesTestCase(temp_tree.TempTreeTestCase):
         ):
             references_check.main(list(arguments))
         self.assertEqual(caught.exception.code, 2)
-        return stderr.getvalue()
+        output = stderr.getvalue()
+        self.assertRegex(
+            output,
+            r"\AUsage: references-check .*\n(.*\n)*references-check: error: .+\n\Z",
+        )
+        return output
 
     def html_problems(
         self, markup: str, require_integrity: bool = False, no_external: bool = False
@@ -612,7 +618,7 @@ class MainTest(ReferencesTestCase):
             "--root", str(self.root), str(page), str(self.root / "site/a.css")
         )
         self.assertEqual(status, 0)
-        self.assertEqual(output, "checked 2 file(s): 0 problem(s)\n")
+        self.assertEqual(output, "references-check: checked 2 file(s): 0 problem(s)\n")
 
     def test_failures_are_reported_per_line(self) -> None:
         page = self.write("site/p.HTM", '\n<img src="gone.png">')
@@ -623,7 +629,7 @@ class MainTest(ReferencesTestCase):
             output,
             f"{page}:2: gone.png does not exist\n"
             f"{sheet}:1: gone.svg does not exist\n"
-            "checked 2 file(s): 2 problem(s)\n",
+            "references-check: checked 2 file(s): 2 problem(s)\n",
         )
 
     def test_no_external_option(self) -> None:
@@ -637,7 +643,7 @@ class MainTest(ReferencesTestCase):
             output,
             f"{page}:1: external https://cdn/x.png, which --no-external refuses\n"
             f"{sheet}:1: external https://cdn/y.svg, which --no-external refuses\n"
-            "checked 2 file(s): 2 problem(s)\n",
+            "references-check: checked 2 file(s): 2 problem(s)\n",
         )
 
     def test_require_integrity_option(self) -> None:
@@ -651,7 +657,7 @@ class MainTest(ReferencesTestCase):
             output,
             f"{page}:1: external script https://cdn/x.js lacks integrity and "
             "crossorigin\n"
-            "checked 1 file(s): 1 problem(s)\n",
+            "references-check: checked 1 file(s): 1 problem(s)\n",
         )
 
     def test_runs_as_a_command(self) -> None:
@@ -671,15 +677,19 @@ class MainTest(ReferencesTestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(
             result.stderr,
-            f"{page}:1: gone.png does not exist\nchecked 1 file(s): 1 problem(s)\n",
+            f"{page}:1: gone.png does not exist\n"
+            "references-check: checked 1 file(s): 1 problem(s)\n",
         )
 
     def test_not_utf8(self) -> None:
         page = self.write("site/p.html", b"<p>\xff</p>")
         status, output = self.run_main("--root", str(self.root), str(page))
         self.assertEqual(status, 1)
-        self.assertIn(f"{page}: not valid UTF-8", output)
-        self.assertIn("1 problem(s)", output)
+        self.assertRegex(
+            output,
+            rf"\Areferences-check: {re.escape(str(page))}: not valid UTF-8: .+\n"
+            r"references-check: checked 1 file\(s\): 1 problem\(s\)\n\Z",
+        )
 
     def test_a_file_linked_into_the_root_from_outside_it_is_checked(self) -> None:
         outside = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -691,13 +701,14 @@ class MainTest(ReferencesTestCase):
         broken.symlink_to(outside / "broken.html")
         self.assertEqual(
             self.run_main("--root", str(self.root), str(clean)),
-            (0, "checked 1 file(s): 0 problem(s)\n"),
+            (0, "references-check: checked 1 file(s): 0 problem(s)\n"),
         )
         status, output = self.run_main("--root", str(self.root), str(broken))
         self.assertEqual(status, 1)
         self.assertEqual(
             output,
-            f"{broken}:1: gone.png does not exist\nchecked 1 file(s): 1 problem(s)\n",
+            f"{broken}:1: gone.png does not exist\n"
+            "references-check: checked 1 file(s): 1 problem(s)\n",
         )
 
     def test_a_link_outside_the_root_to_a_page_inside_it_is_refused(self) -> None:
@@ -742,7 +753,8 @@ class UnresolvedTest(ReferencesTestCase):
             '<a href="/es#top">c</a>\n',
         )
         self.assertEqual(
-            self.run_exempt(["/es"], page), (0, "checked 1 file(s): 0 problem(s)\n")
+            self.run_exempt(["/es"], page),
+            (0, "references-check: checked 1 file(s): 0 problem(s)\n"),
         )
         self.assertEqual(self.run_exempt([], page)[0], 1)
 
@@ -757,7 +769,7 @@ class UnresolvedTest(ReferencesTestCase):
                 page = self.write("site/p.html", markup)
                 self.assertEqual(
                     self.run_exempt([unresolved], page),
-                    (0, "checked 1 file(s): 0 problem(s)\n"),
+                    (0, "references-check: checked 1 file(s): 0 problem(s)\n"),
                 )
 
     def test_a_relative_reference_matches_where_it_lands(self) -> None:
@@ -768,7 +780,8 @@ class UnresolvedTest(ReferencesTestCase):
         self.assertEqual(status, 1)
         self.assertEqual(
             output,
-            f"{page}:2: es does not exist\nchecked 1 file(s): 1 problem(s)\n",
+            f"{page}:2: es does not exist\n"
+            "references-check: checked 1 file(s): 1 problem(s)\n",
         )
 
     def test_references_loading_nothing_are_exemptible(self) -> None:
@@ -780,7 +793,7 @@ class UnresolvedTest(ReferencesTestCase):
         )
         self.assertEqual(
             self.run_exempt(["/es", "/fr", "/de"], page),
-            (0, "checked 1 file(s): 0 problem(s)\n"),
+            (0, "references-check: checked 1 file(s): 0 problem(s)\n"),
         )
 
     def test_a_reference_that_loads_is_never_exempt(self) -> None:
@@ -804,7 +817,7 @@ class UnresolvedTest(ReferencesTestCase):
             f"{page}:3: gone.png {exempt}\n"
             f"{page}:4: /site/gone.png {exempt}\n"
             f"{sheet}:1: gone.png {exempt}\n"
-            "checked 2 file(s): 5 problem(s)\n",
+            "references-check: checked 2 file(s): 5 problem(s)\n",
         )
 
     def test_stale_exemptions_fail_in_the_order_given(self) -> None:
@@ -817,11 +830,13 @@ class UnresolvedTest(ReferencesTestCase):
         self.assertEqual(status, 1)
         self.assertEqual(
             output,
-            "--unresolved /zz matches no reference\n"
-            "--unresolved /site/a.css resolves, so needs no exemption\n"
-            "--unresolved /site/dir/ resolves, so needs no exemption\n"
-            "--unresolved /site/empty matches no reference\n"
-            "checked 1 file(s): 4 problem(s)\n",
+            "references-check: --unresolved /zz matches no reference\n"
+            "references-check: --unresolved /site/a.css resolves, so needs no "
+            "exemption\n"
+            "references-check: --unresolved /site/dir/ resolves, so needs no "
+            "exemption\n"
+            "references-check: --unresolved /site/empty matches no reference\n"
+            "references-check: checked 1 file(s): 4 problem(s)\n",
         )
 
     def test_an_exempt_directory_holding_only_index_htm_is_stale(self) -> None:
@@ -831,8 +846,9 @@ class UnresolvedTest(ReferencesTestCase):
         self.assertEqual(status, 1)
         self.assertEqual(
             output,
-            "--unresolved /site/htm/ resolves, so needs no exemption\n"
-            "checked 1 file(s): 1 problem(s)\n",
+            "references-check: --unresolved /site/htm/ resolves, so needs no "
+            "exemption\n"
+            "references-check: checked 1 file(s): 1 problem(s)\n",
         )
 
     def test_an_unreadable_file_leaves_only_resolving_exemptions_stale(
@@ -843,12 +859,17 @@ class UnresolvedTest(ReferencesTestCase):
         status, output = self.run_exempt(["/es", "/site/a.css"], unreadable, page)
         self.assertEqual(status, 1)
         lines = output.splitlines()
-        self.assertTrue(lines[0].startswith(f"{unreadable}: not valid UTF-8"))
+        self.assertTrue(
+            lines[0].startswith(f"references-check: {unreadable}: not valid UTF-8")
+        )
         self.assertEqual(
             lines[1:],
             [
-                "--unresolved /site/a.css resolves, so needs no exemption",
-                "checked 2 file(s): 2 problem(s)",
+                (
+                    "references-check: --unresolved /site/a.css resolves, so needs no "
+                    "exemption"
+                ),
+                "references-check: checked 2 file(s): 2 problem(s)",
             ],
         )
 
@@ -857,7 +878,7 @@ class UnresolvedTest(ReferencesTestCase):
         sheet = self.write("site/s.css", "")
         self.assertEqual(
             self.run_exempt(["/es", "/fr"], page, sheet),
-            (0, "checked 2 file(s): 0 problem(s)\n"),
+            (0, "references-check: checked 2 file(s): 0 problem(s)\n"),
         )
 
     def test_usage_errors(self) -> None:
