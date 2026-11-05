@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 import unittest.mock
 import urllib.error
@@ -32,9 +33,14 @@ render_check = tools_loader.load("render-check")
 
 CLEAN_DOM = '<html data-render-errors="[]"><head></head><body></body></html>'
 
+# How long a fake Chromium may take to start its writer or exit, before the test fails.
+# Only a stuck fake reaches it, so it is generous rather than a measure of speed.
+READY_TIMEOUT_S = 60
+
 # For a fake Chromium: start a child in its process group that keeps writing files into
 # the profile, as Chromium's renderer and crashpad processes do, and record its pid
-# beside the fake once it has started writing.
+# beside the fake, in a file named for the fake's own pid, once it has started writing.
+# The record is renamed into place, so it is never seen half written.
 SPAWN_PROFILE_WRITER = """
 profile = next(
     a for a in sys.argv[1:] if a.startswith("--user-data-dir=")
@@ -57,9 +63,9 @@ while not (pathlib.Path(profile) / "Default").is_dir():
     if child.poll() is not None:
         sys.exit(f"profile writer exited {child.returncode} before writing")
     time.sleep(0.01)
-pathlib.Path(sys.argv[0]).with_name("child.pid").write_text(
-    str(child.pid), encoding="utf-8"
-)
+record = pathlib.Path(sys.argv[0]).with_name(f"{os.getpid()}.writer")
+record.with_suffix(".tmp").write_text(str(child.pid), encoding="utf-8")
+os.replace(record.with_suffix(".tmp"), record)
 """
 
 
@@ -88,12 +94,38 @@ class TempDirTestCase(temp_tree.TempTreeTestCase):
     def printing_chromium(self, dom: str) -> str:
         return self.fake_chromium(f"sys.stdout.write({dom!r})\n")
 
-    def assert_writer_gone(self) -> None:
-        path = self.beside_fake("child.pid")
-        self.assertTrue(
-            path.is_file(), "the fake's writer never started before the timeout"
+    def time_out_once_ready(self) -> None:
+        """Start each Chromium's timeout only once its writer has started, or it exited.
+
+        Waiting in the test, before the real timeout begins, means the timeout cannot
+        fire before the fake records its writer, however loaded the machine is.
+        """
+        communicate = subprocess.Popen.communicate
+
+        def after_ready(
+            process: subprocess.Popen, *args: object, **kwargs: object
+        ) -> tuple:
+            record = self.beside_fake(f"{process.pid}.writer")
+            deadline = time.monotonic() + READY_TIMEOUT_S
+            while not record.is_file() and process.poll() is None:
+                if time.monotonic() > deadline:
+                    self.fail(
+                        f"the fake neither started its writer nor exited within "
+                        f"{READY_TIMEOUT_S}s"
+                    )
+                time.sleep(0.01)
+            return communicate(process, *args, **kwargs)
+
+        patcher = unittest.mock.patch.object(
+            subprocess.Popen, "communicate", after_ready
         )
-        pid = int(path.read_text(encoding="utf-8"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def assert_writer_gone(self) -> None:
+        records = list((self.root / "bin").glob("*.writer"))
+        self.assertEqual(len(records), 1, "the fake did not record one writer")
+        pid = int(records[0].read_text(encoding="utf-8"))
         with self.assertRaises(ProcessLookupError):
             os.kill(pid, 0)
 
@@ -484,6 +516,7 @@ class DumpDomTest(TempDirTestCase):
 
     def test_timeout_kills_the_whole_group(self) -> None:
         chromium = self.fake_chromium(SPAWN_PROFILE_WRITER + "time.sleep(60)\n")
+        self.time_out_once_ready()
         with self.assertRaisesRegex(design_render.RenderError, "within 3s"):
             design_render.dump_dom("http://x/", chromium=chromium, timeout_s=3)
         self.assert_writer_gone()
@@ -702,6 +735,7 @@ class RenderCheckTest(TempDirTestCase):
             + textwrap.indent(SPAWN_PROFILE_WRITER + "time.sleep(60)\n", "    ")
             + f"sys.stdout.write({CLEAN_DOM!r})\n"
         )
+        self.time_out_once_ready()
         status, output = self.run_main(
             "--root",
             str(self.root),
@@ -795,6 +829,9 @@ class RenderCheckTest(TempDirTestCase):
             capture_output=True,
             text=True,
             check=False,
+            # Generous, so a hung child fails the test rather than stalling a
+            # worker; not a measure of how long it should take.
+            timeout=300,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "checked 1 page(s): 0 problem(s)\n")

@@ -664,6 +664,9 @@ class MainTest(ReferencesTestCase):
             capture_output=True,
             text=True,
             check=False,
+            # Generous, so a hung child fails the test rather than stalling a
+            # worker; not a measure of how long it should take.
+            timeout=300,
         )
         self.assertEqual(result.returncode, 1)
         self.assertEqual(

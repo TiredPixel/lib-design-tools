@@ -67,7 +67,12 @@ class NoSkipsTest(unittest.TestCase):
         (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
         for name, content in files.items():
             (root / name).write_text(textwrap.dedent(content), encoding="utf-8")
-        environment = {**os.environ, "PYTHONPATH": str(tools_loader.TOOLS)}
+        # Without the caller's PYTEST_ADDOPTS, so the child pytest reads only the
+        # pytest.ini written above.
+        environment = {
+            **{k: v for k, v in os.environ.items() if k != "PYTEST_ADDOPTS"},
+            "PYTHONPATH": str(tools_loader.TOOLS),
+        }
         return subprocess.run(
             [sys.executable, *args],
             cwd=root,
