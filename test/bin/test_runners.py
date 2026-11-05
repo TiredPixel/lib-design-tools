@@ -15,7 +15,7 @@ import urllib.request
 
 import temp_tree
 
-BIN = pathlib.Path(__file__).resolve().parent.parent / "bin"
+BIN = pathlib.Path(__file__).resolve().parents[2] / "bin"
 
 # A generous bound on any one child process, so a hang fails its test rather than
 # stalling a worker; not a measure of how long anything should take.

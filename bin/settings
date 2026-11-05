@@ -54,7 +54,7 @@ function tools_by_shebang {
 
 function python_files {
     tools_by_shebang python3
-    printf '%s\0' tools/*.py test/*.py
+    printf '%s\0' tools/*.py test/*.py test/*/*.py
 }
 
 # The shell in tools/, and all of bin/: the runners, and bin/runner and this
