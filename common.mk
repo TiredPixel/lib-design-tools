@@ -12,6 +12,9 @@ SHELL := bash
 # profile of its own, builds the same dev stage as design on demand.
 build:
 	$(DESIGN_TOOLS)/lib/shell-common/docker/build-compose --profile test
+# In design, whose mount carries the report to tmp/coverage/ on the host.
+coverage:
+	docker compose --profile test run --rm --build design coverage $(TESTS)
 format:
 	docker compose --profile test run --rm --build design format
 lint:
@@ -32,4 +35,4 @@ upgrade-post:
 	$(MAKE) build
 	$(MAKE) test
 	$(UPGRADE_COMMIT)
-.PHONY: build format lint preview test upgrade upgrade-post upgrade-pre
+.PHONY: build coverage format lint preview test upgrade upgrade-post upgrade-pre

@@ -4,10 +4,10 @@
 # Dockerfile, a link to this one's.
 ---
 services:
-  # Runs bin/format, whose rewrites have to reach the host tree, which only this
-  # mount carries there. The whole tree is bound rather than file by file, since
-  # a single-file bind pins an inode and goes stale when an editor saves by
-  # rename.
+  # Runs bin/format and bin/coverage, whose writes have to reach the host tree,
+  # which only this mount carries there. The whole tree is bound rather than
+  # file by file, since a single-file bind pins an inode and goes stale when an
+  # editor saves by rename.
   design:
     build:
       context: .

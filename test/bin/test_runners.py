@@ -1,4 +1,4 @@
-"""bin/format, bin/lint, bin/test and bin/preview, run as another repository runs them.
+"""The runners in bin/, run as another repository runs them.
 
 They run from the root of a fabricated repository whose bin/ links to them.
 """
@@ -54,11 +54,23 @@ SKIPPING_TEST = (
 )
 
 
+# Set by bin/coverage, for its own pytest and the shell kcov traces, and dropped for
+# each runner run here. A nested pytest would take the options and write into the same
+# data; and the trace descriptor BASH_XTRACEFD names is not open here, since xdist
+# starts its workers without it, so a bash given these would write its trace, and a
+# complaint, into the output tested.
+COVERAGE_ENVIRONMENT = ("BASH_ENV", "BASH_XTRACEFD", "PYTEST_ADDOPTS")
+
+
+def child_environment(dropping=COVERAGE_ENVIRONMENT):
+    return {k: v for k, v in os.environ.items() if k not in dropping}
+
+
 class Repository(temp_tree.TempTreeTestCase):
     def setUp(self):
         super().setUp()
         (self.root / "bin").mkdir()
-        for runner in ("format", "lint", "test", "preview"):
+        for runner in ("format", "lint", "test", "coverage", "preview"):
             (self.root / "bin" / runner).symlink_to(BIN / runner)
 
     def write(self, name, text):
@@ -67,11 +79,11 @@ class Repository(temp_tree.TempTreeTestCase):
     def settings(self, text):
         self.write("bin/settings", "# shellcheck shell=bash\n" + text)
 
-    def run_bin(self, runner, *args, env=None):
+    def run_bin(self, runner, *args, env=None, dropping=COVERAGE_ENVIRONMENT):
         return subprocess.run(
             [f"bin/{runner}", *args],
             cwd=self.root,
-            env={**os.environ, **(env or {})},
+            env={**child_environment(dropping), **(env or {})},
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
@@ -181,7 +193,7 @@ class PassSelectionTest(Repository):
         self.settings("function shell_files { printf '%s\\0' bin/*; }\n")
         result = self.run_bin("lint")
         self.assertPasses(result)
-        self.assertIn("checking 5 shell file(s)", result.stderr)
+        self.assertEqual(self.runner_lines(result), ["lint: checking 6 shell file(s)"])
 
     def test_each_new_set_runs_its_own_pass_alone(self):
         self.write("a.md", "a\n")
@@ -731,6 +743,119 @@ class GateTest(Repository):
                 )
 
 
+class CoverageTest(Repository):
+    # A test that runs the repository's own shell with kcov's trace descriptor, which
+    # subprocess would otherwise close, so kcov can trace it.
+    TRACING_TEST = """
+        import os
+        import subprocess
+        import unittest
+
+
+        class A(unittest.TestCase):
+            def test_a(self):
+                trace = int(os.environ["BASH_XTRACEFD"])
+                subprocess.run(["bin/hello"], pass_fds=(trace,), check=True)
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.out = pathlib.Path(os.path.realpath(self.root)) / "tmp" / "coverage"
+
+    def run_coverage(self, *args):
+        # Without the coverage of a run around this one, so the run measures on its own.
+        return self.run_bin(
+            "coverage",
+            *args,
+            dropping=(
+                *COVERAGE_ENVIRONMENT,
+                "COVERAGE_FILE",
+                *(k for k in os.environ if k.startswith("COV_CORE_")),
+            ),
+        )
+
+    def tree(self):
+        """Every path outside tmp/, so a run's writes elsewhere show."""
+        return sorted(
+            str(p.relative_to(self.root))
+            for p in self.root.rglob("*")
+            if p.relative_to(self.root).parts[0] != "tmp"
+        )
+
+    def test_writes_both_reports_of_the_repository_s_own_files(self):
+        self.settings("function pytest_args { :; }\n")
+        self.write("test/test_a.py", self.TRACING_TEST)
+        self.write("bin/hello", "#!/usr/bin/env bash\necho hello\n").chmod(0o755)
+        before = self.tree()
+        result = self.run_coverage("test/test_a.py")
+        self.assertPasses(result)
+        self.assertEqual(
+            self.runner_lines(result),
+            [
+                "coverage: running bin/test under kcov",
+                "test: running pytest",
+                "coverage: shell report written to tmp/coverage/shell/index.html",
+                "coverage: python report written to tmp/coverage/python/index.html",
+            ],
+        )
+        self.assertIn("1 passed", result.stdout)
+        self.assertEqual(self.tree(), before)
+        (shell,) = self.out.glob("shell/test.*/cobertura.xml")
+        shell_report = shell.read_text(encoding="utf-8")
+        self.assertIn("hello", shell_report)
+        # This repository's runners, which a linking repository does not own.
+        for runner in ("runner", "settings", "test"):
+            with self.subTest(runner=runner):
+                self.assertNotIn(f'filename="{runner}"', shell_report)
+                self.assertNotIn(str(BIN / runner), shell_report)
+        self.assertIn(
+            "test_a.py",
+            (self.out / "python" / "index.html").read_text(encoding="utf-8"),
+        )
+        self.assertTrue((self.out / "python.data").is_file())
+
+    def test_replaces_the_last_report(self):
+        self.settings("")
+        self.write("tmp/coverage/stale", "")
+        self.write("tmp/coverage/shell/stale", "")
+        self.write("tmp/kept", "")
+        result = self.run_coverage()
+        self.assertPasses(result)
+        self.assertEqual(self.runner_lines(result)[0], f"coverage: removing {self.out}")
+        self.assertFalse((self.out / "stale").exists())
+        self.assertFalse((self.out / "shell" / "stale").exists())
+        self.assertTrue((self.out / "shell" / "index.html").is_file())
+        self.assertTrue((self.root / "tmp" / "kept").is_file())
+
+    def test_without_pytest_args_writes_only_the_shell_report(self):
+        self.settings("")
+        result = self.run_coverage()
+        self.assertPasses(result)
+        self.assertEqual(
+            self.runner_lines(result),
+            [
+                "coverage: running bin/test under kcov",
+                "coverage: shell report written to tmp/coverage/shell/index.html",
+            ],
+        )
+        self.assertFalse((self.out / "python").exists())
+
+    def test_a_failing_test_fails_the_run(self):
+        self.settings("function pytest_args { :; }\n")
+        self.write(
+            "test/test_a.py",
+            PASSING_TEST.replace("pass", "self.fail('fails')"),
+        )
+        result = self.run_coverage("test/test_a.py")
+        self.assertFails(result, "1 failed")
+        self.assertNotIn("report written", result.stderr)
+
+    def test_named_tests_without_pytest_args_fail(self):
+        self.settings("")
+        self.write("test/test_a.py", PASSING_TEST)
+        self.assertFails(self.run_coverage("test/test_a.py"), "pytest_args is not set")
+
+
 class PreviewTest(Repository):
     def test_refuses_without_a_start(self):
         self.settings("")
@@ -750,6 +875,7 @@ class PreviewTest(Repository):
         server = subprocess.Popen(
             ["bin/preview"],
             cwd=self.root,
+            env=child_environment(),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )

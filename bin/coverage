@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+#
+# Runs bin/test, with any tests it is given as bin/test takes them, measuring
+# the shell under kcov and the Python under pytest-cov, and writes both reports
+# to tmp/coverage/, replacing the last ones, since kcov otherwise merges into
+# whatever is there. Measures only files under the repository's root, and the
+# shell report leaves out what is not the repository's own: in a repository
+# linking this runner, this one's copy. Runs from the root of the repository.
+#
+# ShellCheck sees no assignment for the names bin/runner sets, since it does not
+# follow bin/runner. Suppressed here for the reason bin/test gives.
+# shellcheck disable=SC2154
+set -Eeuo pipefail
+shopt -s inherit_errexit failglob
+
+# Not followed, for the reason bin/test gives.
+# shellcheck source=/dev/null
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
+
+out=$PWD/tmp/coverage
+
+# This repository's own submodules, under lib/, measure their own coverage.
+if [ "$design_tools" = "$PWD" ]; then
+    exclude=$out,$PWD/lib
+else
+    exclude=$out,$design_tools
+fi
+
+if [ -e "$out" ]; then
+    echo "coverage: removing ${out:?}" >&2
+    rm -rf -- "${out:?}"
+fi
+mkdir -p -- "$out"
+
+# Through PYTEST_ADDOPTS, since bin/test builds pytest's command line from
+# bin/settings alone; quoted, since pytest splits it as a shell would.
+# pytest-cov carries the measurement into Python subprocesses through its own
+# environment, and COVERAGE_FILE keeps its data in the report's directory.
+export COVERAGE_FILE=$out/python.data
+printf -v cov_args '%q ' "--cov=$PWD" --cov-report=term \
+    "--cov-report=html:$out/python"
+export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:+$PYTEST_ADDOPTS }${cov_args% }"
+
+echo "coverage: running bin/test under kcov" >&2
+kcov --include-path="$PWD" --exclude-path="$exclude" "$out/shell" \
+    "$design_tools/bin/test" "$@"
+
+echo "coverage: shell report written to tmp/coverage/shell/index.html" >&2
+# No pytest runs where bin/settings defines no pytest_args.
+if [ -e "$out/python/index.html" ]; then
+    echo "coverage: python report written to tmp/coverage/python/index.html" >&2
+fi

@@ -10,12 +10,18 @@ import tools_loader
 
 USAGE = "Usage: palette-generate YAML --prefix P --json OUT --css OUT [--check]\n"
 
+# Set by kcov under bin/coverage. The trace descriptor BASH_XTRACEFD names is not
+# open here, since xdist starts its workers without it, so a child bash given
+# them would write its trace, and a complaint, into the stderr tested.
+KCOV_TRACING = ("BASH_ENV", "BASH_XTRACEFD")
+
 
 def run(*args, cwd, env=None):
+    environment = {k: v for k, v in os.environ.items() if k not in KCOV_TRACING}
     return subprocess.run(
         [str(tools_loader.TOOLS / "palette-generate"), *args],
         cwd=cwd,
-        env={**os.environ, **(env or {})},
+        env={**environment, **(env or {})},
         capture_output=True,
         text=True,
         check=False,

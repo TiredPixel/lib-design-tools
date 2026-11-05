@@ -21,7 +21,7 @@ cd lib-design-tools
 cp .env.example .env
 ```
 
-Set `DC_BIND_USER=0:0` in `.env` where Docker is rootless or the host user's uid is not 1000, so that `make format` can write to the tree.
+Set `DC_BIND_USER=0:0` in `.env` where Docker is rootless or the host user's uid is not 1000, so that `make format` and `make coverage` can write to the tree.
 
 ## Tools
 
@@ -64,11 +64,11 @@ A repository leaves the link out of `docker_files`, since `bin/format` would rew
 
 ### The runners
 
-`bin/format`, `bin/lint`, `bin/test` and `bin/preview` run in the image, from the repository's root, and do only what the repository's own `bin/settings` names (*Settings*). A repository links the ones it uses; each finds this repository by resolving its link:
+`bin/format`, `bin/lint`, `bin/test`, `bin/coverage` and `bin/preview` run in the image, from the repository's root, and do only what the repository's own `bin/settings` names (*Settings*). A repository links the ones it uses; each finds this repository by resolving its link:
 
 ```sh
 mkdir -p bin
-for runner in format lint test preview; do ln -s "../lib/design-tools/bin/$runner" "bin/$runner"; done
+for runner in format lint test coverage preview; do ln -s "../lib/design-tools/bin/$runner" "bin/$runner"; done
 ```
 
 ### The services
@@ -79,7 +79,7 @@ This repository's `docker-compose.yml` holds the `design`, `design_test` and `pr
 ln -s lib/design-tools/docker-compose.yml docker-compose.yml
 ```
 
-The `design` and `design_test` services sit under the `test` profile, which `make build`, `make format`, `make lint` and `make test` pass, and the `preview` service under the `preview` profile, which `make preview` selects, so a bare `docker compose up` starts no service. The `design` service runs `bin/format` from `dev` on the tree mounted read-write, since its rewrites must reach it, and the `preview` service `bin/preview` on the tree mounted read-only. The `design_test` service runs the gates from `test` on its own copy, with no mount and no network.
+The `design` and `design_test` services sit under the `test` profile, which `make build`, `make coverage`, `make format`, `make lint` and `make test` pass, and the `preview` service under the `preview` profile, which `make preview` selects, so a bare `docker compose up` starts no service. The `design` service runs `bin/format` and `bin/coverage` from `dev` on the tree mounted read-write, since their writes must reach it, and the `preview` service `bin/preview` on the tree mounted read-only. The `design_test` service runs the gates from `test` on its own copy, with no mount and no network.
 
 A repository whose YAML pass would cover `docker-compose.yml` leaves the link out of `yaml_files`, since `bin/format` would rewrite this repository's file through it.
 
@@ -87,7 +87,7 @@ The test stage copies the whole tree, so the repository's `.dockerignore` keeps 
 
 ### The make targets
 
-`common.mk` gives `build`, `format`, `lint`, `preview`, `test`, `upgrade` and `upgrade-post`, run through the services. A repository's `Makefile` includes it and adds its own `upgrade-pre`, which moves the submodule to its latest commit and its own submodules to the commits that one records. Its first two lines make the submodule a repository of its own before anything runs in it, since git run in an uninitialised submodule's empty directory acts on the parent instead:
+`common.mk` gives `build`, `coverage`, `format`, `lint`, `preview`, `test`, `upgrade` and `upgrade-post`, run through the services. A repository's `Makefile` includes it and adds its own `upgrade-pre`, which moves the submodule to its latest commit and its own submodules to the commits that one records. Its first two lines make the submodule a repository of its own before anything runs in it, since git run in an uninitialised submodule's empty directory acts on the parent instead:
 
 ```make
 include lib/design-tools/common.mk
@@ -113,6 +113,14 @@ make test TESTS='test/<file>.py'
 ```sh
 make lint
 ```
+
+`make coverage` runs `bin/test`, taking `TESTS` as `make test` does, in the `design` service, measuring the shell under kcov and the Python under pytest-cov, and writes both reports to the repository's own `tmp/coverage/`, replacing the last ones. It measures only files under the repository's root, and its shell report leaves out the copy of this repository. Like `make format`, it writes to the tree, so the repository ignores `tmp/` and sets `DC_BIND_USER` where *Installation* says to:
+
+```sh
+make coverage
+```
+
+kcov traces a script only where its trace descriptor, the one `BASH_XTRACEFD` names, is open to it. Python's `subprocess` closes it in a child and pytest-xdist's workers start without it, so a script a test starts goes unmeasured, unless the test runs in pytest's own process and passes the descriptor on with `pass_fds`.
 
 *Formatting* gives `make format`, and *Previewing* gives `make preview`.
 
@@ -201,6 +209,16 @@ make test
 ```
 
 The tests run under pytest, side by side on one worker for each CPU the container may use, unless `.env` sets the worker count (*The make targets*). A test that skips fails the run: the image carries everything the tests look for, so a skip means something is missing. *The make targets* gives how to name tests and run the lint alone.
+
+## Measuring coverage
+
+`make coverage` runs the gate in the `design` container, the shell in `bin/` and `tools/` under kcov and the Python in `tools/` and `test/` under pytest-cov, and writes the reports to `tmp/coverage/shell/` and `tmp/coverage/python/`, replacing the last ones; `TESTS` narrows it as it does `make test`. Like `make format`, it writes to the tree, so it needs `DC_BIND_USER` set where *Installation* says to.
+
+```sh
+make coverage
+```
+
+The shell report holds the runners in `bin/` as the gate itself runs them, but not `tools/palette-generate` or the runners the tests run in a fabricated repository: the tests start them through Python's `subprocess` on pytest-xdist's workers, where kcov cannot trace them (*The make targets*). `lib/shell-common` measures its own coverage, so the report leaves it out.
 
 ## Formatting
 

@@ -1,9 +1,10 @@
 # shellcheck shell=bash
 #
-# Sourced by bin/format, bin/lint, bin/test and bin/preview, which run from the
-# root of the repository they serve. That repository's bin/ holds symlinks to
-# them, so this one is found by resolving the link, and its own bin/settings
-# turns each pass on by defining what the pass reads (README.md, Settings).
+# Sourced by bin/format, bin/lint, bin/test, bin/preview and bin/coverage, which
+# run from the root of the repository they serve. That repository's bin/ holds
+# symlinks to them, so this one is found by resolving the link, and its own
+# bin/settings turns each pass on by defining what the pass reads (README.md,
+# Settings).
 #
 # Read only by the runners that source this one, so they look unused here.
 # shellcheck disable=SC2034
