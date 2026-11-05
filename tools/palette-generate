@@ -2,26 +2,24 @@
 #
 # Generate a palette's JSON and CSS from its YAML, the one source.
 #
-#   palette-generate YAML --prefix P --json OUT --css OUT [--check]
-#
 # The JSON is the YAML as data, aliases and merge keys expanded, in the YAML's
 # key order, opening with a $comment naming its source. The CSS holds one custom
 # property per colour leaf of that same data (a string #RGB, #RGBA, #RRGGBB or
 # #RRGGBBAA), named --P- and the leaf's full key path, lowercased, with _ as -
 # and list items numbered from 1, in the YAML's order. A leaf with no value, as
 # an unquoted colour gives, fails the run, as does any other string starting
-# with #. Two leaves that would share a name fail the run, as do a name holding
-# anything but ASCII letters and digits, hyphens and non-ASCII characters, which
-# CSS would not read as one name, and a YAML holding no colour at all. Nothing
-# in either output depends on the clock or the environment, so a rerun on an
-# unchanged YAML changes nothing.
+# with #. Two leaves that would share a name fail the run, as does a YAML
+# holding no colour at all, and so does a name holding anything but ASCII
+# letters and digits, hyphens and non-ASCII characters, since CSS would not read
+# it as one name. Nothing in either output depends on the clock or the
+# environment, so a rerun on an unchanged YAML changes nothing.
 #
 # --check writes nothing: it generates into a temporary directory and fails,
 # with a diff, where either output differs from what is on disk.
 set -Eeuo pipefail
 shopt -s inherit_errexit failglob
 
-synopsis="usage: palette-generate YAML --prefix P --json OUT --css OUT [--check]"
+synopsis="Usage: palette-generate YAML --prefix P --json OUT --css OUT [--check]"
 
 usage() {
     echo "$synopsis" >&2

@@ -3,12 +3,15 @@
 # The gate: the lint passes, then the repository's own Python tests, under its
 # own pytest configuration, with tools/ on the path for the importable harness
 # and the --no-skips plugin. The tests run where bin/settings defines
-# pytest_args, the options they take. README.md, The make targets, gives the
-# worker count and how to name tests.
+# pytest_args, the options they take. README.md, Running the make targets, gives
+# the worker count and how to name tests.
 #
 # ShellCheck sees no assignment for the names bin/runner sets, since it does not
 # follow bin/runner, nor for the arrays read_set assigns through a nameref,
-# which it cannot follow.
+# which it cannot follow. Suppressed here rather than fixed with a source
+# directive, which cannot reach bin/runner through another repository's link to
+# this runner, or in .shellcheckrc, which would hide the rule in bin/runner and
+# tools/ too.
 # shellcheck disable=SC2154
 set -Eeuo pipefail
 shopt -s inherit_errexit failglob
@@ -20,12 +23,14 @@ source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
 
 tests=("$@")
 
-# xdist only warns at a count it cannot read, and runs on every CPU instead.
+# xdist takes an empty count as unset, and one it cannot read with only a
+# warning, running on every CPU for either, and takes 0 or a negative count as
+# given.
 if [ -n "${PYTEST_XDIST_AUTO_NUM_WORKERS+set}" ] &&
     ! [[ $PYTEST_XDIST_AUTO_NUM_WORKERS =~ ^[1-9][0-9]*$ ]]; then
-    printf 'PYTEST_XDIST_AUTO_NUM_WORKERS is %q, not a whole number of' \
+    printf 'test: PYTEST_XDIST_AUTO_NUM_WORKERS is %q, not a whole number' \
         "$PYTEST_XDIST_AUTO_NUM_WORKERS" >&2
-    printf ' at least 1\n' >&2
+    printf ' of at least 1\n' >&2
     exit 1
 fi
 
@@ -42,13 +47,10 @@ if [ ${#tests[@]} -eq 0 ]; then
 fi
 
 if defines pytest_args; then
-    echo -e "\n=== TEST PYTHON\n"
-
     read_set pytest_args options may-be-empty
+    echo "test: running pytest" >&2
     # The plugin only adds --no-skips, which does nothing unless passed. No
     # cache provider, so a run writes no .pytest_cache into the tree it checks.
     PYTHONPATH=$tools pytest -p no:cacheprovider -p pytest_no_skips \
         "${options[@]}" "${tests[@]}"
 fi
-
-echo

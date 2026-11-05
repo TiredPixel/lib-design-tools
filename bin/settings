@@ -4,18 +4,29 @@
 # repository does: each function names what one pass reads, NUL-separated.
 #
 # No pass reaches pytest.ini, checkmake.ini, .gitmodules, .gitignore,
-# .dockerignore, .dockerrepo or .env.example, since the image has no formatter
-# or linter for INI, git config, ignore or dotenv files.
+# .dockerignore, .dockerrepo or LICENSE, since the image has no formatter or
+# linter for INI, git config, ignore or plain-text files. Nor does any reach the
+# locks docker/upgrade writes whole: Dockerfile.lock/*/requirements.txt, and
+# Dockerfile.lock/js/package-lock.json, in npm's own key order.
 
 # A proposed workflow waits in .github/workflows.new/ until it is moved into
-# .github/workflows/, so either directory may be empty or absent.
+# .github/workflows/, so either directory, though not both, may be empty or
+# absent.
 function workflow_files {
     find .github -path '.github/workflows*/*.yml' -print0 | sort -z
 }
 
 function yaml_files {
-    printf '%s\0' docker-compose.yml
+    printf '%s\0' .hadolint.yaml docker-compose.yml
     workflow_files
+}
+
+function dotenv_files {
+    printf '%s\0' .env.example
+}
+
+function json_files {
+    printf '%s\0' Dockerfile.lock/js/package.json
 }
 
 function compose_files {
@@ -54,7 +65,7 @@ function tools_by_shebang {
 
 function python_files {
     tools_by_shebang python3
-    printf '%s\0' tools/*.py test/*.py
+    printf '%s\0' tools/*.py test/*.py test/*/*.py
 }
 
 # The shell in tools/, and all of bin/: the runners, and bin/runner and this

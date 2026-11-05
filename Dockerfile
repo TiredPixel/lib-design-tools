@@ -8,26 +8,42 @@
 # TRACK ARG DOCKERFMT_SHA256_AMD64 sha256:https://github.com/reteps/dockerfmt/releases/download/v${DOCKERFMT_VERSION}/dockerfmt-v${DOCKERFMT_VERSION}-linux-amd64.tar.gz
 # TRACK ARG DOCKERFMT_SHA256_ARM64 sha256:https://github.com/reteps/dockerfmt/releases/download/v${DOCKERFMT_VERSION}/dockerfmt-v${DOCKERFMT_VERSION}-linux-arm64.tar.gz
 # TRACK ARG DOCKERFMT_VERSION github:reteps/dockerfmt
+# TRACK ARG DOTENV_LINTER_SHA256_AMD64 sha256:https://github.com/dotenv-linter/dotenv-linter/releases/download/v${DOTENV_LINTER_VERSION}/dotenv-linter-linux-x86_64.tar.gz
+# TRACK ARG DOTENV_LINTER_SHA256_ARM64 sha256:https://github.com/dotenv-linter/dotenv-linter/releases/download/v${DOTENV_LINTER_VERSION}/dotenv-linter-linux-aarch64.tar.gz
+# TRACK ARG DOTENV_LINTER_VERSION github:dotenv-linter/dotenv-linter
 # TRACK ARG HADOLINT_SHA256_AMD64 sha256:https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64 https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/checksums.sha256
 # TRACK ARG HADOLINT_SHA256_ARM64 sha256:https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-arm64 https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/checksums.sha256
 # TRACK ARG HADOLINT_VERSION github:hadolint/hadolint
-# TRACK ARG MDFORMAT_FRONTMATTER_VERSION pypi:mdformat-frontmatter
-# TRACK ARG MDFORMAT_GFM_VERSION pypi:mdformat-gfm
-# TRACK ARG MDFORMAT_VERSION pypi:mdformat
-# TRACK ARG PRETTIER_VERSION npm:prettier
-# TRACK ARG RUFF_VERSION pypi:ruff
-# TRACK ARG SEMISTANDARD_VERSION npm:semistandard
-# TRACK ARG SNAZZY_VERSION npm:snazzy
 # TRACK ARG TAPLO_SHA256_AMD64 sha256:https://github.com/tamasfe/taplo/releases/download/${TAPLO_VERSION}/taplo-linux-x86_64.gz
 # TRACK ARG TAPLO_SHA256_ARM64 sha256:https://github.com/tamasfe/taplo/releases/download/${TAPLO_VERSION}/taplo-linux-aarch64.gz
 # TRACK ARG TAPLO_VERSION github:tamasfe/taplo
 # TRACK ARG YQ_SHA256_AMD64 sha256:https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64 https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/checksums-bsd
 # TRACK ARG YQ_SHA256_ARM64 sha256:https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_arm64 https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/checksums-bsd
 # TRACK ARG YQ_VERSION github:mikefarah/yq
+# TRACK LOCK js npm:prettier npm:semistandard
+# TRACK LOCK mdformat pypi:mdformat pypi:mdformat-gfm pypi:mdformat-frontmatter
+# TRACK LOCK ruff pypi:ruff
 #
-# dev copies nothing in, so a repository taking this one as a submodule builds
-# the same image, through a Dockerfile symlinked to this one, and runs it on its
-# own tree; test adds that tree for the gate.
+# wheels downloads the wheels Dockerfile.lock/mdformat and Dockerfile.lock/ruff
+# name, each checked against its hash, for dev to install offline. dev copies
+# nothing in, reading the locks only through bind mounts, so a repository taking
+# this one as a submodule builds the same image, through a Dockerfile and a
+# Dockerfile.lock symlinked to this one's, and runs it on its own tree; test
+# adds that tree for the gate.
+#===============================================================================
+FROM docker.io/library/debian@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1 AS wheels
+
+SHELL ["/bin/bash", "-Eeuo", "pipefail", "-O", "inherit_errexit", "-O", "failglob", "-c"]
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN --mount=type=bind,source=Dockerfile.lock/mdformat,target=/lock/mdformat \
+    --mount=type=bind,source=Dockerfile.lock/ruff,target=/lock/ruff \
+    python3 -m pip download --disable-pip-version-check --require-hashes \
+    --no-deps --only-binary=:all: -d /wheels \
+    -r /lock/mdformat/requirements.txt -r /lock/ruff/requirements.txt
 #===============================================================================
 FROM docker.io/library/debian@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1 AS dev
 
@@ -37,9 +53,6 @@ SHELL ["/bin/bash", "-Eeuo", "pipefail", "-O", "inherit_errexit", "-O", "failglo
 
 # Without python3-psutil, which nothing here installs, xdist's -n auto counts
 # the CPUs the container may use rather than the machine's physical cores.
-# DL3008: the packages float within the Debian release the base image's digest
-# pins, so the release's updates reach the image on each build.
-# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -47,7 +60,6 @@ RUN apt-get update \
         curl \
         diffutils \
         docker-compose \
-        file \
         jq \
         kcov \
         npm \
@@ -66,8 +78,8 @@ ENV LANG=C.UTF-8 \
     LANGUAGE=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-# Otherwise ruff caches into the tree, which make format's mount carries to the
-# host.
+# Otherwise ruff caches into the tree, which the design service's mount carries
+# to the host under make format and make coverage.
 ENV RUFF_CACHE_DIR=/tmp/ruff-cache
 
 # The same for Python's own cache, which would otherwise land beside the modules
@@ -96,12 +108,6 @@ RUN case $(dpkg --print-architecture) in \
     && rm /tmp/yq \
     && yq --version \
     && yq --version | grep -qF "version v${YQ_VERSION}"
-
-# Global, as mdformat below, so ruff is on the PATH of x, who runs it.
-ARG RUFF_VERSION=0.17.3
-RUN pipx install --global "ruff==${RUFF_VERSION}" \
-    && ruff --version \
-    && ruff --version | grep -qFx "ruff ${RUFF_VERSION}"
 
 ARG ACTIONLINT_VERSION=1.7.12
 ARG ACTIONLINT_SHA256_AMD64=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
@@ -151,6 +157,24 @@ RUN case $(dpkg --print-architecture) in \
     && dockerfmt version \
     && dockerfmt version | grep -qF "${DOCKERFMT_VERSION}"
 
+# dotenv-linter publishes no checksum (its release page,
+# github.com/dotenv-linter/dotenv-linter/releases, checked 2026-11), so the
+# hashes are taken from the downloads themselves.
+ARG DOTENV_LINTER_VERSION=4.0.0
+ARG DOTENV_LINTER_SHA256_AMD64=9e2f1f6eb88a71ac15ef209f78f5a68644db82f132d2677112b4f80ec2bd2127
+ARG DOTENV_LINTER_SHA256_ARM64=c4113aafd35e5f9095b2f757061d07cc8eb5cc0bcd755249877af08b7ffafb9a
+RUN case $(dpkg --print-architecture) in \
+    amd64) arch=x86_64 sha256=${DOTENV_LINTER_SHA256_AMD64} ;; \
+    arm64) arch=aarch64 sha256=${DOTENV_LINTER_SHA256_ARM64} ;; \
+    *) exit 1 ;; \
+    esac \
+    && curl -fsL "https://github.com/dotenv-linter/dotenv-linter/releases/download/v${DOTENV_LINTER_VERSION}/dotenv-linter-linux-${arch}.tar.gz" -o /tmp/dotenv-linter.tar.gz \
+    && echo "${sha256}  /tmp/dotenv-linter.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/dotenv-linter.tar.gz -C /usr/local/bin dotenv-linter \
+    && rm /tmp/dotenv-linter.tar.gz \
+    && dotenv-linter --version \
+    && dotenv-linter --version | grep -qF " ${DOTENV_LINTER_VERSION}"
+
 ARG HADOLINT_VERSION=2.15.1
 ARG HADOLINT_SHA256_AMD64=c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
 ARG HADOLINT_SHA256_ARM64=f6198ef8090f404dbb771abfee086eb8c48ac177f30da7fd3510aca35b344b5d
@@ -185,50 +209,64 @@ RUN case $(dpkg --print-architecture) in \
     && taplo --version \
     && taplo --version | grep -qFx "taplo ${TAPLO_VERSION}"
 
-# Global, so mdformat sits outside root's home and on the PATH of x, who runs
-# it.
-ARG MDFORMAT_FRONTMATTER_VERSION=2.2.0
-ARG MDFORMAT_GFM_VERSION=1.0.0
-ARG MDFORMAT_VERSION=1.0.0
-RUN pipx install --global "mdformat==${MDFORMAT_VERSION}" \
-    && pipx inject --global mdformat \
-        "mdformat-frontmatter==${MDFORMAT_FRONTMATTER_VERSION}" \
-        "mdformat-gfm==${MDFORMAT_GFM_VERSION}" \
-    && mdformat --version \
-    && pipx list --global --json \
-    | jq -e \
-        --arg m "${MDFORMAT_VERSION}" \
-        --arg f "${MDFORMAT_FRONTMATTER_VERSION}" \
-        --arg g "${MDFORMAT_GFM_VERSION}" \
-        '.venvs.mdformat.metadata | \
-    .main_package.package_version == $m and \
-    .injected_packages."mdformat-frontmatter".package_version == $f and \
-    .injected_packages."mdformat-gfm".package_version == $g'
+# ruff, and mdformat with its gfm and frontmatter plugins, from pipx outside
+# root's home and on the PATH of x, who runs them. Offline, pip can take only
+# the wheels the wheels stage downloaded, so every version is the lock's. pipx's
+# shared venv is made here, from Debian's bundled pip, since pipx would
+# otherwise fetch pip unpinned to make it, and in the same RUN as every pipx
+# call, since pipx upgrades it from PyPI once its pip is older than pipx's
+# SHARED_LIBS_MAX_AGE_SEC. DL3013 asks for each version written here, which the
+# locks alone pin.
+# hadolint ignore=DL3013
+RUN --network=none \
+    --mount=type=bind,from=wheels,source=/wheels,target=/wheels \
+    export PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin \
+    && python3 -m venv "$PIPX_HOME/shared" \
+    && pipx install \
+        --pip-args='--disable-pip-version-check --no-index --find-links=/wheels' \
+        ruff \
+    && pipx install \
+        --pip-args='--disable-pip-version-check --no-index --find-links=/wheels' \
+        mdformat \
+    && pipx inject \
+        --pip-args='--disable-pip-version-check --no-index --find-links=/wheels' \
+        mdformat mdformat-gfm mdformat-frontmatter \
+    && "$PIPX_HOME/venvs/ruff/bin/python" -m pip check \
+    && "$PIPX_HOME/venvs/mdformat/bin/python" -m pip check \
+    && ruff --version \
+    && version=$(mdformat --version) \
+    && echo "$version" \
+    && echo "$version" | grep -qF 'mdformat-gfm ' \
+    && echo "$version" | grep -qF 'mdformat_frontmatter '
 
-# Global packages, so nothing npm writes lands in the mounted tree.
-ARG PRETTIER_VERSION=3.9.10
-ARG SEMISTANDARD_VERSION=17.0.0
-ARG SNAZZY_VERSION=9.0.0
-RUN npm install --global \
-    "prettier@${PRETTIER_VERSION}" \
-    "semistandard@${SEMISTANDARD_VERSION}" \
-    "snazzy@${SNAZZY_VERSION}" \
-    && npm ls --global --depth=0 >/tmp/npm-ls \
-    && grep -qF "prettier@${PRETTIER_VERSION}" /tmp/npm-ls \
-    && grep -qF "semistandard@${SEMISTANDARD_VERSION}" /tmp/npm-ls \
-    && grep -qF "snazzy@${SNAZZY_VERSION}" /tmp/npm-ls \
-    && rm /tmp/npm-ls
+# npm ci, the one npm command that installs a lock as given, outside the mounted
+# tree. The mount is read-only, so the lock files are linked into a directory of
+# their own.
+RUN --mount=type=bind,source=Dockerfile.lock/js,target=/lock \
+    mkdir /opt/js \
+    && ln -s /lock/package.json /lock/package-lock.json /opt/js/ \
+    && npm ci --prefix /opt/js --ignore-scripts --no-audit --no-fund \
+    && /opt/js/node_modules/.bin/prettier --version \
+    && /opt/js/node_modules/.bin/semistandard --version
+
+ENV PATH=/opt/js/node_modules/.bin:$PATH
 
 # uid 1000 so a bind-mounted tree is writable from a host whose user is the
 # usual 1000.
-RUN if id -u 1000 > /dev/null 2>&1; then userdel -r "$(id -nu 1000)"; fi && \
-    useradd -u 1000 x -m && \
-    mkdir /home/x/r && \
-    chown -R x:x /home/x
+RUN useradd -u 1000 x -m \
+    && mkdir /home/x/r \
+    && chown -R x:x /home/x
 #-------------------------------------------------------------------------------
 USER 1000
 
 WORKDIR /home/x/r
+
+# What git describe prints for the tree built, which docker/build-compose and CI
+# pass: empty for a tree with no tag to describe it by, and where no build
+# argument is given, as under docker compose run --build. Last, so a new stamp
+# invalidates no earlier layer.
+ARG GIT_DESCRIBE
+LABEL org.opencontainers.image.version=$GIT_DESCRIBE
 #===============================================================================
 FROM dev AS test
 

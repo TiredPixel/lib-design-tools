@@ -1,4 +1,5 @@
-# Read by the test stage alone, since dev copies nothing in. The .env files and
+# Read by the test stage, which copies the tree in, and by the wheels and dev
+# stages, which bind-mount Dockerfile.lock from the context. The .env files and
 # Compose overrides hold this checkout's settings, not the tree's. Every
 # top-level dot path is left out, so a per-user one such as .claude stays out
 # without being named, and the project's own are let back in by name.
@@ -13,3 +14,4 @@
 !/.github
 !/.gitignore
 !/.gitmodules
+!/.hadolint.yaml

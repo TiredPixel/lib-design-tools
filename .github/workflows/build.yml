@@ -5,7 +5,7 @@ concurrency:
   cancel-in-progress: true
   group: ${{ github.workflow }}-${{ github.ref }}
 # Strict as the repository's scripts are: GitHub's default bash for run steps
-# lacks pipefail, -u, inherit_errexit and failglob.
+# lacks -E, -u, pipefail, inherit_errexit and failglob.
 defaults:
   run:
     shell: bash -Eeuo pipefail -O inherit_errexit -O failglob {0}

@@ -22,6 +22,7 @@ import design_render
 
 def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
+        formatter_class=design_render.UsageFormatter,
         prog="render-check",
         description="Render pages in headless Chromium and fail on any error.",
     )
@@ -111,10 +112,10 @@ def main(argv: list[str] | None = None) -> int:
     with design_render.serve(arguments.root) as base_url:
         for page in arguments.files:
             for problem in check_page(base_url, page, arguments):
-                print(f"{page}: {problem}", file=sys.stderr)
+                print(f"render-check: {page}: {problem}", file=sys.stderr)
                 failures += 1
     print(
-        f"checked {len(arguments.files)} page(s): {failures} problem(s)",
+        f"render-check: checked {len(arguments.files)} page(s): {failures} problem(s)",
         file=sys.stderr,
     )
     return 1 if failures else 0

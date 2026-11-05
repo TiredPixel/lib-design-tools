@@ -8,15 +8,26 @@ import textwrap
 import temp_tree
 import tools_loader
 
+USAGE = "Usage: palette-generate YAML --prefix P --json OUT --css OUT [--check]\n"
+
+# Set by kcov under bin/coverage. The trace descriptor BASH_XTRACEFD names is not open
+# here, since xdist starts its workers without it, so a child bash given these variables
+# would write its trace, and a complaint, into the stderr tested.
+KCOV_TRACING = ("BASH_ENV", "BASH_XTRACEFD")
+
 
 def run(*args, cwd, env=None):
+    environment = {k: v for k, v in os.environ.items() if k not in KCOV_TRACING}
     return subprocess.run(
         [str(tools_loader.TOOLS / "palette-generate"), *args],
         cwd=cwd,
-        env={**os.environ, **(env or {})},
+        env={**environment, **(env or {})},
         capture_output=True,
         text=True,
         check=False,
+        # Generous, so a hung child fails the test rather than stalling a worker; not a
+        # measure of how long it should take.
+        timeout=300,
     )
 
 
@@ -229,7 +240,7 @@ class PaletteGenerateTest(Workspace):
             with self.subTest(args=args):
                 result = run(*args, cwd=self.root)
                 self.assertEqual(result.returncode, 2)
-                self.assertIn("usage:", result.stderr)
+                self.assertEqual(result.stderr, USAGE)
 
     def test_options_of_the_same_name_in_the_environment_count_for_nothing(self):
         self.write("p.yml", self.YAML)
@@ -244,12 +255,12 @@ class PaletteGenerateTest(Workspace):
         self.assertFalse((self.root / "e.css").exists())
         result = run("p.yml", cwd=self.root, env=environment)
         self.assertEqual(result.returncode, 2)
-        self.assertIn("usage:", result.stderr)
+        self.assertEqual(result.stderr, USAGE)
 
     def test_help_prints_usage_and_succeeds(self):
         for flag in ("--help", "-h"):
             with self.subTest(flag=flag):
                 result = run("p.yml", flag, cwd=self.root)
                 self.assertEqual(result.returncode, 0)
-                self.assertTrue(result.stdout.startswith("usage: palette-generate"))
+                self.assertEqual(result.stdout, USAGE)
                 self.assertEqual(result.stderr, "")

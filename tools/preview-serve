@@ -103,6 +103,7 @@ def resolved_path(start: str) -> str:
 
 def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
+        formatter_class=design_render.UsageFormatter,
         prog="preview-serve",
         description="Serve a tree as it is on disk, for previewing it.",
     )
@@ -124,7 +125,8 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     if not arguments.start.startswith("/"):
         parser.error(f"--start {arguments.start} is not a /-rooted path")
     # send_header checks nothing, so a control character would corrupt the header, and
-    # one outside ASCII fails every request when the header is encoded.
+    # it encodes the header as Latin-1, so a character above U+00FF fails every request
+    # for / and one from U+0080 goes out as a raw byte rather than percent-encoded.
     if not (arguments.start.isascii() and arguments.start.isprintable()):
         parser.error(
             f"--start {arguments.start!r} holds a character outside printable ASCII;"
@@ -150,7 +152,11 @@ def main(argv: list[str] | None = None) -> int:
         arguments.root.resolve(), arguments.address, arguments.port, arguments.start
     )
     host, port = server.server_address[:2]
-    print(f"preview-serve: {arguments.root} at http://{host}:{port}/", flush=True)
+    print(
+        f"preview-serve: {arguments.root} at http://{host}:{port}/",
+        file=sys.stderr,
+        flush=True,
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

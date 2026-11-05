@@ -6,9 +6,9 @@ HTML is read by element and attribute, never by pattern, so that a ``data-src`` 
 attributes read on each element, ``srcset`` and ``imagesrcset`` included, ``src`` on
 ``input`` only where it is an image, and ``content`` on ``meta`` only where it is a
 refresh. CSS, whether a stylesheet, a ``<style>`` element or a ``style`` attribute, is
-read for ``url(...)``, ``@import`` and each string in ``image-set()``.
-A relative reference resolves against the referencing file and a ``/``-rooted one
-against ``--root``; neither may leave ``--root``, since nothing outside it is served. A
+read for ``url(...)``, ``@import`` and each string in ``image-set()``. A relative
+reference resolves against the referencing file and a ``/``-rooted one against
+``--root``; neither may leave ``--root``, since nothing outside it is served. A
 directory resolves only where it holds an index page, so the page loads rather than a
 listing.
 
@@ -76,7 +76,7 @@ SRCSET_ATTRIBUTES = frozenset({"imagesrcset", "srcset"})
 # The attribute a stylesheet or script loads from, which is what integrity covers.
 INTEGRITY_ATTRIBUTES = {"link": "href", "script": "src"}
 
-# The script-like destinations of the HTML standard, and none, which a modulepreload
+# The script-like destinations of the Fetch standard, and none, which a modulepreload
 # reads as script.
 MODULEPRELOAD_SCRIPT_DESTINATIONS = frozenset(
     {
@@ -93,8 +93,8 @@ MODULEPRELOAD_SCRIPT_DESTINATIONS = frozenset(
 # The pages a static server answers a directory with.
 _INDEX_PAGES = http.server.SimpleHTTPRequestHandler.index_pages
 
-# Schemes whose target is never fetched from a server: the page itself, an object the
-# page holds, inline data, script, or a handler outside the browser.
+# Schemes whose target is never fetched from a server: a document the browser makes, an
+# object the page holds, inline data, script, or a handler outside the browser.
 IGNORED_SCHEMES = frozenset({"about", "blob", "data", "javascript", "mailto", "tel"})
 
 # Listed rather than their complement, so that a relation missing from here counts as a
@@ -127,9 +127,9 @@ _CSS_UNQUOTED_URL = re.compile(r"""(?<![\w-])url\(\s*(?=[^\s"'])""", re.IGNORECA
 _CSS_SPACE = " \t\n\r\f"
 _CSS_ESCAPE = re.compile(r"\\(?:([0-9A-Fa-f]{1,6})[ \t\n\r\f]?|(\n)|(.))", re.DOTALL)
 
+_TAG_NAME = re.compile(r"<[^\s/>]+")
 # One attribute of a start tag, its value skipped whole, so that a name written inside
 # another attribute's quoted value is never taken for an attribute.
-_TAG_NAME = re.compile(r"<[^\s/>]+")
 _TAG_ATTRIBUTE = re.compile(r"""([^\s"'>/=]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?""")
 
 _SRCSET_SPACE = " \t\n\r\f"
@@ -234,11 +234,7 @@ def _scan_css(css: str) -> tuple[str, dict[int, str], dict[int, str]]:
                 masked[index] = " "
 
     def skip(index: int, stops: str) -> int:
-        """Return the offset of the first unescaped stop from ``index``, or ``end``.
-
-        The stops are the characters of ``stops``; one is escaped where a ``\\`` comes
-        before it.
-        """
+        """Return the offset of the first unescaped stop from ``index``, or ``end``."""
         while index < end and css[index] not in stops:
             index += 2 if css[index] == "\\" else 1
         return min(index, end)
@@ -600,6 +596,7 @@ def check_css(
 
 def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
+        formatter_class=design_render.UsageFormatter,
         prog="references-check",
         description="Fail on local references in HTML and CSS that do not resolve.",
     )
@@ -698,7 +695,9 @@ def main(argv: list[str] | None = None) -> int:
                     path, arguments.root, arguments.no_external, exemptions
                 )
         except UnicodeDecodeError as error:
-            print(f"{path}: not valid UTF-8: {error}", file=sys.stderr)
+            print(
+                f"references-check: {path}: not valid UTF-8: {error}", file=sys.stderr
+            )
             failures += 1
             every_file_read = False
             continue
@@ -706,10 +705,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{path}:{line}: {message}", file=sys.stderr)
         failures += len(problems)
     for message in stale_exemptions(exemptions, arguments.root, every_file_read):
-        print(message, file=sys.stderr)
+        print(f"references-check: {message}", file=sys.stderr)
         failures += 1
     print(
-        f"checked {len(arguments.files)} file(s): {failures} problem(s)",
+        f"references-check: checked {len(arguments.files)} file(s): "
+        f"{failures} problem(s)",
         file=sys.stderr,
     )
     return 1 if failures else 0

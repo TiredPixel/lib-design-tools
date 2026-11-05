@@ -8,12 +8,13 @@ resource loads, uncaught errors, unhandled rejections and ``console.error`` call
 ``data-render-errors`` attribute on ``<html>``. Chromium's ``--dump-dom`` then hands
 back the DOM after scripts have run, attribute included.
 
-Everything except the Chromium call itself is plain text processing, so it can be tested
-without a browser.
+Only the Chromium call itself needs a browser, so everything else can be tested without
+one.
 """
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import dataclasses
 import functools
@@ -29,7 +30,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 
 ERRORS_ATTRIBUTE = "data-render-errors"
 
@@ -122,7 +123,7 @@ _CLASS_SELECTOR = re.compile(r"\.(-?[A-Za-z_][A-Za-z0-9_-]*)")
 _PDF_PAGE = re.compile(rb"/Type\s*/Page(?![s\w])")
 
 HTML_SUFFIXES = frozenset({".html", ".htm"})
-_INDEX_NAMES = http.server.SimpleHTTPRequestHandler.index_pages
+_INDEX_PAGES = http.server.SimpleHTTPRequestHandler.index_pages
 
 
 class RenderError(Exception):
@@ -298,7 +299,7 @@ def refused(directory: str, url: str, path: str) -> bool:
     root = pathlib.Path(directory).resolve()
     served = pathlib.Path(path)
     if served.is_dir():
-        indexes = (served / name for name in _INDEX_NAMES)
+        indexes = (served / name for name in _INDEX_PAGES)
         served = next((index for index in indexes if index.is_file()), served)
     target = served.resolve()
     if not target.is_relative_to(root):
@@ -365,8 +366,8 @@ def served_path(root: pathlib.Path, page: pathlib.Path) -> str:
 
     A symlinked page keeps its own path, so that it is requested where the link is and
     its relative references resolve beside the link, not its target. Where ``root`` is
-    named through a symlink, or the page through one, their real paths are compared
-    instead. Raises ValueError when ``page`` is not inside ``root``.
+    named through a symlink, or the page's directory through one, their real paths are
+    compared instead. Raises ValueError when ``page`` is not inside ``root``.
     """
     page_path = pathlib.Path(os.path.abspath(page))
     real_root = root.resolve()
@@ -431,7 +432,7 @@ def _chromium(
 
 
 def _end_group(process: subprocess.Popen, chromium: str) -> None:
-    """Kill the rest of the process group ``process`` leads, and wait until it is gone.
+    """Kill the process group ``process`` leads, and wait until it is gone.
 
     Chromium's renderer, GPU and crashpad processes outlive the browser process, and go
     on writing to the profile, whose removal would then fail. Once the leader is reaped,
@@ -529,3 +530,22 @@ def render(
     """
     with serve(root) as base_url:
         return render_url(page_url(base_url, root, page), **chromium_options)
+
+
+class UsageFormatter(argparse.HelpFormatter):
+    """Argparse's help formatter, with the synopsis opening ``Usage: ``.
+
+    Given as ``formatter_class``, it reaches both the synopsis a usage error prints and
+    the one ``--help`` opens with.
+    """
+
+    def add_usage(
+        self,
+        usage: str | None,
+        actions: Iterable[argparse.Action],
+        groups: Iterable[object],
+        prefix: str | None = None,
+    ) -> None:
+        super().add_usage(
+            usage, actions, groups, "Usage: " if prefix is None else prefix
+        )

@@ -156,7 +156,11 @@ class ArgumentsTest(unittest.TestCase):
         ):
             preview_serve.parse_arguments(list(arguments))
         self.assertEqual(raised.exception.code, 2)
-        return stderr.getvalue()
+        output = stderr.getvalue()
+        self.assertRegex(
+            output, r"\AUsage: preview-serve .*\n(.*\n)*preview-serve: error: .+\n\Z"
+        )
+        return output
 
     def test_defaults(self) -> None:
         arguments = preview_serve.parse_arguments(
@@ -252,11 +256,13 @@ class ArgumentsTest(unittest.TestCase):
         server = mock.Mock(server_address=("0.0.0.0", 1234))
         server.serve_forever.side_effect = KeyboardInterrupt
         stdout = io.StringIO()
+        stderr = io.StringIO()
         with (
             mock.patch.object(
                 preview_serve, "make_server", return_value=server
             ) as made,
             contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
         ):
             status = preview_serve.main(
                 ["--root", self.root, "--start", "/p/", "--address", "0.0.0.0"]
@@ -266,4 +272,8 @@ class ArgumentsTest(unittest.TestCase):
             pathlib.Path(self.root).resolve(), "0.0.0.0", 8080, "/p/"
         )
         server.server_close.assert_called_once_with()
-        self.assertIn("http://0.0.0.0:1234/", stdout.getvalue())
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(
+            stderr.getvalue(),
+            f"preview-serve: {self.root} at http://0.0.0.0:1234/\n",
+        )

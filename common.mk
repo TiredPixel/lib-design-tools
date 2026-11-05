@@ -9,9 +9,12 @@ SHELL := bash
 
 # --profile test so the design and design_test services are built here rather
 # than on demand by the --build the other targets carry. preview, under a
-# profile of its own, runs the same dev image as design.
+# profile of its own, builds the same dev stage as design on demand.
 build:
 	$(DESIGN_TOOLS)/lib/shell-common/docker/build-compose --profile test
+# In design, whose mount carries the report to tmp/coverage/ on the host.
+coverage:
+	docker compose --profile test run --rm --build design coverage $(TESTS)
 format:
 	docker compose --profile test run --rm --build design format
 lint:
@@ -26,10 +29,10 @@ upgrade:
 	$(MAKE) upgrade-pre
 	$(MAKE) upgrade-post
 # Alone, it finishes an upgrade whose build or tests failed, once fixed.
-# UPGRADE_COMMIT, where the including Makefile sets it, commits what
-# upgrade-pre moved.
+# UPGRADE_COMMIT, where the including Makefile sets it, commits what upgrade-pre
+# moved.
 upgrade-post:
 	$(MAKE) build
 	$(MAKE) test
 	$(UPGRADE_COMMIT)
-.PHONY: build format lint preview test upgrade upgrade-post upgrade-pre
+.PHONY: build coverage format lint preview test upgrade upgrade-post upgrade-pre
