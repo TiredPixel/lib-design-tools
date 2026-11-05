@@ -60,7 +60,6 @@ RUN apt-get update \
         curl \
         diffutils \
         docker-compose \
-        file \
         jq \
         kcov \
         npm \
@@ -260,6 +259,13 @@ RUN useradd -u 1000 x -m \
 USER 1000
 
 WORKDIR /home/x/r
+
+# What git describe prints for the tree built, which docker/build-compose and CI
+# pass: empty for a tree with no tag to describe it by, and where no build
+# argument is given, as under docker compose run --build. Last, so a new stamp
+# invalidates no earlier layer.
+ARG GIT_DESCRIBE
+LABEL org.opencontainers.image.version=$GIT_DESCRIBE
 #===============================================================================
 FROM dev AS test
 
