@@ -1,0 +1,6 @@
+# DL3008 asks for each apt package pinned to an exact version. The packages
+# float within the Debian release the base image's digest pins instead, so the
+# release's updates reach the image on each build.
+---
+ignored:
+  - DL3008

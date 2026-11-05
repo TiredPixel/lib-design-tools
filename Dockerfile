@@ -8,6 +8,9 @@
 # TRACK ARG DOCKERFMT_SHA256_AMD64 sha256:https://github.com/reteps/dockerfmt/releases/download/v${DOCKERFMT_VERSION}/dockerfmt-v${DOCKERFMT_VERSION}-linux-amd64.tar.gz
 # TRACK ARG DOCKERFMT_SHA256_ARM64 sha256:https://github.com/reteps/dockerfmt/releases/download/v${DOCKERFMT_VERSION}/dockerfmt-v${DOCKERFMT_VERSION}-linux-arm64.tar.gz
 # TRACK ARG DOCKERFMT_VERSION github:reteps/dockerfmt
+# TRACK ARG DOTENV_LINTER_SHA256_AMD64 sha256:https://github.com/dotenv-linter/dotenv-linter/releases/download/v${DOTENV_LINTER_VERSION}/dotenv-linter-linux-x86_64.tar.gz
+# TRACK ARG DOTENV_LINTER_SHA256_ARM64 sha256:https://github.com/dotenv-linter/dotenv-linter/releases/download/v${DOTENV_LINTER_VERSION}/dotenv-linter-linux-aarch64.tar.gz
+# TRACK ARG DOTENV_LINTER_VERSION github:dotenv-linter/dotenv-linter
 # TRACK ARG HADOLINT_SHA256_AMD64 sha256:https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64 https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/checksums.sha256
 # TRACK ARG HADOLINT_SHA256_ARM64 sha256:https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-arm64 https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/checksums.sha256
 # TRACK ARG HADOLINT_VERSION github:hadolint/hadolint
@@ -32,9 +35,6 @@ FROM docker.io/library/debian@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d
 
 SHELL ["/bin/bash", "-Eeuo", "pipefail", "-O", "inherit_errexit", "-O", "failglob", "-c"]
 
-# DL3008: the packages float within the Debian release the base image's digest
-# pins, so the release's updates reach the image on each build.
-# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3-pip \
     && rm -rf /var/lib/apt/lists/*
@@ -53,9 +53,6 @@ SHELL ["/bin/bash", "-Eeuo", "pipefail", "-O", "inherit_errexit", "-O", "failglo
 
 # Without python3-psutil, which nothing here installs, xdist's -n auto counts
 # the CPUs the container may use rather than the machine's physical cores.
-# DL3008: the packages float within the Debian release the base image's digest
-# pins, so the release's updates reach the image on each build.
-# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -160,6 +157,24 @@ RUN case $(dpkg --print-architecture) in \
     && rm /tmp/dockerfmt.tar.gz \
     && dockerfmt version \
     && dockerfmt version | grep -qF "${DOCKERFMT_VERSION}"
+
+# dotenv-linter publishes no checksum (its release page,
+# github.com/dotenv-linter/dotenv-linter/releases, checked 2026-11), so the
+# hashes are taken from the downloads themselves.
+ARG DOTENV_LINTER_VERSION=4.0.0
+ARG DOTENV_LINTER_SHA256_AMD64=9e2f1f6eb88a71ac15ef209f78f5a68644db82f132d2677112b4f80ec2bd2127
+ARG DOTENV_LINTER_SHA256_ARM64=c4113aafd35e5f9095b2f757061d07cc8eb5cc0bcd755249877af08b7ffafb9a
+RUN case $(dpkg --print-architecture) in \
+    amd64) arch=x86_64 sha256=${DOTENV_LINTER_SHA256_AMD64} ;; \
+    arm64) arch=aarch64 sha256=${DOTENV_LINTER_SHA256_ARM64} ;; \
+    *) exit 1 ;; \
+    esac \
+    && curl -fsL "https://github.com/dotenv-linter/dotenv-linter/releases/download/v${DOTENV_LINTER_VERSION}/dotenv-linter-linux-${arch}.tar.gz" -o /tmp/dotenv-linter.tar.gz \
+    && echo "${sha256}  /tmp/dotenv-linter.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/dotenv-linter.tar.gz -C /usr/local/bin dotenv-linter \
+    && rm /tmp/dotenv-linter.tar.gz \
+    && dotenv-linter --version \
+    && dotenv-linter --version | grep -qF " ${DOTENV_LINTER_VERSION}"
 
 ARG HADOLINT_VERSION=2.15.1
 ARG HADOLINT_SHA256_AMD64=c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507

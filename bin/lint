@@ -87,8 +87,13 @@ if defines toml_files; then
     taplo fmt --check "${toml[@]}"
 fi
 
-if defines docker_files; then
+if defines dotenv_files; then
+    read_files dotenv_files dotenv
+    echo "lint: checking ${#dotenv[@]} dotenv file(s)" >&2
+    dotenv-linter check "${dotenv[@]}"
+fi
 
+if defines docker_files; then
     read_files docker_files docker
     echo "lint: checking ${#docker[@]} Docker file(s)" >&2
     dockerfmt "${dockerfmt_args[@]}" --check "${docker[@]}"

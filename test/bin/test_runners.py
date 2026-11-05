@@ -186,6 +186,7 @@ class PassSelectionTest(Repository):
     def test_each_new_set_runs_its_own_pass_alone(self):
         self.write("a.md", "a\n")
         self.write("a.toml", "a = 1\n")
+        self.write("a.env", "A=1\n")
         self.write("Dockerfile", FORMATTED_DOCKERFILE)
         self.write("compose.yml", VALID_COMPOSE)
         self.write("workflow.yml", VALID_WORKFLOW)
@@ -194,6 +195,7 @@ class PassSelectionTest(Repository):
         cases = (
             ("md_files", "a.md", "Markdown", True),
             ("toml_files", "a.toml", "TOML", True),
+            ("dotenv_files", "a.env", "dotenv", True),
             ("docker_files", "Dockerfile", "Docker", True),
             ("compose_files", "compose.yml", "Compose", False),
             ("workflow_files", "workflow.yml", "workflow", False),
@@ -383,6 +385,17 @@ class FormatThenLintTest(Repository):
     def test_toml(self):
         self.settings("function toml_files { printf '%s\\0' a.toml; }\n")
         self.assertFormatFixes("a.toml", "a=1\n", "a = 1\n", "TOML")
+
+    def test_dotenv(self):
+        self.settings("function dotenv_files { printf '%s\\0' a.env; }\n")
+        self.assertFormatFixes("a.env", "a=1\n", "A=1\n", "dotenv")
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["a.env", "bin"])
+
+    def test_dotenv_finding_format_cannot_fix_fails_the_lint(self):
+        self.settings("function dotenv_files { printf '%s\\0' a.env; }\n")
+        self.write("a.env", "=1\n")
+        self.assertPasses(self.run_bin("format"))
+        self.assertFails(self.run_bin("lint"), "a.env:1 LeadingCharacter")
 
     def test_dockerfile(self):
         self.settings("function docker_files { printf '%s\\0' Dockerfile; }\n")

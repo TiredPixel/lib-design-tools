@@ -4,8 +4,10 @@
 # repository does: each function names what one pass reads, NUL-separated.
 #
 # No pass reaches pytest.ini, checkmake.ini, .gitmodules, .gitignore,
-# .dockerignore, .dockerrepo or .env.example, since the image has no formatter
-# or linter for INI, git config, ignore or dotenv files.
+# .dockerignore, .dockerrepo or LICENSE, since the image has no formatter or
+# linter for INI, git config, ignore or plain-text files, nor the locks
+# docker/upgrade writes whole: Dockerfile.lock/*/requirements.txt, and
+# Dockerfile.lock/js/package-lock.json, in npm's own key order.
 
 # A proposed workflow waits in .github/workflows.new/ until it is moved into
 # .github/workflows/, so either directory may be empty or absent.
@@ -14,8 +16,16 @@ function workflow_files {
 }
 
 function yaml_files {
-    printf '%s\0' docker-compose.yml
+    printf '%s\0' .hadolint.yaml docker-compose.yml
     workflow_files
+}
+
+function dotenv_files {
+    printf '%s\0' .env.example
+}
+
+function json_files {
+    printf '%s\0' Dockerfile.lock/js/package.json
 }
 
 function compose_files {

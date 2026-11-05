@@ -92,8 +92,13 @@ if defines toml_files; then
     taplo fmt "${toml[@]}" || status=1
 fi
 
-if defines docker_files; then
+if defines dotenv_files; then
+    read_files dotenv_files dotenv
+    echo "format: formatting ${#dotenv[@]} dotenv file(s)" >&2
+    dotenv-linter fix --no-backup "${dotenv[@]}" || status=1
+fi
 
+if defines docker_files; then
     read_files docker_files docker
     echo "format: formatting ${#docker[@]} Docker file(s)" >&2
     dockerfmt "${dockerfmt_args[@]}" --write "${docker[@]}" || status=1
