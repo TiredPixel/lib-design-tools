@@ -312,6 +312,21 @@ class HtmlTest(ReferencesTestCase):
             [(4, "gone.png does not exist"), (8, "missing.png does not exist")],
         )
 
+    def test_end_of_input_in_a_style_element_and_attribute(self) -> None:
+        markup = (
+            "<style>\n  .x { background: url('gone.png</style>\n"
+            '<div style="background: url(missing.png"></div>\n'
+            "<div style='background: image-set(\"absent.png'></div>\n"
+        )
+        self.assertEqual(
+            self.html_problems(markup),
+            [
+                (2, "gone.png does not exist"),
+                (3, "missing.png does not exist"),
+                (4, "absent.png does not exist"),
+            ],
+        )
+
     def test_style_element_text_in_several_chunks(self) -> None:
         # CPython delivers <style> text whole, so the chunks are fed by hand.
         css = "\n  @import 'gone.css';\n  .x { background: url(\"missing.png\"); }\n"
@@ -602,13 +617,62 @@ class CssTest(ReferencesTestCase):
             ".c { background: url(gone(c.png) }\n"
             ".d { background: url(gone\\\nd.png) }\n"
             ".e { background: url(gone-12.png) }\n"
-            ".f { background: url(gone-13.png"
         )
         self.assertEqual(self.css_problems(css), [(6, "gone-12.png does not exist")])
 
     def test_a_string_a_newline_ends_unclosed_is_dropped(self) -> None:
         css = ".a { content: 'never closed\n.b { background: url(gone-9.png) }\n"
         self.assertEqual(self.css_problems(css), [(2, "gone-9.png does not exist")])
+
+    def test_end_of_input_closes_an_unquoted_url(self) -> None:
+        for css in (
+            ".f { background: url(gone-13.png",
+            ".f { background: url(gone-13.png  \t",
+            ".f { background: url(  gone-13.png \n",
+        ):
+            with self.subTest(css=css):
+                self.assertEqual(
+                    self.css_problems(css), [(1, "gone-13.png does not exist")]
+                )
+
+    def test_end_of_input_leaves_an_invalid_unquoted_url_dropped(self) -> None:
+        self.assertEqual(self.css_problems(".b { background: url(gone'b.png"), [])
+
+    def test_end_of_input_closes_a_string(self) -> None:
+        for css in (
+            '.a { background: url("gone.png',
+            ".a { background: url('gone.png'",
+            '.a { background: url( "gone.png"   ',
+            '\n@import "gone.png',
+            '\n@import url("gone.png',
+            '.a { background: image-set("gone.png',
+            ".a { background: image-set('img/x.png' 1x, 'gone.png",
+        ):
+            with self.subTest(css=css):
+                self.assertEqual(
+                    self.css_problems(css),
+                    [(css.count("\n") + 1, "gone.png does not exist")],
+                )
+
+    def test_a_backslash_ending_a_string_is_dropped(self) -> None:
+        self.assertEqual(
+            self.css_problems('.a { background: url("gone.png\\'),
+            [(1, "gone.png does not exist")],
+        )
+        self.assertEqual(
+            self.css_problems('.a { background: url("img/x.png\\\\'),
+            [(1, "img/x.png\\ does not exist")],
+        )
+
+    def test_a_backslash_ending_an_unquoted_url_reads_as_replacement(self) -> None:
+        self.assertEqual(
+            self.css_problems(".a { background: url(gone.png\\"),
+            [(1, "gone.png\ufffd does not exist")],
+        )
+        self.assertEqual(
+            self.css_problems(".a { background: url(gone\\\\\\"),
+            [(1, "gone\\\ufffd does not exist")],
+        )
 
 
 class MainTest(ReferencesTestCase):
@@ -630,6 +694,16 @@ class MainTest(ReferencesTestCase):
             f"{page}:2: gone.png does not exist\n"
             f"{sheet}:1: gone.svg does not exist\n"
             "references-check: checked 2 file(s): 2 problem(s)\n",
+        )
+
+    def test_a_string_end_of_input_cuts_off_is_reported(self) -> None:
+        sheet = self.write("site/b.css", 'a{background:url("gone.png')
+        status, output = self.run_main("--root", str(self.root), str(sheet))
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            output,
+            f"{sheet}:1: gone.png does not exist\n"
+            "references-check: checked 1 file(s): 1 problem(s)\n",
         )
 
     def test_no_external_option(self) -> None:

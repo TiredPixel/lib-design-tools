@@ -118,9 +118,13 @@ NON_LOADING_RELATIONS = frozenset(
 
 # Matched against CSS whose comments and unquoted url() are blanked and whose strings
 # hold only spaces between their quotes, so a string's value is read from the strings
-# _scan_css records.
-_CSS_URL = re.compile(r"""(?<![\w-])url\(\s*("[^"]*"|'[^']*')\s*\)""", re.IGNORECASE)
-_CSS_IMPORT_STRING = re.compile(r"""@import\s+("[^"]*"|'[^']*')""", re.IGNORECASE)
+# _scan_css records. A string that end of input cuts off keeps only its opening quote,
+# and end of input closes a url() as CSS Syntax closes any function.
+_CSS_STRING = r"""("[^"]*(?:"|\Z)|'[^']*(?:'|\Z))"""
+_CSS_URL = re.compile(
+    rf"""(?<![\w-])url\(\s*{_CSS_STRING}\s*(?:\)|\Z)""", re.IGNORECASE
+)
+_CSS_IMPORT_STRING = re.compile(rf"""@import\s+{_CSS_STRING}""", re.IGNORECASE)
 _CSS_IMAGE_SET = re.compile(r"(?<![\w-])(?:-webkit-)?image-set\(", re.IGNORECASE)
 
 _CSS_UNQUOTED_URL = re.compile(r"""(?<![\w-])url\(\s*(?=[^\s"'])""", re.IGNORECASE)
@@ -216,12 +220,17 @@ def _scan_css(css: str) -> tuple[str, dict[int, str], dict[int, str]]:
     spaces; each string's value is keyed by the offset of its opening quote, and each
     unquoted ``url()``'s value by its own offset.
 
-    Newlines are kept, so lines still count, and so is each quote of a closed string.
-    Text inside a string is never read as a comment or a reference, nor a ``/*`` in an
-    unquoted ``url()``, which CSS reads whole, escapes included. A string a newline ends
-    unclosed is invalid CSS, and is blanked, quote and all, with no value, as is an
-    unquoted ``url()`` holding a quote, a ``(``, an escaped newline, or whitespace
-    before more of its value.
+    Newlines are kept, so lines still count, and so is each quote of a string that a
+    newline does not end, though a string that end of input cuts off has only its
+    opening quote. Text inside a string is never read as a comment or a reference, nor
+    a ``/*`` in an unquoted ``url()``, which CSS reads whole, escapes included. A string
+    a newline ends unclosed is invalid CSS, and is blanked, quote and all, with no
+    value, as is an unquoted ``url()`` holding a quote, a ``(``, an escaped newline, or
+    whitespace before more of its value.
+
+    End of input closes a string or an unquoted ``url()`` with the value read so far. A
+    ``\\`` ending the input is dropped from a string, and in an unquoted ``url()`` reads
+    as U+FFFD, as CSS Syntax reads an escape at end of input.
     """
     masked = list(css)
     strings: dict[int, str] = {}
@@ -246,17 +255,22 @@ def _scan_css(css: str) -> tuple[str, dict[int, str], dict[int, str]]:
             invalid = False
             while index < end and css[index] not in ")" + _CSS_SPACE:
                 if css[index] == "\\":
-                    invalid = invalid or css[index + 1 : index + 2] in ("\n", "")
+                    invalid = invalid or css[index + 1 : index + 2] == "\n"
                     index += 2
                 else:
                     invalid = invalid or css[index] in "\"'("
                     index += 1
+            # Only a "\" ending the input carries index past end.
+            escaped_end = index > end
             stop = min(index, end)
             index = stop
             while index < end and css[index] in _CSS_SPACE:
                 index += 1
-            if index < end and css[index] == ")" and not invalid:
-                urls[start] = _css_unescape(css[start:stop])
+            if (index == end or css[index] == ")") and not invalid:
+                if escaped_end:
+                    urls[start] = _css_unescape(css[start : stop - 1]) + "\ufffd"
+                else:
+                    urls[start] = _css_unescape(css[start:stop])
             else:
                 index = skip(index, ")")
             position = min(index + 1, end)
@@ -269,13 +283,16 @@ def _scan_css(css: str) -> tuple[str, dict[int, str], dict[int, str]]:
         elif css[position] in "\"'":
             quote = css[position]
             index = skip(position + 1, quote + "\n")
-            if index < end and css[index] == quote:
-                strings[position] = _css_unescape(css[position + 1 : index])
-                blank(position + 1, index)
-                position = index + 1
-            else:
+            if index < end and css[index] == "\n":
                 blank(position, index)
                 position = index
+            else:
+                value = css[position + 1 : index]
+                if index == end and (len(value) - len(value.rstrip("\\"))) % 2:
+                    value = value[:-1]
+                strings[position] = _css_unescape(value)
+                blank(position + 1, index)
+                position = index + 1
         else:
             position += 1
     return "".join(masked), strings, urls
