@@ -44,6 +44,9 @@ INVALID_WORKFLOW = (
     "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
     "      - run: echo ${{ undefined_context }}\n"
 )
+ACTIONLINT_IGNORING_INVALID = (
+    "paths:\n  .github/workflows/a.yml:\n    ignore:\n      - undefined_context\n"
+)
 
 PASSING_TEST = (
     "import unittest\n\n\nclass A(unittest.TestCase):\n    def test_a(self):\n"
@@ -755,6 +758,29 @@ class CheckingPassTest(Repository):
         self.assertEqual(
             self.runner_lines(result), ["lint: checking 1 workflow file(s)"]
         )
+
+    def test_workflows_read_the_repository_s_actionlint_config(self):
+        # The tree has no .git, as in the test stage, where actionlint alone would
+        # never find the config.
+        self.settings(
+            "function workflow_files { printf '%s\\0' .github/workflows/a.yml; }\n"
+        )
+        self.write(".github/workflows/a.yml", INVALID_WORKFLOW)
+        for name in ("actionlint.yaml", "actionlint.yml"):
+            with self.subTest(name=name):
+                config = self.write(f".github/{name}", ACTIONLINT_IGNORING_INVALID)
+                self.assertPasses(self.run_bin("lint"))
+                config.unlink()
+        self.assertFails(self.run_bin("lint"), "undefined_context")
+
+    def test_workflows_prefer_actionlint_yaml_to_yml(self):
+        self.settings(
+            "function workflow_files { printf '%s\\0' .github/workflows/a.yml; }\n"
+        )
+        self.write(".github/workflows/a.yml", INVALID_WORKFLOW)
+        self.write(".github/actionlint.yaml", "self-hosted-runner:\n  labels: []\n")
+        self.write(".github/actionlint.yml", ACTIONLINT_IGNORING_INVALID)
+        self.assertFails(self.run_bin("lint"), "undefined_context")
 
     def test_make(self):
         self.settings("function make_files { printf '%s\\0' Makefile; }\n")
