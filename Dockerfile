@@ -96,9 +96,9 @@ ENV PATH=/home/x/r/bin:$PATH
 
 # mikefarah's yq, which bin/format, lib/shell-common/lint/yaml-keys and
 # tools/palette-generate need: Debian's yq is the Python wrapper.
-ARG YQ_VERSION=4.54.1
-ARG YQ_SHA256_AMD64=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
-ARG YQ_SHA256_ARM64=189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b
+ARG YQ_VERSION=4.54.2
+ARG YQ_SHA256_AMD64=44c7759059b4910827a0059a2757b22001e59360cdecdb2ef8dedc4b6c7e9f32
+ARG YQ_SHA256_ARM64=bd44211dcd29a5f0eb701d4b7eb5ccd0cfff3bd3966cb4f7f9bd5b13701d997e
 RUN case $(dpkg --print-architecture) in \
     amd64) arch=amd64 sha256=${YQ_SHA256_AMD64} ;; \
     arm64) arch=arm64 sha256=${YQ_SHA256_ARM64} ;; \
