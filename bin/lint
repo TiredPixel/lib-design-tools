@@ -118,7 +118,17 @@ fi
 if defines workflow_files; then
     read_files workflow_files workflow
     echo "lint: checking ${#workflow[@]} workflow file(s)" >&2
-    actionlint "${workflow[@]}"
+    # Named, since actionlint reads the repository's config only in a directory
+    # holding .git, which the test stage's copy of the tree leaves out. The
+    # first found wins, in actionlint's own order.
+    actionlint_args=()
+    for f in .github/actionlint.yaml .github/actionlint.yml; do
+        if [ -e "$f" ]; then
+            actionlint_args=(-config-file "$f")
+            break
+        fi
+    done
+    actionlint "${actionlint_args[@]}" "${workflow[@]}"
 fi
 
 if defines make_files; then

@@ -103,7 +103,7 @@ A tool that fails, on a finding it cannot fix or a file it cannot parse, fails `
 What `bin/lint` checks only:
 
 - `compose_files` – Compose files, each validated on its own, with every profile enabled, by `docker-compose --profile '*' config -q`. It checks neither layout nor key order, so each is also named in `yaml_files`, except the link to this repository's `docker-compose.yml` (*Linking the services*).
-- `workflow_files` – GitHub Actions workflows, checked by actionlint; like `compose_files`, each is also named in `yaml_files` for its layout and key order.
+- `workflow_files` – GitHub Actions workflows, checked by actionlint, under the repository's own `.github/actionlint.yaml` or `.github/actionlint.yml`; like `compose_files`, each is also named in `yaml_files` for its layout and key order.
 - `make_files` – Makefiles, checked by checkmake, under the repository's own `checkmake.ini`.
 - `references_args` – `tools/references-check`'s arguments.
 - `render_args` – `tools/render-check`'s arguments, such as `--root . pages/*.html`.
