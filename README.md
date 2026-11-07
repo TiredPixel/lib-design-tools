@@ -144,7 +144,7 @@ function pytest_args {
 
 ### Running the make targets
 
-`common.mk` gives `build`, `coverage`, `format`, `lint`, `preview`, `test`, `upgrade` and `upgrade-post`, run through the services, and runs every recipe, the including `Makefile`'s own among them, in bash with `-Eeuo pipefail`, `inherit_errexit` and `failglob`. A repository's `Makefile` includes it and adds its own `upgrade-pre`, which moves the submodule to its latest commit and its own submodules to the commits that one records. Its first two lines make the submodule a repository of its own before anything runs in it, since git run in an uninitialised submodule's empty directory acts on the parent instead:
+`common.mk` gives `build`, `coverage`, `format`, `lint`, `preview`, `test`, `upgrade` and `upgrade-post`, run through the services, and `workflows-approve`, run on the host (*Approving workflows*), and runs every recipe, the including `Makefile`'s own among them, in bash with `-Eeuo pipefail`, `inherit_errexit` and `failglob`. A repository's `Makefile` includes it and adds its own `upgrade-pre`, which moves the submodule to its latest commit and its own submodules to the commits that one records. Its first two lines make the submodule a repository of its own before anything runs in it, since git run in an uninitialised submodule's empty directory acts on the parent instead:
 
 ```make
 include lib/design-tools/common.mk

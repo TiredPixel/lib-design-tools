@@ -36,4 +36,8 @@ upgrade-post:
 	$(MAKE) build
 	$(MAKE) test
 	$(UPGRADE_COMMIT)
-.PHONY: build coverage format lint preview test upgrade upgrade-post upgrade-pre
+# On the host rather than in the image, since it asks on the terminal and
+# pushes.
+workflows-approve:
+	$(DESIGN_TOOLS)/lib/shell-common/github/workflows-approve
+.PHONY: build coverage format lint preview test upgrade upgrade-post upgrade-pre workflows-approve
