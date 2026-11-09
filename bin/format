@@ -105,6 +105,13 @@ if defines css_files || defines html_files; then
     prettier --write "${prettied[@]}" || status=1
 fi
 
+if defines svg_files; then
+    read_files svg_files svg
+    echo "format: formatting ${#svg[@]} SVG file(s)" >&2
+    xml_plugin=$(prettier_xml_plugin)
+    prettier --write --plugin "$xml_plugin" "${svg[@]}" || status=1
+fi
+
 if defines md_files; then
     read_files md_files md
     echo "format: formatting ${#md[@]} Markdown file(s)" >&2

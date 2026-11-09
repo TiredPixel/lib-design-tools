@@ -20,7 +20,7 @@
 # TRACK ARG YQ_SHA256_AMD64 sha256:https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64 https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/checksums-bsd
 # TRACK ARG YQ_SHA256_ARM64 sha256:https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_arm64 https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/checksums-bsd
 # TRACK ARG YQ_VERSION github:mikefarah/yq
-# TRACK LOCK js npm:prettier npm:semistandard
+# TRACK LOCK js npm:@prettier/plugin-xml npm:prettier npm:semistandard
 # TRACK LOCK mdformat pypi:mdformat pypi:mdformat-gfm pypi:mdformat-frontmatter
 # TRACK LOCK ruff pypi:ruff
 #
@@ -29,7 +29,10 @@
 # nothing in, reading the locks only through bind mounts, so a repository taking
 # this one as a submodule builds the same image, through a Dockerfile and a
 # Dockerfile.lock symlinked to this one's; test adds that repository's tree,
-# which every service runs on.
+# which every service runs on. Each RUN that reads a lock mounts Dockerfile.lock
+# whole, since through a symlink BuildKit resolves only the first path below it
+# and fails the next, unless the test stage's COPY has already loaded the
+# context, which a build of dev alone does not.
 #===============================================================================
 FROM docker.io/library/debian@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 AS wheels
 
@@ -39,8 +42,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN --mount=type=bind,source=Dockerfile.lock/mdformat,target=/lock/mdformat \
-    --mount=type=bind,source=Dockerfile.lock/ruff,target=/lock/ruff \
+RUN --mount=type=bind,source=Dockerfile.lock,target=/lock \
     python3 -m pip download --disable-pip-version-check --require-hashes \
     --no-deps --only-binary=:all: -d /wheels \
     -r /lock/mdformat/requirements.txt -r /lock/ruff/requirements.txt
@@ -244,9 +246,9 @@ RUN --network=none \
 # npm ci, the one npm command that installs a lock as given, outside the mounted
 # tree. The mount is read-only, so the lock files are linked into a directory of
 # their own.
-RUN --mount=type=bind,source=Dockerfile.lock/js,target=/lock \
+RUN --mount=type=bind,source=Dockerfile.lock,target=/lock \
     mkdir /opt/js \
-    && ln -s /lock/package.json /lock/package-lock.json /opt/js/ \
+    && ln -s /lock/js/package.json /lock/js/package-lock.json /opt/js/ \
     && npm ci --prefix /opt/js --ignore-scripts --no-audit --no-fund \
     && /opt/js/node_modules/.bin/prettier --version \
     && /opt/js/node_modules/.bin/semistandard --version

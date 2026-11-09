@@ -57,7 +57,7 @@ ln -s lib/design-tools/Dockerfile.lock Dockerfile.lock
 
 A repository leaves the link out of `docker_files`, since the file is not its own: `make format` never mounts the submodule, so a rewrite through the link would reach only the image's copy and be lost.
 
-The test stage copies the whole tree, and the `wheels` and `dev` stages bind-mount `Dockerfile.lock` from it, so the repository's `.dockerignore` keeps `.git`, `.env`, `tmp/` and anything local out of it, and must not exclude `Dockerfile.lock` or the submodule. Excluding every top-level dot path, `/.*`, and letting the repository's own dot files back in by name, such as `!/.github`, keeps a per-user directory such as `.claude` out without naming it.
+The `wheels` and `dev` stages bind-mount `Dockerfile.lock` whole from the repository's tree wherever they read a lock, since through a link BuildKit resolves only the first path below it, so a linked lock builds as a copied one does, even with `dev` built alone. The test stage copies the whole tree. So the repository's `.dockerignore` keeps `.git`, `.env`, `tmp/` and anything local out of it, and must not exclude `Dockerfile.lock` or the submodule. Excluding every top-level dot path, `/.*`, and letting the repository's own dot files back in by name, such as `!/.github`, keeps a per-user directory such as `.claude` out without naming it.
 
 ### Linking the runners
 
@@ -93,6 +93,7 @@ What `bin/format` rewrites and `bin/lint` checks for drift:
 - `json_files` – indented by 2 with keys sorted, by jq.
 - `js_files` – semistandard.
 - `css_files` and `html_files` – Prettier, under the repository's own Prettier configuration.
+- `svg_files` – Prettier, with its XML plugin, `@prettier/plugin-xml`, under the repository's own Prettier configuration.
 - `md_files` – mdformat, with its GFM and front matter plugins, one paragraph per line.
 - `toml_files` – taplo, under the repository's own taplo configuration.
 - `dotenv_files` – dotenv-linter, whose fixes `bin/format` applies without leaving a backup.
@@ -104,6 +105,7 @@ What `bin/lint` checks only:
 
 - `compose_files` – Compose files, each validated on its own, with every profile enabled, by `docker-compose --profile '*' config -q`. It checks neither layout nor key order, so each is also named in `yaml_files`, except the link to this repository's `docker-compose.yml` (*Linking the services*).
 - `workflow_files` – GitHub Actions workflows, checked by actionlint, under the repository's own `.github/actionlint.yaml` or `.github/actionlint.yml`; like `compose_files`, each is also named in `yaml_files` for its layout and key order.
+- `yaml_lint_files` – YAML that `yaml_files` would reorder or lay out anew, such as a file whose key order carries meaning, checked by `yamllint --strict` alone, under the repository's own yamllint configuration. Leave a file named here out of `yaml_files`, whose yq would rewrite it.
 - `make_files` – Makefiles, checked by checkmake, under the repository's own `checkmake.ini`.
 - `references_args` – `tools/references-check`'s arguments.
 - `render_args` – `tools/render-check`'s arguments, such as `--root . pages/*.html`.
