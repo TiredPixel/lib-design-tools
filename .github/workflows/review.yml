@@ -43,7 +43,7 @@ jobs:
         # The action's name and a full commit SHA leave no way to break the
         # line.
         # yamllint disable-line rule:line-length
-        uses: TiredPixel/lib-shell-common/github/review@c6b48977917e61ee8afa3b42e476ceba69286707
+        uses: TiredPixel/lib-shell-common/github/review@79cf1342d928fe1e21b1a3a7b779113fa322d279
         with:
           app: ${{ steps.token.outputs.app-slug }}
           checks: ${{ vars.REVIEW_GATE_CHECKS }}
