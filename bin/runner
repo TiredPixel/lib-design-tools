@@ -29,6 +29,14 @@ mdformat_args=(--wrap no)
 # common practice for shell.
 shfmt_args=(-i 4)
 
+# Prettier resolves a plugin named as a package from the working directory, the
+# repository's root, where it is not installed, so the XML plugin is named by
+# its path, resolved beside the Prettier that runs.
+function prettier_xml_plugin {
+    node -p 'require.resolve("@prettier/plugin-xml", {paths: [process.argv[1]]})' \
+        "$(readlink -f "$(command -v prettier)")"
+}
+
 function defines {
     declare -F "$1" >/dev/null || declare -p "$1" >/dev/null 2>&1
 }

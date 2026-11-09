@@ -31,6 +31,8 @@ UNFORMATTED_MARKDOWN = (
 FORMATTED_MARKDOWN = (
     "---\ntitle: a\n---\n\nOne two.\n\n| a   | b   |\n| --- | --- |\n| 1   | 2   |\n"
 )
+UNFORMATTED_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>\n'
+FORMATTED_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0" /></svg>\n'
 UNFORMATTED_DOCKERFILE = "from debian:13\nrun true"
 FORMATTED_DOCKERFILE = "FROM debian:13\nRUN true\n"
 VALID_COMPOSE = "services:\n  a:\n    image: debian\n"
@@ -218,8 +220,12 @@ class PassSelectionTest(Repository):
         self.write("compose.yml", VALID_COMPOSE)
         self.write("workflow.yml", VALID_WORKFLOW)
         self.write("Makefile", VALID_MAKEFILE)
+        self.write("a.svg", FORMATTED_SVG)
+        self.write("b.yml", UNSORTED_YAML)
         # Each case gives the kind the passes name, and whether bin/format has a pass.
         cases = (
+            ("svg_files", "a.svg", "SVG", True),
+            ("yaml_lint_files", "b.yml", "lint-only YAML", False),
             ("md_files", "a.md", "Markdown", True),
             ("toml_files", "a.toml", "TOML", True),
             ("dotenv_files", "a.env", "dotenv", True),
@@ -391,6 +397,15 @@ class FormatThenLintTest(Repository):
             "a.css", "a{color:red}\n", "a {\n  color: red;\n}\n", "CSS and HTML"
         )
 
+    def test_svg(self):
+        self.settings("function svg_files { printf '%s\\0' a.svg; }\n")
+        self.assertFormatFixes("a.svg", UNFORMATTED_SVG, FORMATTED_SVG, "SVG")
+
+    def test_svg_that_does_not_parse_fails_the_lint(self):
+        self.settings("function svg_files { printf '%s\\0' a.svg; }\n")
+        self.write("a.svg", "<svg><path\n")
+        self.assertFails(self.run_bin("lint"), "a.svg: SyntaxError")
+
     def test_markdown(self):
         # A paragraph is joined onto one line, and the front matter and the GFM table
         # come through as front matter and a table, padded to their columns, rather than
@@ -518,6 +533,7 @@ class FormatCarriesOnTest(Repository):
             ("json_files", "a.json", '{"a": }\n', '{"a": }\n', "JSON"),
             ("js_files", "a.js", "foo()\n", "foo();\n", "JavaScript"),
             ("css_files", "gone.css", None, None, "CSS and HTML"),
+            ("svg_files", "a.svg", "<svg><path\n", "<svg><path\n", "SVG"),
             ("md_files", "gone.md", None, None, "Markdown"),
             ("toml_files", "a.toml", "a =\n", "a =\n", "TOML"),
         )
@@ -690,6 +706,40 @@ class CheckingPassTest(Repository):
         result = self.run_bin("lint")
         self.assertPasses(result)
         self.assertEqual(self.runner_lines(result), ["lint: running render-check"])
+
+    def test_lint_only_yaml_keeps_its_own_order_and_is_never_rewritten(self):
+        self.settings("function yaml_lint_files { printf '%s\\0' a.yml; }\n")
+        for text, rule in (
+            (UNSORTED_YAML, None),
+            ("b: 1\na: 2\n", "document-start"),
+            ("---\nb: yes\na: 2\n", "truthy"),
+        ):
+            with self.subTest(rule=rule):
+                self.write("a.yml", text)
+                result = self.run_bin("lint")
+                if rule is None:
+                    self.assertPasses(result)
+                else:
+                    self.assertFails(result, rule)
+                self.assertEqual(
+                    self.runner_lines(result),
+                    ["lint: checking 1 lint-only YAML file(s)"],
+                )
+                result = self.run_bin("format")
+                self.assertPasses(result)
+                self.assertEqual(self.runner_lines(result), [])
+                self.assertEqual(
+                    (self.root / "a.yml").read_text(encoding="utf-8"), text
+                )
+
+    def test_lint_only_yaml_reads_the_repository_s_yamllint_config(self):
+        self.settings("function yaml_lint_files { printf '%s\\0' a.yml; }\n")
+        self.write("a.yml", "---\nb: yes\n")
+        self.assertFails(self.run_bin("lint"), "truthy")
+        self.write(
+            ".yamllint.yaml", "---\nextends: default\nrules:\n  truthy: disable\n"
+        )
+        self.assertPasses(self.run_bin("lint"))
 
     def test_hadolint(self):
         self.settings("function docker_files { printf '%s\\0' Dockerfile; }\n")

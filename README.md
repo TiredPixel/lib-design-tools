@@ -93,6 +93,7 @@ What `bin/format` rewrites and `bin/lint` checks for drift:
 - `json_files` – indented by 2 with keys sorted, by jq.
 - `js_files` – semistandard.
 - `css_files` and `html_files` – Prettier, under the repository's own Prettier configuration.
+- `svg_files` – Prettier, with its XML plugin, `@prettier/plugin-xml`, under the repository's own Prettier configuration.
 - `md_files` – mdformat, with its GFM and front matter plugins, one paragraph per line.
 - `toml_files` – taplo, under the repository's own taplo configuration.
 - `dotenv_files` – dotenv-linter, whose fixes `bin/format` applies without leaving a backup.
@@ -104,6 +105,7 @@ What `bin/lint` checks only:
 
 - `compose_files` – Compose files, each validated on its own, with every profile enabled, by `docker-compose --profile '*' config -q`. It checks neither layout nor key order, so each is also named in `yaml_files`, except the link to this repository's `docker-compose.yml` (*Linking the services*).
 - `workflow_files` – GitHub Actions workflows, checked by actionlint, under the repository's own `.github/actionlint.yaml` or `.github/actionlint.yml`; like `compose_files`, each is also named in `yaml_files` for its layout and key order.
+- `yaml_lint_files` – YAML that `yaml_files` would reorder or lay out anew, such as a file whose key order carries meaning, checked by `yamllint --strict` alone, under the repository's own yamllint configuration. Leave a file named here out of `yaml_files`, whose yq would rewrite it.
 - `make_files` – Makefiles, checked by checkmake, under the repository's own `checkmake.ini`.
 - `references_args` – `tools/references-check`'s arguments.
 - `render_args` – `tools/render-check`'s arguments, such as `--root . pages/*.html`.
