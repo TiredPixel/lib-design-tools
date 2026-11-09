@@ -57,7 +57,7 @@ ln -s lib/design-tools/Dockerfile.lock Dockerfile.lock
 
 A repository leaves the link out of `docker_files`, since the file is not its own: `make format` never mounts the submodule, so a rewrite through the link would reach only the image's copy and be lost.
 
-The test stage copies the whole tree, and the `wheels` and `dev` stages bind-mount `Dockerfile.lock` from it, so the repository's `.dockerignore` keeps `.git`, `.env`, `tmp/` and anything local out of it, and must not exclude `Dockerfile.lock` or the submodule. Excluding every top-level dot path, `/.*`, and letting the repository's own dot files back in by name, such as `!/.github`, keeps a per-user directory such as `.claude` out without naming it.
+The `wheels` and `dev` stages bind-mount `Dockerfile.lock` whole from the repository's tree wherever they read a lock, since through a link BuildKit resolves only the first path below it, so a linked lock builds as a copied one does, even with `dev` built alone. The test stage copies the whole tree. So the repository's `.dockerignore` keeps `.git`, `.env`, `tmp/` and anything local out of it, and must not exclude `Dockerfile.lock` or the submodule. Excluding every top-level dot path, `/.*`, and letting the repository's own dot files back in by name, such as `!/.github`, keeps a per-user directory such as `.claude` out without naming it.
 
 ### Linking the runners
 
