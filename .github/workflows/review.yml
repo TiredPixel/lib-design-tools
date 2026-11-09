@@ -1,6 +1,6 @@
 ---
-# TRACK USES actions/checkout@v7
 # TRACK USES actions/create-github-app-token@v3
+# TRACK USES TiredPixel/lib-shell-common@latest
 # One run at a time for each pull request, none cancelled: GitHub keeps a single
 # run pending in the group, the latest, and each run reads the pull request's
 # state afresh, so the last one posts the current state, however many comments
@@ -10,36 +10,20 @@
 concurrency:
   cancel-in-progress: false
   group: review-${{ github.event.number || github.event.issue.number }}
-# Strict as the gate is, which GitHub's default shell for run steps is not
-# (defaults.run.shell in GitHub's workflow syntax reference).
-defaults:
-  run:
-    shell: bash -Eeuo pipefail -O inherit_errexit -O failglob {0}
 jobs:
   review:
     # A comment on a plain issue has no checks to post, and the gate, unable to
     # read issues, fails on a number naming no pull request.
     if: github.event.pull_request || github.event.issue.pull_request
-    # Contents read, for the default branch's checkout; the checks are written
-    # with the review app's token, since GitHub counts a check run towards a
-    # required check only from the app the rule names.
-    permissions:
-      contents: read
+    # None for the workflow's own token, since nothing reads the repository's
+    # files; the checks are written with the review app's token, since GitHub
+    # counts a check run towards a required check only from the app the rule
+    # names.
+    permissions: {}
     runs-on: ubuntu-latest
     steps:
-      # The default branch's code, never the pull request's, whose author could
-      # otherwise run code holding the review app's token.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.repository.default_branch }}
-      # shell-common alone, which is public, so it needs no credentials.
-      - name: Fetch shell-common
-        run: |
-          git submodule update --init lib/shell-common
       # Minted here, in the workflow only a person may change, by an action
-      # pinned by full SHA, so the key never reaches the submodule's code, which
-      # an ordinary commit can move.
+      # pinned by full SHA, so the key never leaves the workflow.
       - id: token
         # The action's name and a full commit SHA leave no way to break the
         # line.
@@ -50,9 +34,16 @@ jobs:
           permission-checks: write
           permission-pull-requests: read
           private-key: ${{ secrets.REVIEW_APP_PRIVATE_KEY }}
-      # The gate's own steps, in the submodule, so they upgrade with it.
+      # The gate's own steps and code, pinned by full SHA rather than run from
+      # the submodule, whose pin an ordinary commit can move: whatever runs
+      # here holds the token, which can write the checks the gate exists to
+      # protect, so a change to it reaches the repository only through a
+      # workflow approval, and each move of the pin needs one.
       - name: Post review checks
-        uses: ./lib/shell-common/github/review
+        # The action's name and a full commit SHA leave no way to break the
+        # line.
+        # yamllint disable-line rule:line-length
+        uses: TiredPixel/lib-shell-common/github/review@c6b48977917e61ee8afa3b42e476ceba69286707
         with:
           app: ${{ steps.token.outputs.app-slug }}
           checks: ${{ vars.REVIEW_GATE_CHECKS }}
