@@ -287,6 +287,14 @@ A change to a workflow is proposed as the whole file in `.github/workflows.new/`
 make workflows-approve
 ```
 
+### Reviewing pull requests
+
+A pull request into `latest` merges only once Codex's code and security reviews come back clean on its head commit, which `.github/workflows/review.yml` posts as the checks `review/codex/code` and `review/codex/security`. It is lib-shell-common's review gate, copied from `lib/shell-common/github/review.yml` and copied again only when that template's triggers, job settings or token step change; lib-shell-common's README, *Gating merges on reviews*, gives how the checks are read. A comment on the pull request starts the reviews:
+
+```text
+@codex review
+```
+
 ## Licence
 
 Copyright © [Nicolas Williams](https://tiredpixel.com). It is free software, released under the BSD 3-Clause licence, and may be redistributed under the terms specified in `LICENSE`.

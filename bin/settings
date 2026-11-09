@@ -17,7 +17,7 @@ function workflow_files {
 }
 
 function yaml_files {
-    printf '%s\0' .hadolint.yaml docker-compose.yml
+    printf '%s\0' .hadolint.yaml .yamllint.yaml docker-compose.yml
     workflow_files
 }
 
