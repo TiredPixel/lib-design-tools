@@ -917,7 +917,7 @@ class GateTest(Repository):
     def test_a_worker_count_that_is_not_a_number_fails(self):
         self.settings("")
         # Each count as the message quotes it, shell-quoted.
-        for count, quoted in (("0", "0"), ("two", "two"), ("", "''")):
+        for count, quoted in (("0", "0"), ("two", "two"), ("-1", "-1")):
             with self.subTest(count=count):
                 result = self.run_bin(
                     "test", env={"PYTEST_XDIST_AUTO_NUM_WORKERS": count}
@@ -932,6 +932,28 @@ class GateTest(Repository):
                         )
                     ],
                 )
+
+    def test_an_empty_worker_count_reaches_pytest_unset(self):
+        # Empty is what .env gives for the setting .env.example lists with no value.
+        self.settings("function pytest_args { :; }\n")
+        self.write(
+            "test/test_a.py",
+            "import os\nimport unittest\n\n\nclass A(unittest.TestCase):\n"
+            "    def test_a(self):\n"
+            "        self.assertNotIn('PYTEST_XDIST_AUTO_NUM_WORKERS', os.environ)\n",
+        )
+        for name, env, dropping in (
+            ("empty", {"PYTEST_XDIST_AUTO_NUM_WORKERS": ""}, COVERAGE_ENVIRONMENT),
+            (
+                "unset",
+                None,
+                (*COVERAGE_ENVIRONMENT, "PYTEST_XDIST_AUTO_NUM_WORKERS"),
+            ),
+        ):
+            with self.subTest(name):
+                result = self.run_bin("test", env=env, dropping=dropping)
+                self.assertPasses(result)
+                self.assertIn("1 passed", result.stdout)
 
 
 class CoverageTest(Repository):

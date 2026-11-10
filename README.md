@@ -193,11 +193,11 @@ kcov traces a script only where its trace descriptor, the one `BASH_XTRACEFD` na
 
 `make upgrade` runs `upgrade-pre`, then `upgrade-post`, which builds and tests, so a change that breaks the repository shows before the bump is committed, and then runs the command in `UPGRADE_COMMIT` where the `Makefile` sets one. A repository sets `UPGRADE_COMMIT` to commit the bump its own way; without it, `make upgrade` leaves the bump uncommitted.
 
-`.env` sets local options for Compose, read against the repository holding the link:
+Every target works with no `.env`. Where one exists, it sets local options for Compose, read against the repository holding the link; `.env.example` lists each with its default:
 
-- `DC_BIND_USER=0:0` where Docker is rootless or the host user's uid is not 1000, so that `make format` can write to the tree.
-- `PYTEST_XDIST_AUTO_NUM_WORKERS`, the worker count for pytest-xdist's `-n auto` under `make test` and `make coverage`, where the repository's pytest configuration uses it.
-- `DC_PREVIEW_PORT` and `DC_PREVIEW_HOST`, where `make preview` publishes its port (*Previewing pages*).
+- `DC_BIND_USER`, empty by default for the image's own uid 1000; `0:0` where Docker is rootless or the host user's uid is not 1000, so that `make format` can write to the tree.
+- `PYTEST_XDIST_AUTO_NUM_WORKERS`, the worker count for pytest-xdist's `-n auto` under `make test` and `make coverage`, where the repository's pytest configuration uses it; empty by default, for one worker for each CPU the container may use.
+- `DC_PREVIEW_HOST` and `DC_PREVIEW_PORT`, where `make preview` publishes its port, by default `127.0.0.1` and `0`, a free port (*Previewing pages*).
 
 ### Previewing pages
 
@@ -219,11 +219,16 @@ This repository uses its own runners, services and make targets as a repository 
 
 ### Installing it
 
-Clone the repository with its submodules, and copy `.env.example` to `.env`, whose options *Running the make targets* lists:
+Clone the repository with its submodules:
 
 ```sh
 git clone --recurse-submodules https://github.com/TiredPixel/lib-design-tools.git
 cd lib-design-tools
+```
+
+It needs no `.env`; to change a local option (*Running the make targets*), copy `.env.example` to `.env` and uncomment the line:
+
+```sh
 cp .env.example .env
 ```
 
