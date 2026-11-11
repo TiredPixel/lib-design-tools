@@ -19,10 +19,7 @@ source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
 if defines palette_args; then
     read_set palette_args palette
     echo "lint: running palette-generate --check" >&2
-    "$tools/palette-generate" "${palette[@]}" --check || {
-        echo "lint: generated palette files are stale" >&2
-        exit 1
-    }
+    "$tools/palette-generate" "${palette[@]}" --check
 fi
 
 if defines shell_files; then

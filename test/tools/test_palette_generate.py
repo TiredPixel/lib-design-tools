@@ -184,6 +184,43 @@ class PaletteGenerateTest(Workspace):
         self.assertEqual(result.returncode, 1)
         self.assertIn("holds no colour", result.stderr)
 
+    def test_fails_on_a_yaml_holding_nothing(self):
+        for text in ("", "# only a comment\n", "---\n", "~\n"):
+            with self.subTest(text=text):
+                (self.root / "p.yml").write_text(text, encoding="utf-8")
+                result = self.generate()
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(
+                    result.stderr, "palette-generate: p.yml holds no colour\n"
+                )
+                self.assertFalse((self.root / "p.css").exists())
+
+    def test_fails_on_a_top_level_that_is_not_a_mapping(self):
+        for text in (
+            '- "#000000"\n',
+            "red\n",
+            "false\n",
+            '!custom\n- "#000000"\n',
+            'a: "#000000"\n---\n- "#FFFFFF"\n',
+        ):
+            with self.subTest(text=text):
+                (self.root / "p.yml").write_text(text, encoding="utf-8")
+                result = self.generate()
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(
+                    result.stderr,
+                    "palette-generate: p.yml: the top level is not a mapping\n",
+                )
+                self.assertFalse((self.root / "p.css").exists())
+
+    def test_takes_a_mapping_with_a_tag_of_its_own(self):
+        self.write("p.yml", '!palette\nink: "#101010"\n')
+        result = self.generate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "  --x-ink: #101010;", (self.root / "p.css").read_text(encoding="utf-8")
+        )
+
     def test_expands_aliases_and_merge_keys_in_both_outputs(self):
         self.write(
             "p.yml",

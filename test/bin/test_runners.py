@@ -469,11 +469,33 @@ class FormatThenLintTest(Repository):
         self.assertEqual(self.runner_lines(result), [checking])
         self.write("p.yml", 'a: "#FFFFFF"\n')
         result = self.run_bin("lint")
-        self.assertFails(result, "lint: generated palette files are stale")
-        self.assertEqual(
-            self.runner_lines(result),
-            [checking, "lint: generated palette files are stale"],
+        self.assertFails(
+            result, "palette-generate: p.json or p.css is stale against p.yml"
         )
+        self.assertEqual(self.runner_lines(result), [checking])
+
+    def test_palette_lint_passes_palette_generate_s_own_failure(self):
+        # Neither is staleness, so lint adds no word of its own to the tool's.
+        for args, status, message in (
+            (
+                "gone.yml --prefix x --json p.json --css p.css",
+                1,
+                "palette-generate: gone.yml: no such file",
+            ),
+            ("p.yml --bogus", 2, "Usage: palette-generate"),
+        ):
+            with self.subTest(args=args):
+                self.settings(f"function palette_args {{ printf '%s\\0' {args}; }}\n")
+                result = self.run_bin("lint")
+                self.assertEqual(
+                    result.returncode, status, result.stdout + result.stderr
+                )
+                self.assertIn(message, result.stderr)
+                self.assertNotIn("stale", result.stderr)
+                self.assertEqual(
+                    self.runner_lines(result),
+                    ["lint: running palette-generate --check"],
+                )
 
 
 class FormatCarriesOnTest(Repository):
