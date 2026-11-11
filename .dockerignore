@@ -2,10 +2,15 @@
 # stages, which bind-mount Dockerfile.lock from the context. The .env files and
 # Compose overrides hold this checkout's settings, not the tree's. Every
 # top-level dot path is left out, so a per-user one such as .claude stays out
-# without being named, and the project's own are let back in by name.
+# without being named, and the project's own are let back in by name. A
+# submodule under lib/ is a checkout too, with settings of its own, and nothing
+# here reads its dot files, so none is let back in.
 **/.git
 /.*
 /docker-compose.*.yml
+/lib/*/.*
+/lib/*/docker-compose.*.yml
+/lib/*/tmp/
 /tmp/
 
 !/.dockerignore
