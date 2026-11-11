@@ -93,6 +93,17 @@ if defines svg_files; then
     prettier --check --plugin "$xml_plugin" "${svg[@]}"
 fi
 
+# XML a reader takes byte for byte, such as an OOXML part, so svg_files'
+# Prettier would rewrite it: expat's xmlwf alone, which only reports. -n checks
+# namespaces too, and -k carries on past a failing file, so every one is
+# reported.
+if defines xml_lint_files; then
+    xml_lint=()
+    read_files xml_lint_files xml_lint
+    echo "lint: checking ${#xml_lint[@]} lint-only XML file(s)" >&2
+    xmlwf -n -k -- "${xml_lint[@]}"
+fi
+
 if defines md_files; then
     md=()
     read_files md_files md

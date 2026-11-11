@@ -39,6 +39,13 @@ FORMATTED_MARKDOWN = (
 )
 UNFORMATTED_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>\n'
 FORMATTED_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0" /></svg>\n'
+# Laid out as an office application might write a part, which no formatter would
+# leave alone: CRLF, a doubled space, single quotes and no final newline.
+OOXML_PART = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+    "<w:document xmlns:w=\"u\"  w:a='1'><w:body/></w:document>"
+)
+MALFORMED_XML = "<a><b></a>\n"
 UNFORMATTED_DOCKERFILE = "from debian:13\nrun true"
 FORMATTED_DOCKERFILE = "FROM debian:13\nRUN true\n"
 VALID_COMPOSE = "services:\n  a:\n    image: debian\n"
@@ -136,6 +143,7 @@ class PassSelectionTest(Repository):
         self.write(".env.example", "# B=1\n# A=1\n")
         self.write("script.sh", "#!/bin/bash\necho $1\n")
         self.write("a.yml", UNSORTED_YAML)
+        self.write("a.xml", MALFORMED_XML)
         self.write("test/test_a.py", SKIPPING_TEST)
         for runner in ("format", "lint", "test"):
             with self.subTest(runner=runner):
@@ -228,10 +236,12 @@ class PassSelectionTest(Repository):
         self.write("Makefile", VALID_MAKEFILE)
         self.write("a.svg", FORMATTED_SVG)
         self.write("b.yml", UNSORTED_YAML)
+        self.write("c.xml", OOXML_PART)
         # Each case gives the kind the passes name, and whether bin/format has a pass.
         cases = (
             ("svg_files", "a.svg", "SVG", True),
             ("yaml_lint_files", "b.yml", "lint-only YAML", False),
+            ("xml_lint_files", "c.xml", "lint-only XML", False),
             ("md_files", "a.md", "Markdown", True),
             ("toml_files", "a.toml", "TOML", True),
             ("dotenv_files", "a.env", "dotenv", True),
@@ -775,6 +785,42 @@ class CheckingPassTest(Repository):
             ".yamllint.yaml", "---\nextends: default\nrules:\n  truthy: disable\n"
         )
         self.assertPasses(self.run_bin("lint"))
+
+    def test_lint_only_xml_is_checked_and_never_rewritten(self):
+        self.settings("function xml_lint_files { printf '%s\\0' a.xml; }\n")
+        for text, message in (
+            (OOXML_PART, None),
+            (MALFORMED_XML, "a.xml:1:8: mismatched tag"),
+            ('<a xmlns:x="u"><y:b/></a>\n', "a.xml:1:15: unbound prefix"),
+        ):
+            with self.subTest(message=message):
+                self.write("a.xml", text)
+                result = self.run_bin("lint")
+                if message is None:
+                    self.assertPasses(result)
+                else:
+                    self.assertFails(result, message)
+                self.assertEqual(
+                    self.runner_lines(result),
+                    ["lint: checking 1 lint-only XML file(s)"],
+                )
+                result = self.run_bin("format")
+                self.assertPasses(result)
+                self.assertEqual(self.runner_lines(result), [])
+                # As bytes, since reading text would fold the CRLF.
+                self.assertEqual(
+                    (self.root / "a.xml").read_bytes(), text.encode("utf-8")
+                )
+
+    def test_lint_only_xml_reports_every_failing_file(self):
+        self.settings("function xml_lint_files { printf '%s\\0' a.xml b.xml c.xml; }\n")
+        self.write("a.xml", MALFORMED_XML)
+        self.write("b.xml", OOXML_PART)
+        self.write("c.xml", "<a>\n")
+        result = self.run_bin("lint")
+        self.assertFails(result, "a.xml:1:8: mismatched tag")
+        self.assertIn("c.xml:2:0: no element found", result.stdout + result.stderr)
+        self.assertNotIn("b.xml", result.stdout + result.stderr)
 
     def test_hadolint(self):
         self.settings("function docker_files { printf '%s\\0' Dockerfile; }\n")

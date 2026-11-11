@@ -63,6 +63,7 @@ RUN apt-get update \
         curl \
         diffutils \
         docker-compose \
+        expat \
         git \
         jq \
         kcov \
