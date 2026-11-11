@@ -25,7 +25,7 @@ Each command prints its usage with `--help`.
 
 Importable from a repository's own Python tests, with `tools/` on the path, as `bin/test` puts it:
 
-- `tools/design_colour.py` – colour maths on opaque `#RGB` and `#RRGGBB` colours: WCAG luminance and contrast, compositing a colour at a given opacity over a ground, CIELAB lightness, chroma and hue, the gap and spread between hues and whether one lies on the arc between two others, and CIE76 ΔE.
+- `tools/design_colour.py` – colour maths on opaque `#RGB` and `#RRGGBB` colours: WCAG luminance and contrast, compositing a colour at a given opacity over a ground, CIELAB lightness, chroma and hue, which a grey, black or white has none of, so asking for it raises `ValueError`, the gap and spread between hues and whether one lies on the shorter arc between two others that are not opposite, and CIE76 ΔE.
 - `tools/design_render.py` – the harness under `render-check`: serving a tree, rendering a page or printing it to PDF in headless Chromium, and reading what it reports.
 - `tools/pytest_no_skips.py` – a pytest plugin, which `bin/test` loads, adding `--no-skips`, which fails a run in which any test skipped.
 

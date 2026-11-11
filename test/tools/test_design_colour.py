@@ -85,10 +85,34 @@ class LabTest(unittest.TestCase):
         # A negative b* wraps to the far side of the circle.
         self.assertAlmostEqual(design_colour.hue("#0000FF"), 306.28, places=2)
 
+    def test_white_is_exactly_the_white_point(self):
+        self.assertEqual(design_colour.lab("#FFFFFF"), (100, 0, 0))
+
+    def test_greys_have_no_chroma(self):
+        for value in range(256):
+            grey = f"#{value:02X}{value:02X}{value:02X}"
+            with self.subTest(grey=grey):
+                self.assertLess(
+                    design_colour.chroma(grey), design_colour.ACHROMATIC_CHROMA
+                )
+
+    def test_the_least_chroma_of_a_colour_is_above_the_cut(self):
+        # #020303 has the least chroma of any 8-bit colour that is not a grey.
+        self.assertAlmostEqual(design_colour.chroma("#020303"), 0.28, places=2)
+        self.assertGreaterEqual(design_colour.hue("#020303"), 0)
+
+    def test_an_achromatic_colour_has_no_hue(self):
+        for grey in ("#000", "#888", "#FFFFFF", "#fff"):
+            with (
+                self.subTest(grey=grey),
+                self.assertRaisesRegex(
+                    ValueError, f"^{grey} is achromatic, so has no hue$"
+                ),
+            ):
+                design_colour.hue(grey)
+
     def test_delta_e(self):
-        self.assertAlmostEqual(
-            design_colour.delta_e("#000000", "#FFFFFF"), 100, places=4
-        )
+        self.assertAlmostEqual(design_colour.delta_e("#000000", "#FFFFFF"), 100)
         self.assertEqual(design_colour.delta_e("#ABC", "#AABBCC"), 0)
         self.assertEqual(
             design_colour.delta_e("#FF0000", "#0000FF"),
@@ -116,7 +140,24 @@ class HueTest(unittest.TestCase):
             ):
                 design_colour.hue_spread(colours)
 
+    def test_hue_spread_refuses_an_achromatic_colour(self):
+        for grey in ("#888", "#000", "#FFFFFF"):
+            with (
+                self.subTest(grey=grey),
+                self.assertRaisesRegex(ValueError, f"^{grey} is achromatic"),
+            ):
+                design_colour.hue_spread(["#FF0000", grey])
+
     def test_hue_between_follows_the_shorter_arc(self):
         self.assertTrue(design_colour.hue_between(0, 350, 10))
         self.assertFalse(design_colour.hue_between(180, 350, 10))
         self.assertTrue(design_colour.hue_between(20, 10, 30))
+
+    def test_hue_between_opposite_hues_has_no_shorter_arc(self):
+        for start, end in ((0, 180), (180, 0), (350, 170), (90, 630)):
+            for middle in (start, (start + 90) % 360, (start + 270) % 360):
+                with (
+                    self.subTest(start=start, end=end, middle=middle),
+                    self.assertRaisesRegex(ValueError, "are opposite"),
+                ):
+                    design_colour.hue_between(middle, start, end)
