@@ -20,7 +20,7 @@
 # TRACK ARG YQ_SHA256_AMD64 sha256:https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64 https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/checksums-bsd
 # TRACK ARG YQ_SHA256_ARM64 sha256:https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_arm64 https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/checksums-bsd
 # TRACK ARG YQ_VERSION github:mikefarah/yq
-# TRACK LOCK js npm:@prettier/plugin-xml npm:prettier npm:semistandard
+# TRACK LOCK js npm:@prettier/plugin-xml npm:c8 npm:prettier npm:semistandard
 # TRACK LOCK mdformat pypi:mdformat pypi:mdformat-gfm pypi:mdformat-frontmatter
 # TRACK LOCK ruff pypi:ruff
 #
@@ -246,11 +246,14 @@ RUN --network=none \
 
 # npm ci, the one npm command that installs a lock as given, outside the mounted
 # tree. The mount is read-only, so the lock files are linked into a directory of
-# their own.
+# their own. --engine-strict, since npm otherwise only warns where a package
+# needs a newer Node than Debian's, as an upgrade can bring, and the tool then
+# fails only once run.
 RUN --mount=type=bind,source=Dockerfile.lock,target=/lock \
     mkdir /opt/js \
     && ln -s /lock/js/package.json /lock/js/package-lock.json /opt/js/ \
-    && npm ci --prefix /opt/js --ignore-scripts --no-audit --no-fund \
+    && npm ci --prefix /opt/js --engine-strict --ignore-scripts --no-audit --no-fund \
+    && /opt/js/node_modules/.bin/c8 --version \
     && /opt/js/node_modules/.bin/prettier --version \
     && /opt/js/node_modules/.bin/semistandard --version
 

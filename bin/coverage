@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # Runs bin/test, with any tests it is given as bin/test takes them, measuring
-# the shell under kcov and the Python under pytest-cov, and prints both reports
-# to the terminal: pytest-cov's as the tests finish, then kcov's through
+# the shell under kcov, the Python under pytest-cov and the JavaScript Node runs
+# under the tests through NODE_V8_COVERAGE, and prints the reports to the
+# terminal: pytest-cov's as the tests finish, then kcov's and c8's through
 # tools/kcov-report. Their data stays in a temporary directory, removed on exit,
 # so a run writes nothing to the tree. Measures only files under the
 # repository's root, and the shell report leaves out what is not the
@@ -35,6 +36,11 @@ export COVERAGE_FILE=$out/python.data
 printf -v cov_args '%q ' "--cov=$PWD" --cov-report=term-missing
 export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:+$PYTEST_ADDOPTS }${cov_args% }"
 
+# Where Node writes V8's coverage data, one file for each process as it exits.
+# bin/test sets NODE_V8_COVERAGE to it for pytest alone, so the lint's Node,
+# with the configuration files Prettier and ESLint load, goes unmeasured.
+export DESIGN_TOOLS_NODE_V8_COVERAGE=$out/js.data
+
 echo "coverage: running bin/test under kcov" >&2
 kcov --cobertura-only --include-path="$PWD" --exclude-path="$exclude" \
     "$out/shell" "$design_tools/bin/test" "$@"
@@ -52,4 +58,66 @@ if grep -qF '<class ' -- "$report"; then
     "$tools/kcov-report" "$report" "$PWD"
 else
     echo "coverage: no shell of the repository's own ran" >&2
+fi
+
+# Node makes the directory with the first file it writes, so there is none
+# where no Node ran under the tests.
+if ! [ -d "$DESIGN_TOOLS_NODE_V8_COVERAGE" ]; then
+    exit 0
+fi
+
+# Physical, as the paths Node records and c8's own working directory are.
+root=$(pwd -P)
+# Every option c8 report reads, in a configuration of this runner's: given with
+# --config, it takes the place of a .c8rc or .nycrc, and a value it sets
+# outranks one from package.json's "c8" key, so no setting of the repository's
+# changes the report. It reports every file under the root that Node ran, test
+# files and those with no extension, such as a command in tools/, included, but
+# none under node_modules. Cobertura, since c8's text report has another form,
+# and written here, since c8's default directory is ./coverage, in the tree.
+jq -n \
+    --arg data "$DESIGN_TOOLS_NODE_V8_COVERAGE" \
+    --arg reports "$out/js" \
+    --arg root "$root" \
+    '{
+        "100": false,
+        "all": false,
+        "allowExternal": false,
+        "check-coverage": false,
+        "exclude": [],
+        "exclude-after-remap": false,
+        "exclude-node-modules": true,
+        "experimental-monocart": false,
+        "extension": [],
+        "include": [],
+        "merge-async": false,
+        "omit-relative": true,
+        "reporter": ["cobertura"],
+        "reporter-options": {
+            "cobertura": {"file": "cobertura-coverage.xml", "projectRoot": $root}
+        },
+        "reports-dir": $reports,
+        "resolve": "",
+        "skip-full": false,
+        "temp-directory": $data,
+        "wrapper-length": 0
+    }' >"$out/c8.json"
+# NODE_V8_COVERAGE empty, so c8, itself run by Node, writes no data of its own
+# whatever the environment holds; EXPERIMENTAL_MONOCART too, since c8 otherwise
+# reports through another library where it is set. --config ahead of the
+# command, since c8 first reads its arguments only as far as the command, and
+# would look for the repository's own configuration there without it.
+NODE_V8_COVERAGE='' EXPERIMENTAL_MONOCART='' c8 --config="$out/c8.json" report
+
+# The report holds no <class> where Node ran none of the repository's own
+# JavaScript, as where a test runs only a tool from the image: nothing is said,
+# so a repository with no JavaScript sees no line about it.
+report=$out/js/cobertura-coverage.xml
+if ! [ -f "$report" ]; then
+    echo "coverage: c8 wrote no report" >&2
+    exit 1
+fi
+if grep -qF '<class ' -- "$report"; then
+    echo "coverage: reporting the JavaScript's coverage" >&2
+    "$tools/kcov-report" "$report" "$root"
 fi

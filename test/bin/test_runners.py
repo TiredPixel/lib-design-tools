@@ -3,6 +3,7 @@
 They run from the root of a fabricated repository whose bin/ links to them.
 """
 
+import json
 import os
 import pathlib
 import re
@@ -73,12 +74,19 @@ SKIPPING_TEST = (
 )
 
 
-# Set by bin/coverage, for its own pytest and the shell kcov traces, and dropped for
-# each runner run here. A nested pytest would take the options and write into the same
-# data; and the trace descriptor BASH_XTRACEFD names is not open here, since xdist
-# starts its workers without it, so a bash given BASH_ENV and BASH_XTRACEFD would write
-# its trace, and a complaint, into the output tested.
-COVERAGE_ENVIRONMENT = ("BASH_ENV", "BASH_XTRACEFD", "PYTEST_ADDOPTS")
+# Set by bin/coverage and bin/test, for their own pytest, the shell kcov traces and the
+# Node under the tests, and dropped for each runner run here. A nested pytest would take
+# the options and write into the same data, and a nested Node would write into the
+# run's own V8 data; and the trace descriptor BASH_XTRACEFD names is not open here,
+# since xdist starts its workers without it, so a bash given BASH_ENV and BASH_XTRACEFD
+# would write its trace, and a complaint, into the output tested.
+COVERAGE_ENVIRONMENT = (
+    "BASH_ENV",
+    "BASH_XTRACEFD",
+    "DESIGN_TOOLS_NODE_V8_COVERAGE",
+    "NODE_V8_COVERAGE",
+    "PYTEST_ADDOPTS",
+)
 
 
 def child_environment(dropping=COVERAGE_ENVIRONMENT):
@@ -1080,6 +1088,63 @@ class CoverageTest(Repository):
                     subprocess.run([script], pass_fds=(trace,), check=True)
     """
 
+    # TRACING_TEST, then each of COMMANDS from the root, as a test runs a build, then
+    # passing where PASSES holds.
+    NODE_TEST = """
+        import os
+        import subprocess
+        import unittest
+
+
+        class A(unittest.TestCase):
+            def test_a(self):
+                trace = int(os.environ["BASH_XTRACEFD"])
+                subprocess.run(["bin/hello"], pass_fds=(trace,), check=True)
+                for command in COMMANDS:
+                    subprocess.run(command, check=True)
+                self.assertTrue(PASSES)
+    """
+
+    # Each branch on lines of its own, so the one not taken shows as missing.
+    BUILD_MJS = """
+        if (process.argv[2] === 'a') {
+          console.log('a');
+        } else {
+          console.log('b');
+        }
+    """
+
+    # The runner's lines up to the shell report, with which NODE_TEST's run ends where
+    # it prints no JavaScript report.
+    SHELL_LINES = (
+        "coverage: running bin/test under kcov",
+        "test: running pytest",
+        "coverage: reporting the shell's coverage",
+    )
+
+    # Settings a repository's own c8 configuration might give, as JSON, each of which
+    # would change the report, or fail the run, were c8 to take it.
+    C8_SETTINGS = json.dumps(
+        {
+            "100": True,
+            "all": True,
+            "check-coverage": True,
+            "exclude": ["build.mjs"],
+            "extension": [".cjs"],
+            "include": ["nothing/**"],
+            "lines": 100,
+            "reporter": ["text"],
+            "reporter-options": {
+                "cobertura": {"file": "other.xml", "projectRoot": "/"}
+            },
+            "reports-dir": "coverage",
+            "skip-full": True,
+        }
+    )
+
+    # bin/coverage's directory for the V8 data, which it gives bin/test.
+    NODE_DATA = "DESIGN_TOOLS_NODE_V8_COVERAGE"
+
     def setUp(self):
         super().setUp()
         directory = tempfile.TemporaryDirectory()
@@ -1116,11 +1181,19 @@ class CoverageTest(Repository):
             with self.subTest(pattern=pattern):
                 self.assertRegex(output, re.compile(pattern, re.MULTILINE))
 
+    def last_report(self, output, count):
+        """The last report, once count of them are printed."""
+        headers = list(re.finditer(r"(?m)^Name +Stmts +Miss +Cover +Missing", output))
+        self.assertEqual(len(headers), count, output)
+        return output[headers[-1].start() :]
+
     def shell_report(self, output):
         """The shell's report, which kcov-report prints after pytest-cov's."""
-        headers = list(re.finditer(r"(?m)^Name +Stmts +Miss +Cover +Missing", output))
-        self.assertEqual(len(headers), 2, output)
-        return output[headers[-1].start() :]
+        return self.last_report(output, 2)
+
+    def javascript_report(self, output):
+        """The JavaScript's report, which kcov-report prints after the shell's."""
+        return self.last_report(output, 3)
 
     def test_prints_both_reports_of_the_repository_s_own_files(self):
         self.settings("function pytest_args { :; }\n")
@@ -1280,6 +1353,163 @@ class CoverageTest(Repository):
         self.settings("")
         self.write("test/test_a.py", PASSING_TEST)
         self.assertFails(self.run_coverage("test/test_a.py"), "pytest_args is not set")
+
+    def write_node_test(self, *commands, passes=True):
+        self.settings("function pytest_args { :; }\n")
+        self.write("bin/hello", "#!/usr/bin/env bash\necho hello\n").chmod(0o755)
+        self.write(
+            "test/test_a.py",
+            self.NODE_TEST.replace("COMMANDS", repr(commands)).replace(
+                "PASSES", repr(passes)
+            ),
+        )
+
+    def assertReportsBuild(self, result):
+        self.assertPasses(result)
+        self.assertEqual(
+            self.runner_lines(result),
+            [*self.SHELL_LINES, "coverage: reporting the JavaScript's coverage"],
+        )
+        # Five lines, the else branch's among those missed.
+        self.assertReports(
+            self.javascript_report(result.stdout), r"^build\.mjs +5 +[1-9] +\d+% +\d"
+        )
+        self.assertEqual(result.stdout.count("\nTOTAL "), 3)
+
+    def assertNoJavaScriptReport(self, result):
+        self.assertPasses(result)
+        self.assertEqual(self.runner_lines(result), list(self.SHELL_LINES))
+        self.assertNotIn("JavaScript", result.stderr)
+        self.shell_report(result.stdout)
+        self.assertEqual(result.stdout.count("\nTOTAL "), 2)
+
+    def test_prints_the_javascript_report_of_a_script_the_tests_run(self):
+        self.write_node_test(["node", "build.mjs", "a"])
+        self.write("build.mjs", self.BUILD_MJS)
+        before = self.tree()
+        result = self.run_coverage("test/test_a.py")
+        self.assertReportsBuild(result)
+        self.assertLeavesNothing(before)
+
+    def test_reports_a_node_command_with_no_extension(self):
+        # As the commands in tools/ are named.
+        self.write_node_test(["tools/build"])
+        build = self.write(
+            "tools/build", "#!/usr/bin/env node\nconsole.log('built');\n"
+        )
+        build.chmod(0o755)
+        before = self.tree()
+        result = self.run_coverage("test/test_a.py")
+        self.assertPasses(result)
+        self.assertEqual(
+            self.runner_lines(result),
+            [*self.SHELL_LINES, "coverage: reporting the JavaScript's coverage"],
+        )
+        self.assertReports(
+            self.javascript_report(result.stdout), r"^tools/build +2 +0 +100%$"
+        )
+        self.assertLeavesNothing(before)
+
+    def test_prints_no_javascript_report_where_no_node_ran(self):
+        self.write_node_test()
+        before = self.tree()
+        result = self.run_coverage("test/test_a.py")
+        self.assertNoJavaScriptReport(result)
+        self.assertLeavesNothing(before)
+
+    def test_prints_no_javascript_report_where_node_ran_only_code_outside_the_root(
+        self,
+    ):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        outside = pathlib.Path(directory.name) / "outside.mjs"
+        outside.write_text("console.log('outside');\n")
+        # An evaluated script and Node's own modules lie in no file under the root
+        # either.
+        self.write_node_test(
+            ["node", str(outside)], ["node", "-e", "require('node:path')"]
+        )
+        before = self.tree()
+        result = self.run_coverage("test/test_a.py")
+        self.assertNoJavaScriptReport(result)
+        self.assertLeavesNothing(before)
+
+    def test_leaves_the_lint_s_node_out_of_the_javascript_report(self):
+        # Prettier loads its configuration, under the root, into the Node it runs.
+        self.write_node_test(["node", "build.mjs", "a"])
+        self.settings(
+            "function pytest_args { :; }\n"
+            "function css_files { printf '%s\\0' a.css; }\n"
+        )
+        self.write("build.mjs", self.BUILD_MJS)
+        self.write("a.css", "a {\n  color: red;\n}\n")
+        self.write("prettier.config.mjs", "export default {};\n")
+        before = self.tree()
+        result = self.run_coverage()
+        self.assertPasses(result)
+        self.assertIn("lint: checking 1 CSS and HTML file(s)", result.stderr)
+        self.assertIn("coverage: reporting the JavaScript's coverage", result.stderr)
+        report = self.javascript_report(result.stdout)
+        self.assertReports(report, r"^build\.mjs ")
+        self.assertNotIn("prettier.config.mjs", report)
+        self.assertLeavesNothing(before)
+
+    def test_a_failing_test_prints_no_javascript_report(self):
+        self.write_node_test(["node", "build.mjs", "a"], passes=False)
+        self.write("build.mjs", self.BUILD_MJS)
+        before = self.tree()
+        result = self.run_coverage("test/test_a.py")
+        self.assertFails(result, "1 failed")
+        self.assertNotIn("JavaScript", result.stderr)
+        self.assertLeavesNothing(before)
+
+    def test_a_repository_s_own_c8_settings_change_nothing(self):
+        self.write_node_test(["node", "build.mjs", "a"])
+        self.write("build.mjs", self.BUILD_MJS)
+        for name, text in (
+            (".c8rc", self.C8_SETTINGS),
+            ("package.json", f'{{"c8": {self.C8_SETTINGS}}}'),
+            # Not JSON, so c8 would fail the run were it to read the file at all.
+            (".nycrc", "{\n"),
+        ):
+            with self.subTest(name=name):
+                self.write(name, text)
+                self.addCleanup((self.root / name).unlink, missing_ok=True)
+                before = self.tree()
+                result = self.run_coverage("test/test_a.py")
+                self.assertReportsBuild(result)
+                self.assertLeavesNothing(before)
+                (self.root / name).unlink()
+
+    def test_bin_test_alone_sets_no_node_coverage(self):
+        self.settings("function pytest_args { :; }\n")
+        self.write(
+            "test/test_a.py",
+            "import os\nimport unittest\n\n\nclass A(unittest.TestCase):\n"
+            "    def test_a(self):\n"
+            "        self.assertNotIn('NODE_V8_COVERAGE', os.environ)\n",
+        )
+        # Empty, bin/coverage's variable is taken as unset.
+        for name, env in (("unset", None), ("empty", {self.NODE_DATA: ""})):
+            with self.subTest(name):
+                result = self.run_bin("test", env=env)
+                self.assertPasses(result)
+                self.assertIn("1 passed", result.stdout)
+
+    def test_bin_test_sets_node_coverage_for_pytest_from_bin_coverage_s_variable(
+        self,
+    ):
+        self.settings("function pytest_args { :; }\n")
+        data = str(self.tmp / "js.data")
+        self.write(
+            "test/test_a.py",
+            "import os\nimport unittest\n\n\nclass A(unittest.TestCase):\n"
+            "    def test_a(self):\n"
+            f"        self.assertEqual(os.environ['NODE_V8_COVERAGE'], {data!r})\n",
+        )
+        result = self.run_bin("test", env={self.NODE_DATA: data})
+        self.assertPasses(result)
+        self.assertIn("1 passed", result.stdout)
 
 
 class PreviewTest(Repository):

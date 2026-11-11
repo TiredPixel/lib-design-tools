@@ -49,6 +49,13 @@ fi
 if defines pytest_args; then
     options=()
     read_set pytest_args options may-be-empty
+    # Given by bin/coverage alone, and set here after the lint, for pytest, the
+    # last command, so Node measures what runs under the tests and nothing the
+    # lint runs. Node passes it on to every process it starts, as Python's
+    # subprocesses and pytest-xdist's workers do.
+    if [ -n "${DESIGN_TOOLS_NODE_V8_COVERAGE-}" ]; then
+        export NODE_V8_COVERAGE=$DESIGN_TOOLS_NODE_V8_COVERAGE
+    fi
     echo "test: running pytest" >&2
     # The plugin only adds --no-skips, which does nothing unless passed. No
     # cache provider, so a run writes no .pytest_cache into the tree it checks.
