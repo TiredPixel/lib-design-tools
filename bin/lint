@@ -3,11 +3,8 @@
 # Read-only counterpart to bin/format: every check here reports and fails, and
 # none of them write. Anything that rewrites a file belongs in bin/format.
 #
-# ShellCheck sees no assignment for the names bin/runner sets, since it does not
-# follow bin/runner, nor for the arrays read_set and the readers built on it
-# assign through a nameref, which it cannot follow. Suppressed here for the
-# reason bin/test gives.
-# shellcheck disable=SC2154
+# Each array a reader fills is declared before the call, for the reason bin/test
+# gives.
 set -Eeuo pipefail
 shopt -s inherit_errexit failglob
 
@@ -15,14 +12,18 @@ shopt -s inherit_errexit failglob
 # the link for ShellCheck to find; bin/runner is linted on its own.
 # shellcheck source=/dev/null
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
+# Declared again for the reason bin/test gives.
+declare design_tools tools dockerfmt_args jq_args mdformat_args shfmt_args
 
 if defines palette_args; then
+    palette=()
     read_set palette_args palette
     echo "lint: running palette-generate --check" >&2
     "$tools/palette-generate" "${palette[@]}" --check
 fi
 
 if defines shell_files; then
+    shell=()
     read_files shell_files shell
     echo "lint: checking ${#shell[@]} shell file(s)" >&2
     # -x, so ShellCheck follows a sourced file the set does not name rather than
@@ -32,6 +33,7 @@ if defines shell_files; then
 fi
 
 if defines python_files; then
+    python=()
     read_files python_files python
     echo "lint: checking ${#python[@]} Python file(s)" >&2
     ruff format --check "${python[@]}"
@@ -39,6 +41,7 @@ if defines python_files; then
 fi
 
 if defines yaml_files; then
+    yaml=()
     read_files yaml_files yaml
     echo "lint: checking ${#yaml[@]} YAML file(s)" >&2
     printf '%s\0' "${yaml[@]}" | "$design_tools/lib/shell-common/lint/yaml-keys"
@@ -48,12 +51,14 @@ fi
 # YAML whose key order or layout is its own, so yaml_files' yq would rewrite it:
 # yamllint alone, which only reports.
 if defines yaml_lint_files; then
+    yaml_lint=()
     read_files yaml_lint_files yaml_lint
     echo "lint: checking ${#yaml_lint[@]} lint-only YAML file(s)" >&2
     yamllint --strict -- "${yaml_lint[@]}"
 fi
 
 if defines json_files; then
+    json=()
     read_files json_files json
     echo "lint: checking ${#json[@]} JSON file(s)" >&2
     status=0
@@ -67,18 +72,21 @@ if defines json_files; then
 fi
 
 if defines js_files; then
+    js=()
     read_files js_files js
     echo "lint: checking ${#js[@]} JavaScript file(s)" >&2
     semistandard "${js[@]}"
 fi
 
 if defines css_files || defines html_files; then
+    prettied=()
     read_prettier_files prettied
     echo "lint: checking ${#prettied[@]} CSS and HTML file(s)" >&2
     prettier --check "${prettied[@]}"
 fi
 
 if defines svg_files; then
+    svg=()
     read_files svg_files svg
     echo "lint: checking ${#svg[@]} SVG file(s)" >&2
     xml_plugin=$(prettier_xml_plugin)
@@ -86,24 +94,28 @@ if defines svg_files; then
 fi
 
 if defines md_files; then
+    md=()
     read_files md_files md
     echo "lint: checking ${#md[@]} Markdown file(s)" >&2
     mdformat "${mdformat_args[@]}" --check "${md[@]}"
 fi
 
 if defines toml_files; then
+    toml=()
     read_files toml_files toml
     echo "lint: checking ${#toml[@]} TOML file(s)" >&2
     taplo fmt --check "${toml[@]}"
 fi
 
 if defines dotenv_files; then
+    dotenv=()
     read_files dotenv_files dotenv
     echo "lint: checking ${#dotenv[@]} dotenv file(s)" >&2
     dotenv-linter check "${dotenv[@]}"
 fi
 
 if defines docker_files; then
+    docker=()
     read_files docker_files docker
     echo "lint: checking ${#docker[@]} Docker file(s)" >&2
     dockerfmt "${dockerfmt_args[@]}" --check "${docker[@]}"
@@ -112,6 +124,7 @@ if defines docker_files; then
 fi
 
 if defines compose_files; then
+    compose=()
     read_files compose_files compose
     echo "lint: checking ${#compose[@]} Compose file(s)" >&2
     # One file at a time, since Compose merges every -f it is given into one
@@ -128,6 +141,7 @@ if defines compose_files; then
 fi
 
 if defines workflow_files; then
+    workflow=()
     read_files workflow_files workflow
     echo "lint: checking ${#workflow[@]} workflow file(s)" >&2
     # Named, since actionlint reads the repository's config only in a directory
@@ -144,18 +158,21 @@ if defines workflow_files; then
 fi
 
 if defines make_files; then
+    make=()
     read_files make_files make
     echo "lint: checking ${#make[@]} make file(s)" >&2
     checkmake "${make[@]}"
 fi
 
 if defines references_args; then
+    references=()
     read_set references_args references
     echo "lint: running references-check" >&2
     "$tools/references-check" "${references[@]}"
 fi
 
 if defines render_args; then
+    render=()
     read_set render_args render
     echo "lint: running render-check" >&2
     "$tools/render-check" "${render[@]}"

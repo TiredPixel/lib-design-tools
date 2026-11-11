@@ -6,10 +6,11 @@
 # bin/settings turns each pass on by defining what the pass reads (README.md,
 # Configuring the passes).
 #
-# Variables read only by the runners that source this file look unused here.
-# shellcheck disable=SC2034
+# Each SC2034 suppressed below is for a variable read only by the runners that
+# source this file, so unused here.
 
 design_tools=$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")
+# shellcheck disable=SC2034
 tools=$design_tools/tools
 
 source bin/settings
@@ -17,16 +18,20 @@ source bin/settings
 # Read by bin/format and bin/lint alike, so the two cannot disagree.
 #
 # --newline, since dockerfmt otherwise drops each file's final newline.
+# shellcheck disable=SC2034
 dockerfmt_args=(--newline)
 # --sort-keys, since jq otherwise keeps each object's keys as written, so the
 # same data could pass in several orders.
+# shellcheck disable=SC2034
 jq_args=(--sort-keys .)
 # One paragraph per line rather than mdformat's default of keeping each line
 # break, since a renderer reflows a paragraph, so a break inside one carries
 # nothing but churn.
+# shellcheck disable=SC2034
 mdformat_args=(--wrap no)
 # Indented by 4 spaces rather than shfmt's default tab, since spaces are the
 # common practice for shell.
+# shellcheck disable=SC2034
 shfmt_args=(-i 4)
 
 # Prettier resolves a plugin named as a package from the working directory, the

@@ -10,6 +10,10 @@ shopt -s inherit_errexit failglob
 # the link for ShellCheck to find; bin/runner is linted on its own.
 # shellcheck source=/dev/null
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
+# Declared again for the reason bin/test gives: tools set by bin/runner, and
+# preview_start by bin/settings, which it sources. Declaring one bin/settings
+# leaves unset keeps it unset, so the check below still catches it.
+declare tools preview_start
 
 # Unlike the other settings, a variable rather than a function.
 if declare -F preview_start >/dev/null; then
@@ -21,8 +25,5 @@ if [ -z "${preview_start:-}" ]; then
     exit 1
 fi
 
-# tools comes from bin/runner, which ShellCheck does not follow. Suppressed here
-# for the reason bin/test gives.
-# shellcheck disable=SC2154
 exec "$tools/preview-serve" --address=0.0.0.0 --port=8080 --root=. \
     --start="$preview_start"
