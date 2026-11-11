@@ -21,7 +21,8 @@ jobs:
     steps:
       # No app token: the submodules are public, cloned over HTTPS with no
       # credential.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           submodules: recursive
@@ -30,7 +31,8 @@ jobs:
       - name: Check no workflow is pending
         run: |
           lib/shell-common/github/workflows-pending
-      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
         with:
           password: ${{ secrets.GITHUB_TOKEN }}
           registry: ghcr.io
@@ -51,19 +53,24 @@ jobs:
     timeout-minutes: 15
   # Pushes the dev image as the layer cache build takes, which nothing deploys.
   # Only on a person's push, never an app's, whose tree would otherwise run here
-  # with this write.
+  # with this write; and only to a branch, since a tag's dev image is never read
+  # as layer cache.
   cache:
-    if: github.event_name == 'push' && github.event.sender.type == 'User'
+    if: |-
+      github.event_name == 'push' && github.ref_type == 'branch' &&
+      github.event.sender.type == 'User'
     permissions:
       contents: read
       packages: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           submodules: recursive
-      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
         with:
           password: ${{ secrets.GITHUB_TOKEN }}
           registry: ghcr.io
@@ -74,7 +81,7 @@ jobs:
     # Bounded as build is, whose limit covers this same image build and the
     # suite besides.
     timeout-minutes: 15
-name: Build
+name: CI
 "on":
   pull_request:
     branches:
