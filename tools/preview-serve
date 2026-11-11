@@ -4,9 +4,9 @@
 Every response carries ``Cache-Control: no-store``, so a reload always shows the file as
 saved. A directory without an ``index.html`` or ``index.htm`` is listed. ``/`` is
 redirected to ``--start``, the page a preview opens on. A path ``design_render.refused``
-names, such as one through ``.git``, is answered 404. ``.webmanifest`` is served as
-``application/manifest+json``, which a browser needs to read a web app manifest rather
-than download it.
+names, such as one through ``.git``, is answered 404 and left out of a listing.
+``.webmanifest`` is served as ``application/manifest+json``, which a browser needs to
+read a web app manifest rather than download it.
 
 For development only: the server is Python's standard one, threaded, with no TLS and no
 access control.
@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import argparse
 import functools
+import html
 import http.server
+import io
+import os
 import pathlib
 import sys
 import urllib.parse
@@ -68,6 +71,47 @@ class PreviewHandler(http.server.SimpleHTTPRequestHandler):
     def do_HEAD(self) -> None:
         if not self._route():
             super().do_HEAD()
+
+    def list_directory(self, path: str) -> io.BytesIO | None:
+        """List ``path``, leaving out every entry ``design_render.refused`` names.
+
+        The standard listing reads the directory and sends its own length before
+        returning, so it cannot be filtered; this writes a plainer one.
+        """
+        try:
+            names = sorted(os.listdir(path), key=str.lower)
+        except OSError:
+            self.send_error(404, "No permission to list directory")
+            return None
+        # send_head redirects a directory's path to one ending in / before listing it.
+        url = urllib.parse.urlsplit(self.path).path
+        items = []
+        for name in names:
+            full = os.path.join(path, name)
+            link = name + "/" if os.path.isdir(full) else name
+            href = urllib.parse.quote(link, errors="surrogatepass")
+            if not design_render.refused(self.directory, url + href, full):
+                items.append(
+                    f'<li><a href="{href}">{html.escape(link, quote=False)}</a></li>'
+                )
+        title = "Directory listing for " + html.escape(
+            urllib.parse.unquote(url), quote=False
+        )
+        body = "\n".join(
+            [
+                "<!DOCTYPE html>",
+                '<html lang="en">',
+                f'<head><meta charset="utf-8"><title>{title}</title></head>',
+                f"<body>\n<h1>{title}</h1>\n<ul>",
+                *items,
+                "</ul>\n</body>\n</html>\n",
+            ]
+        ).encode("utf-8", "surrogateescape")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        return io.BytesIO(body)
 
     def guess_type(self, path) -> str:
         guessed = super().guess_type(path)

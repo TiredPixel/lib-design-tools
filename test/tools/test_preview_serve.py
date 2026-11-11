@@ -6,6 +6,7 @@ import contextlib
 import http.client
 import io
 import pathlib
+import re
 import socket
 import tempfile
 import threading
@@ -119,6 +120,50 @@ class PreviewServeTest(temp_tree.TempTreeTestCase):
         response = self.request("/listed/")
         self.assertEqual(response.status, 200)
         self.assertIn(b"a.txt", response.body)
+        self.assertEqual(response.getheader("Content-Type"), "text/html; charset=utf-8")
+        self.assertEqual(response.getheader("Content-Length"), str(len(response.body)))
+
+    def test_listing_leaves_out_what_is_refused(self) -> None:
+        root = self.root
+        self.write("listed/.env", "secret")
+        self.write("listed/.cache/x", "secret")
+        self.write("listed/odd name%.txt", "o")
+        self.write("listed/a&b/c.txt", "c")
+        (root / "listed/secret").symlink_to("../.env")
+        (root / "listed/up").symlink_to("../public")
+        (root / "listed/away").symlink_to("../away")
+        (root / "listed/preview").symlink_to("../preview")
+        for path in ("/listed/", "/linked/"):
+            with self.subTest(path=path):
+                response = self.request(path)
+                self.assertEqual(response.status, 200)
+                listing = response.body.decode("utf-8")
+                self.assertEqual(
+                    re.findall(r'<a href="([^"]*)">([^<]*)</a>', listing),
+                    [
+                        ("a%26b/", "a&amp;b/"),
+                        ("a.txt", "a.txt"),
+                        ("odd%20name%25.txt", "odd name%.txt"),
+                        ("preview/", "preview/"),
+                    ],
+                )
+                self.assertIn(f"<h1>Directory listing for {path}</h1>", listing)
+
+    def test_listing_title_is_the_unquoted_path_escaped(self) -> None:
+        self.write("listed/a&b/c.txt", "c")
+        response = self.request("/listed/a%26b/")
+        self.assertEqual(response.status, 200)
+        self.assertIn(
+            "<title>Directory listing for /listed/a&amp;b/</title>",
+            response.body.decode("utf-8"),
+        )
+
+    def test_listing_an_unreadable_directory_is_not_found(self) -> None:
+        with mock.patch.object(
+            preview_serve.os, "listdir", side_effect=PermissionError
+        ):
+            response = self.request("/listed/")
+        self.assertEqual(response.status, 404)
 
     def test_refuses_dotfiles_however_spelt(self) -> None:
         self.assertRefused("/.git/config", "/.env", "/%2Egit/config", "/listed/../.env")
