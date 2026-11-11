@@ -1,4 +1,4 @@
-"""tools/kcov-report, on fabricated Cobertura reports in kcov 43's layout."""
+"""tools/kcov-report, on Cobertura reports in kcov 43's layout and istanbul's."""
 
 from __future__ import annotations
 
@@ -203,6 +203,69 @@ class KcovReportTest(temp_tree.TempTreeTestCase):
             "TOTAL             4      2    50%\n",
         )
 
+    def test_istanbul_layout(self) -> None:
+        # As istanbul-reports writes it for c8, from its test fixture
+        # test/fixtures/specs/missing-line-missing-branch.json, trimmed, its <source>
+        # the project, with no trailing slash, as c8 gives its working directory. A
+        # method's line 8, missed, and 12 are no line of the class's own.
+        path = self.write(
+            "cobertura.xml",
+            '<?xml version="1.0" ?>\n'
+            '<!DOCTYPE coverage SYSTEM "http://cobertura.sourceforge.net/xml/'
+            'coverage-04.dtd">\n'
+            '<coverage lines-valid="47" lines-covered="46" line-rate="0.9787"'
+            ' branches-valid="43" branches-covered="41"'
+            ' branch-rate="0.9534999999999999" timestamp="123456789"'
+            ' complexity="0" version="0.1">\n'
+            f"  <sources>\n    <source>{self.project}</source>\n  </sources>\n"
+            "  <packages>\n"
+            '    <package name="main" line-rate="0.9787"'
+            ' branch-rate="0.9534999999999999">\n'
+            "      <classes>\n"
+            '        <class name="index.js" filename="test-exclude/index.js"'
+            ' line-rate="0.9787" branch-rate="0.9534999999999999">\n'
+            "          <methods>\n"
+            '            <method name="foo" hits="0" signature="()V">\n'
+            "              <lines>\n"
+            '                <line number="8" hits="0"/>\n'
+            "              </lines>\n"
+            "            </method>\n"
+            '            <method name="TestExclude" hits="21" signature="()V">\n'
+            "              <lines>\n"
+            '                <line number="12" hits="21"/>\n'
+            "              </lines>\n"
+            "            </method>\n"
+            "          </methods>\n"
+            "          <lines>\n"
+            '            <line number="1" hits="1" branch="false"/>\n'
+            '            <line number="2" hits="1" branch="false"/>\n'
+            '            <line number="3" hits="1" branch="false"/>\n'
+            '            <line number="4" hits="1" branch="false"/>\n'
+            '            <line number="5" hits="1" branch="false"/>\n'
+            '            <line number="9" hits="0" branch="false"/>\n'
+            '            <line number="13" hits="21" branch="false"/>\n'
+            '            <line number="21" hits="21" branch="true"'
+            ' condition-coverage="75% (3/4)"/>\n'
+            '            <line number="22" hits="21" branch="true"'
+            ' condition-coverage="100% (2/2)"/>\n'
+            "          </lines>\n"
+            "        </class>\n"
+            "      </classes>\n"
+            "    </package>\n"
+            "  </packages>\n"
+            "</coverage>\n",
+        )
+        status, stdout, stderr = self.run_main(str(path), str(self.project))
+        self.assertEqual((status, stderr), (0, ""))
+        self.assertEqual(
+            stdout,
+            "Name                    Stmts   Miss  Cover   Missing\n"
+            "-----------------------------------------------------\n"
+            "test-exclude/index.js       9      1    89%   9\n"
+            "-----------------------------------------------------\n"
+            "TOTAL                       9      1    89%\n",
+        )
+
     def test_malformed_reports_fail(self) -> None:
         source = f"<sources><source>{self.project}/</source></sources>"
         cases = {
@@ -222,13 +285,17 @@ class KcovReportTest(temp_tree.TempTreeTestCase):
             ),
             "a.sh: <line> without integer number and hits": (
                 f'<coverage>{source}<class filename="a.sh">'
-                '<line number="x" hits="1"/></class></coverage>'
+                '<lines><line number="x" hits="1"/></lines></class></coverage>'
             ),
             "a.sh: <line> without integer number and hits ": (
                 f'<coverage>{source}<class filename="a.sh">'
-                '<line number="1"/></class></coverage>'
+                '<lines><line number="1"/></lines></class></coverage>'
             ),
             "measures no file": f"<coverage>{source}</coverage>",
+            # As c8 writes one where Node ran none of the files it reports.
+            "measures no file ": (
+                f"<coverage>{source}<packages></packages></coverage>"
+            ),
         }
         for message, content in cases.items():
             with self.subTest(message=message):

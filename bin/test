@@ -6,13 +6,8 @@
 # pytest_args, the options they take. README.md, Running the make targets, gives
 # the worker count and how to name tests.
 #
-# ShellCheck sees no assignment for the names bin/runner sets, since it does not
-# follow bin/runner, nor for the arrays read_set assigns through a nameref,
-# which it cannot follow. Suppressed here rather than fixed with a source
-# directive, which cannot reach bin/runner through another repository's link to
-# this runner, or in .shellcheckrc, which would hide the rule in bin/runner and
-# tools/ too.
-# shellcheck disable=SC2154
+# Each array read_set fills is declared before the call, since ShellCheck cannot
+# follow the nameref that assigns it, and would otherwise report it unassigned.
 set -Eeuo pipefail
 shopt -s inherit_errexit failglob
 
@@ -20,6 +15,9 @@ shopt -s inherit_errexit failglob
 # the link for ShellCheck to find; bin/runner is linted on its own.
 # shellcheck source=/dev/null
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
+# Set by bin/runner, and declared again, which keeps their values, so that
+# ShellCheck, which does not follow it, sees them assigned.
+declare design_tools tools
 
 tests=("$@")
 
@@ -49,7 +47,15 @@ if [ ${#tests[@]} -eq 0 ]; then
 fi
 
 if defines pytest_args; then
+    options=()
     read_set pytest_args options may-be-empty
+    # Given by bin/coverage alone, and set here after the lint, for pytest, the
+    # last command, so Node measures what runs under the tests and nothing the
+    # lint runs. Node passes it on to every process it starts, as Python's
+    # subprocesses and pytest-xdist's workers do.
+    if [ -n "${DESIGN_TOOLS_NODE_V8_COVERAGE-}" ]; then
+        export NODE_V8_COVERAGE=$DESIGN_TOOLS_NODE_V8_COVERAGE
+    fi
     echo "test: running pytest" >&2
     # The plugin only adds --no-skips, which does nothing unless passed. No
     # cache provider, so a run writes no .pytest_cache into the tree it checks.

@@ -3,17 +3,22 @@
 # This repository's settings for the runners in bin/, which it uses as any other
 # repository does: each function names what one pass reads, NUL-separated.
 #
-# No pass reaches pytest.ini, checkmake.ini, .gitmodules, .gitignore,
-# .dockerignore, .dockerrepo or LICENSE, since the image has no formatter or
-# linter for INI, git config, ignore or plain-text files. Nor does any reach the
-# locks docker/upgrade writes whole: Dockerfile.lock/*/requirements.txt, and
-# Dockerfile.lock/js/package-lock.json, in npm's own key order.
+# No pass reaches the INI files, pytest.ini and checkmake.ini: INI has no
+# standard, and the image has no tool that reads pytest's or checkmake's
+# dialect, where one that reads another can change what a file means. Nor does
+# any reach .gitmodules, .gitignore, .dockerignore, .dockerrepo or LICENSE,
+# since the image has no formatter or linter for git config, ignore or
+# plain-text files, nor the locks docker/upgrade writes whole:
+# Dockerfile.lock/*/requirements.txt, and Dockerfile.lock/js/package-lock.json,
+# in npm's own key order.
 
 # A proposed workflow waits in .github/workflows.new/ until it is moved into
 # .github/workflows/, so either directory, though not both, may be empty or
 # absent.
 function workflow_files {
-    find .github -path '.github/workflows*/*.yml' -print0 | sort -z
+    find .github \
+        \( -path '.github/workflows/*' -o -path '.github/workflows.new/*' \) \
+        \( -name '*.yml' -o -name '*.yaml' \) -print0 | sort -z
 }
 
 function yaml_files {

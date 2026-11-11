@@ -8,7 +8,7 @@ Working on this repository, or on one that takes it as a submodule, needs:
 
 - Docker Engine or Docker Desktop with Compose v2
 - `git` with submodule support
-- `make`
+- GNU `make` 3.82 or later
 - `bash` 4.4 or later
 
 Upgrading this repository's pins (*Upgrading the pins*) runs `docker/upgrade` on the host, so it also needs `curl`, `jq`, `sha256sum` and `timeout` there.
@@ -17,15 +17,15 @@ Upgrading this repository's pins (*Upgrading the pins*) runs `docker/upgrade` on
 
 Each command prints its usage with `--help`.
 
-- `tools/palette-generate` – the JSON and the CSS from a palette YAML, one custom property per colour; `--check` compares them with the files instead of writing. A property is named `--`, the `--prefix` given and a hyphen, then the full YAML key path, lowercased, with `_` written as `-` and list items numbered from 1, so `greys: {warm: [a, b]}` with prefix `x` gives `--x-greys-warm-1` and `--x-greys-warm-2`; a key that would put anything but letters, digits, hyphens or non-ASCII characters in a name fails the run, as do two leaves that come out with the same name, a YAML that holds no colour at all, a value starting with `#` that is not a `#RGB`, `#RGBA`, `#RRGGBB` or `#RRGGBBAA` colour, and a value left empty, as an unquoted `#` colour is, since YAML reads it as a comment. Aliases and merge keys are expanded in both outputs alike.
-- `tools/references-check` – every local reference in HTML and CSS resolves under `--root`: each attribute that loads or links something, such as `href`, `src`, `srcset`, `imagesrcset`, `poster` and `data`, a refresh's target, and each `url()`, `@import` and `image-set()` string. A reference that leaves `--root` fails, as does one to a directory with no `index.html` or `index.htm`, and so does a file that holds a `<base>` element, which changes how every reference resolves, or that is not valid UTF-8. `--no-external` refuses anything external a page loads, and `--require-integrity` requires `integrity` and `crossorigin` on every external stylesheet and script. `--unresolved PATH`, repeatable, exempts a `/`-rooted path served by something else, such as a sibling site, for a link, an `area`, a refresh or a `link` whose every `rel` loads nothing, matching wherever a reference lands, query and fragment aside; an exempt path that something loads into the page fails, as does an exemption whose path resolves or that nothing references.
+- `tools/palette-generate` – the JSON and the CSS from a palette YAML, one custom property per colour; `--check` compares them with the files instead of writing. A property is named `--`, the `--prefix` given and a hyphen, then the full YAML key path, lowercased, with `_` written as `-` and list items numbered from 1, so `greys: {warm: [a, b]}` with prefix `x` gives `--x-greys-warm-1` and `--x-greys-warm-2`; a key that would put anything but letters, digits, hyphens or non-ASCII characters in a name fails the run, as do two leaves that come out with the same name, a YAML that holds no colour at all or whose top level is not a mapping, a value starting with `#` that is not a `#RGB`, `#RGBA`, `#RRGGBB` or `#RRGGBBAA` colour, and a value left empty, as an unquoted `#` colour is, since YAML reads it as a comment. Aliases and merge keys are expanded in both outputs alike.
+- `tools/references-check` – every local reference in HTML and CSS resolves under `--root`: each attribute that loads or links something, such as `href`, `src`, `srcset`, `imagesrcset`, `poster` and `data`, a refresh's target, and each `url()`, `@import` and `image-set()` string, SVG's `href` and `xlink:href` included, but not an `@namespace` rule's URL, which is never fetched. A reference that leaves `--root` fails, as does one to a directory with no `index.html` or `index.htm` or to a file written with a trailing slash, which a server answers with 404, and so does a file that holds a `<base>` element, which changes how every reference resolves, or that is not valid UTF-8. `--no-external` refuses anything external a page loads, and `--require-integrity` requires `integrity` and `crossorigin` on every external stylesheet and script, and fails any external script loaded by `href` or `xlink:href`, as SVG's is, since SVG's `script` takes no `integrity`. `--unresolved PATH`, repeatable, exempts a `/`-rooted path served by something else, such as a sibling site, for a link, an `area`, a refresh or a `link` whose every `rel` loads nothing, matching wherever a reference lands, query and fragment aside; an exempt path that something loads into the page fails, as does an exemption whose path resolves or that nothing references.
 - `tools/render-check` – each page loaded in headless Chromium, failing on an uncaught error, an unhandled rejection, a `console.error`, a failed load the page or its stylesheets start, such as an image, script, stylesheet, `@import`, font or background image, or an element matching `--error-marker`, and on a page Chromium fails or times out on, or where the browser cannot report failed loads started from CSS. A request the page's own script makes, such as `fetch`, is left to the script; the page's icon is not checked, and a load from another origin that does not use CORS counts only where its element reports an error.
-- `tools/preview-serve` – the tree as it is on disk, for previewing while editing: nothing cached, dot paths and paths outside the tree refused, directories listed, and `/` redirected to `--start`, the page the preview opens on. For development only.
-- `tools/kcov-report` – a kcov Cobertura report, such as `bin/coverage` has kcov write, printed as pytest-cov's term-missing report: a header, a line for each file, named relative to `ROOT` where it lies inside it, with its statements, misses, percentage covered and missing lines, and a `TOTAL` line. A file it cannot read, that is not a kcov Cobertura report or that measures no file fails the run.
+- `tools/preview-serve` – the tree as it is on disk, for previewing while editing: nothing cached, dot paths and paths outside the tree refused and left out of listings, directories listed, and `/` redirected to `--start`, the page the preview opens on. For development only.
+- `tools/kcov-report` – a Cobertura report, as kcov or c8 writes one for `bin/coverage`, printed as pytest-cov's term-missing report: a header, a line for each file, named relative to `ROOT` where it lies inside it, with its statements, misses, percentage covered and missing lines, and a `TOTAL` line. A statement is a line of a class's own, not the line a method is declared on, which c8's report also lists. A file it cannot read, that is not a Cobertura report it can read or that measures no file fails the run.
 
 Importable from a repository's own Python tests, with `tools/` on the path, as `bin/test` puts it:
 
-- `tools/design_colour.py` – colour maths on opaque `#RGB` and `#RRGGBB` colours: WCAG luminance and contrast, compositing a colour at a given opacity over a ground, CIELAB lightness, chroma and hue, the gap and spread between hues and whether one lies on the arc between two others, and CIE76 ΔE.
+- `tools/design_colour.py` – colour maths on opaque `#RGB` and `#RRGGBB` colours: WCAG luminance and contrast, compositing a colour at a given opacity over a ground, CIELAB lightness, chroma and hue, which a grey, black or white has none of, so asking for it raises `ValueError`, the gap and spread between hues and whether one lies on the shorter arc between two others that are not opposite, and CIE76 ΔE.
 - `tools/design_render.py` – the harness under `render-check`: serving a tree, rendering a page or printing it to PDF in headless Chromium, and reading what it reports.
 - `tools/pytest_no_skips.py` – a pytest plugin, which `bin/test` loads, adding `--no-skips`, which fails a run in which any test skipped.
 
@@ -57,7 +57,43 @@ ln -s lib/design-tools/Dockerfile.lock Dockerfile.lock
 
 A repository leaves the link out of `docker_files`, since the file is not its own: `make format` never mounts the submodule, so a rewrite through the link would reach only the image's copy and be lost.
 
-The `wheels` and `dev` stages bind-mount `Dockerfile.lock` whole from the repository's tree wherever they read a lock, since through a link BuildKit resolves only the first path below it, so a linked lock builds as a copied one does, even with `dev` built alone. The test stage copies the whole tree. So the repository's `.dockerignore` keeps `.git`, `.env`, `tmp/` and anything local out of it, and must not exclude `Dockerfile.lock` or the submodule. Excluding every top-level dot path, `/.*`, and letting the repository's own dot files back in by name, such as `!/.github`, keeps a per-user directory such as `.claude` out without naming it.
+The `wheels` and `dev` stages bind-mount `Dockerfile.lock` whole from the repository's tree wherever they read a lock, since through a link BuildKit resolves only the first path below it, so a linked lock builds as a copied one does, even with `dev` built alone. The test stage copies the whole tree. So the repository's `.dockerignore` keeps `.git`, `.env`, `tmp/` and anything local out of it, and must not exclude `Dockerfile.lock` or the submodule. Excluding every top-level dot path, `/.*`, and letting the repository's own dot files back in by name, such as `!/.github`, keeps a per-user directory such as `.claude` out without naming it. A submodule is a checkout too, with a `.env`, `tmp/` and Compose override of its own, so the same exclusions are repeated for each depth submodules sit at, as `/lib/*/.*`, `/lib/*/docker-compose.*.yml` and `/lib/*/tmp/`, and under `/lib/*/lib/*/` for this repository's own submodule.
+
+A repository's CI keeps a registry build cache of its own through the scripts in this repository's `lib/shell-common`. It names its own image in `.dockerrepo`, at its root, which the scripts read:
+
+```text
+ghcr.io/OWNER/NAME
+```
+
+Its `build` job holds `contents: read` and `packages: read`. After checking the repository out with its submodules, recursively, and logging in to the registry, it builds `dev` with `docker/build-dev-latest-nopush`, which pushes nothing, before `make build`, on the same daemon. The script takes layers from the branch's `.dev` image, and from `latest.dev`, which a push to a branch named `latest` writes:
+
+```yaml
+build:
+  permissions:
+    contents: read
+    packages: read
+  steps:
+    - name: Build dev
+      run: |
+        lib/design-tools/lib/shell-common/docker/build-dev-latest-nopush
+        make build
+```
+
+Its `cache` job runs only on a person's push to a branch, never an app's, whose tree would otherwise run with the job's write, and holds `packages: write`. After the same checkout and login, it builds `dev` with `docker/build-dev-latest`, which pushes it as the branch's `.dev` image:
+
+```yaml
+cache:
+  if: |-
+    github.event_name == 'push' && github.ref_type == 'branch' &&
+    github.event.sender.type == 'User'
+  permissions:
+    contents: read
+    packages: write
+  steps:
+    - name: Push dev
+      run: |
+        lib/design-tools/lib/shell-common/docker/build-dev-latest
+```
 
 ### Linking the runners
 
@@ -106,6 +142,7 @@ What `bin/lint` checks only:
 - `compose_files` – Compose files, each validated on its own, with every profile enabled, by `docker-compose --profile '*' config -q`. It checks neither layout nor key order, so each is also named in `yaml_files`, except the link to this repository's `docker-compose.yml` (*Linking the services*).
 - `workflow_files` – GitHub Actions workflows, checked by actionlint, under the repository's own `.github/actionlint.yaml` or `.github/actionlint.yml`; like `compose_files`, each is also named in `yaml_files` for its layout and key order.
 - `yaml_lint_files` – YAML that `yaml_files` would reorder or lay out anew, such as a file whose key order carries meaning, checked by `yamllint --strict` alone, under the repository's own yamllint configuration. Leave a file named here out of `yaml_files`, whose yq would rewrite it.
+- `xml_lint_files` – XML a reader takes byte for byte, such as an OOXML part, checked for well-formedness and namespaces by expat's `xmlwf -n` alone. Leave a file named here out of `svg_files`, whose Prettier would rewrite it.
 - `make_files` – Makefiles, checked by checkmake, under the repository's own `checkmake.ini`.
 - `references_args` – `tools/references-check`'s arguments.
 - `render_args` – `tools/render-check`'s arguments, such as `--root . pages/*.html`.
@@ -181,13 +218,17 @@ make lint
 make format
 ```
 
-`make coverage` runs `bin/test`, taking `TESTS` as `make test` does, in the `design_test` service, measuring the shell under kcov and the Python under pytest-cov, and prints both reports, in pytest-cov's term-missing form: the Python one as the tests finish, then the shell one, through `tools/kcov-report`. It measures only files under the repository's root, and its shell report leaves out the copy of this repository. It writes nothing to the tree, keeping the measurements in a temporary directory in the container:
+`make coverage` runs `bin/test`, taking `TESTS` as `make test` does, in the `design_test` service, measuring the shell under kcov, the Python under pytest-cov and the JavaScript Node runs under the tests through `NODE_V8_COVERAGE`, and prints the reports in pytest-cov's term-missing form: the Python one as the tests finish, then, once they pass, the shell one and the JavaScript one, through `tools/kcov-report`. It measures only files under the repository's root, and its shell report leaves out the copy of this repository. It writes nothing to the tree, keeping the measurements in a temporary directory in the container:
 
 ```sh
 make coverage
 ```
 
 kcov traces a script only where its trace descriptor, the one `BASH_XTRACEFD` names, is open to it. Python's `subprocess` closes it in a child and pytest-xdist's workers start without it, so a script a test starts goes unmeasured, unless the test runs in pytest's own process and passes the descriptor on with `pass_fds`.
+
+`bin/test` sets `NODE_V8_COVERAGE` only where `bin/coverage` runs it, so `make test` and `make lint` set nothing, and for pytest alone, so the lint's Prettier and ESLint, with the configuration files they load, go unmeasured. Every Node process under the tests is measured, such as a script a test starts with `node build.mjs` or a command in `tools/` with no extension, unless a test gives it an environment without the variable. The JavaScript report holds each file under the root that one ran, test files included, and none under `node_modules`; it prints only where there is one, so a repository with no JavaScript sees no line about it. `bin/coverage` gives c8 every setting its report reads, so no `.c8rc`, `.nycrc` or `"c8"` key in `package.json` changes it.
+
+Node writes a process's data as it exits, so one ended by a signal it does not handle, other than one it sends itself, writes none, and a test that stops a Node process, as with `terminate()`, leaves that run out (Node's `src/node.cc`, checked 2026-11). c8 counts every line of a file as a statement, blank and comment lines included (v8-to-istanbul's `lib/source.js`, checked 2026-11), so the JavaScript report's statements are lines.
 
 `make preview` serves the tree for a look while editing (*Previewing pages*).
 

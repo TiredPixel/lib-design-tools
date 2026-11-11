@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Print a kcov Cobertura report as pytest-cov's term-missing report.
+"""Print a kcov or c8 Cobertura report as pytest-cov's term-missing report.
 
-kcov prints no per-file report to the terminal, so this reads the Cobertura one it
-writes and prints, on stdout, a header, one line per measured file, sorted by name, with
-its statements, misses, percentage covered and missing lines, and a TOTAL line. Each
-file is named by its ``filename`` joined to the report's one ``<source>``, relative to
-``ROOT`` where it lies inside it. A line counts as covered where any of its entries has
-a hit. Missing lines run together into a range wherever no covered statement lies
-between them, and a percentage rounds to neither 0 nor 100 unless it is exactly that, as
-coverage.py's do.
+Neither kcov nor c8 prints a per-file report in pytest-cov's form, so this reads the
+Cobertura one either writes and prints, on stdout, a header, one line per measured file,
+sorted by name, with its statements, misses, percentage covered and missing lines, and a
+TOTAL line. Each file is named by its ``filename`` joined to the report's one
+``<source>``, relative to ``ROOT`` where it lies inside it. A statement is a ``<line>``
+in a ``<class>``'s own ``<lines>``, not one under ``<methods>``, where c8's report,
+istanbul's, also gives the line each function is declared on, a line that need not be a
+statement. A line counts as covered where any of its entries has a hit. Missing lines
+run together into a range wherever no covered statement lies between them, and a
+percentage rounds to neither 0 nor 100 unless it is exactly that, as coverage.py's do.
 
-Exit status: 0 when the report is printed, 1 when the file cannot be read, is not a kcov
-Cobertura report or measures no file, and 2 on a usage error.
+Exit status: 0 when the report is printed, 1 when the file cannot be read, is not a
+Cobertura report this reads or measures no file, and 2 on a usage error.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ HEADER = ("Name", "Stmts", "Miss", "Cover", "Missing")
 
 
 class ReportError(Exception):
-    """The file is not a kcov Cobertura report this tool can read."""
+    """The file is not a Cobertura report this tool can read."""
 
 
 def read_lines(
@@ -55,7 +57,7 @@ def read_lines(
         if not filename:
             raise ReportError(f"<class name={class_.get('name')!r}> has no filename")
         lines = files.setdefault(filename, {})
-        for line in class_.iter("line"):
+        for line in class_.findall("lines/line"):
             try:
                 number = int(line.get("number", ""))
                 hits = int(line.get("hits", ""))
@@ -153,10 +155,16 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         formatter_class=design_render.UsageFormatter,
         prog="kcov-report",
-        description="Print a kcov Cobertura report as a term-missing summary.",
+        description=(
+            "Print a Cobertura report, as kcov or c8 writes one, as a term-missing"
+            " summary."
+        ),
     )
     parser.add_argument(
-        "report", type=pathlib.Path, metavar="COBERTURA_XML", help="kcov's report"
+        "report",
+        type=pathlib.Path,
+        metavar="COBERTURA_XML",
+        help="kcov's or c8's report",
     )
     parser.add_argument(
         "root",

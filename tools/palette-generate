@@ -9,10 +9,11 @@
 # and list items numbered from 1, in the YAML's order. A leaf with no value, as
 # an unquoted colour gives, fails the run, as does any other string starting
 # with #. Two leaves that would share a name fail the run, as does a YAML
-# holding no colour at all, and so does a name holding anything but ASCII
-# letters and digits, hyphens and non-ASCII characters, since CSS would not read
-# it as one name. Nothing in either output depends on the clock or the
-# environment, so a rerun on an unchanged YAML changes nothing.
+# holding no colour at all or whose top level is not a mapping, and so does a
+# name holding anything but ASCII letters and digits, hyphens and non-ASCII
+# characters, since CSS would not read it as one name. Nothing in either output
+# depends on the clock or the environment, so a rerun on an unchanged YAML
+# changes nothing.
 #
 # --check writes nothing: it generates into a temporary directory and fails,
 # with a diff, where either output differs from what is on disk.
@@ -80,6 +81,17 @@ fi
 
 out=$(mktemp -d)
 trap 'rm -rf -- "$out"' EXIT
+
+# The JSON below adds a $comment key to the top level, which yq does only to a
+# mapping, failing with no word of the file on anything else. A file holding
+# nothing, or only comments, reads as null. The kind, not the tag, is tested, so
+# a mapping given a tag of its own still passes. yq prints a line per document,
+# and of the kinds, map, seq, scalar and alias, only map starts with m.
+top=$(yq 'kind + " " + tag' "$yaml")
+case $'\n'$top in
+$'\nscalar !!null') die "$yaml holds no colour" ;;
+*$'\n'[!m]*) die "$yaml: the top level is not a mapping" ;;
+esac
 
 colour='^#([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$'
 notice="Generated from $yaml, in its key order: edit that file, never this one."

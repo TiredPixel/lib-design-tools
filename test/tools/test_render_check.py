@@ -802,9 +802,9 @@ class RenderCheckTest(TempDirTestCase):
                 *("--root", root, "--chromium", chromium, str(page)),
                 *("--error-marker", "div"),
             ],
-            "must be positive": [
+            "must be positive and finite": [
                 *("--root", root, "--chromium", chromium, str(page)),
-                *("--budget-ms", "0"),
+                *("--timeout-s", "nan"),
             ],
             "is not a directory": [
                 *("--root", root, "--chromium", chromium, str(page)),
@@ -827,6 +827,27 @@ class RenderCheckTest(TempDirTestCase):
         for message, arguments in cases.items():
             with self.subTest(message=message):
                 self.assertIn(message, self.run_usage_error(*arguments))
+
+    def test_limits_that_are_not_positive_and_finite_are_usage_errors(self) -> None:
+        page = self.write("a.html", "<p>a</p>")
+        chromium = self.printing_chromium(CLEAN_DOM)
+        for option in (
+            "--budget-ms=0",
+            "--budget-ms=-1",
+            "--timeout-s=0",
+            "--timeout-s=-0.5",
+            "--timeout-s=nan",
+            "--timeout-s=inf",
+            "--timeout-s=-inf",
+        ):
+            with self.subTest(option=option):
+                self.assertIn(
+                    "--budget-ms and --timeout-s must be positive and finite",
+                    self.run_usage_error(
+                        *("--root", str(self.root), "--chromium", chromium),
+                        *(option, str(page)),
+                    ),
+                )
 
     def test_help_opens_with_usage(self) -> None:
         stdout = io.StringIO()

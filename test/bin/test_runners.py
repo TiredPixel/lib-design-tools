@@ -3,9 +3,11 @@
 They run from the root of a fabricated repository whose bin/ links to them.
 """
 
+import json
 import os
 import pathlib
 import re
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -17,6 +19,11 @@ import urllib.request
 import temp_tree
 
 BIN = pathlib.Path(__file__).resolve().parents[2] / "bin"
+
+# The runners a repository links, and with bin/runner, which they source, what a
+# copy of this repository's bin/ needs.
+LINKED_RUNNERS = ("format", "lint", "test", "coverage", "preview")
+RUNNERS = (*LINKED_RUNNERS, "runner")
 
 # A generous bound on any one child process, so a hang fails its test rather than
 # stalling a worker; not a measure of how long anything should take.
@@ -33,6 +40,13 @@ FORMATTED_MARKDOWN = (
 )
 UNFORMATTED_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>\n'
 FORMATTED_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0" /></svg>\n'
+# Laid out as an office application might write a part, which no formatter would
+# leave alone: CRLF, a doubled space, single quotes and no final newline.
+OOXML_PART = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+    "<w:document xmlns:w=\"u\"  w:a='1'><w:body/></w:document>"
+)
+MALFORMED_XML = "<a><b></a>\n"
 UNFORMATTED_DOCKERFILE = "from debian:13\nrun true"
 FORMATTED_DOCKERFILE = "FROM debian:13\nRUN true\n"
 VALID_COMPOSE = "services:\n  a:\n    image: debian\n"
@@ -60,12 +74,19 @@ SKIPPING_TEST = (
 )
 
 
-# Set by bin/coverage, for its own pytest and the shell kcov traces, and dropped for
-# each runner run here. A nested pytest would take the options and write into the same
-# data; and the trace descriptor BASH_XTRACEFD names is not open here, since xdist
-# starts its workers without it, so a bash given BASH_ENV and BASH_XTRACEFD would write
-# its trace, and a complaint, into the output tested.
-COVERAGE_ENVIRONMENT = ("BASH_ENV", "BASH_XTRACEFD", "PYTEST_ADDOPTS")
+# Set by bin/coverage and bin/test, for their own pytest, the shell kcov traces and the
+# Node under the tests, and dropped for each runner run here. A nested pytest would take
+# the options and write into the same data, and a nested Node would write into the
+# run's own V8 data; and the trace descriptor BASH_XTRACEFD names is not open here,
+# since xdist starts its workers without it, so a bash given BASH_ENV and BASH_XTRACEFD
+# would write its trace, and a complaint, into the output tested.
+COVERAGE_ENVIRONMENT = (
+    "BASH_ENV",
+    "BASH_XTRACEFD",
+    "DESIGN_TOOLS_NODE_V8_COVERAGE",
+    "NODE_V8_COVERAGE",
+    "PYTEST_ADDOPTS",
+)
 
 
 def child_environment(dropping=COVERAGE_ENVIRONMENT):
@@ -81,7 +102,7 @@ class Repository(temp_tree.TempTreeTestCase):
     def setUp(self):
         super().setUp()
         (self.root / "bin").mkdir()
-        for runner in ("format", "lint", "test", "coverage", "preview"):
+        for runner in LINKED_RUNNERS:
             (self.root / "bin" / runner).symlink_to(BIN / runner)
 
     def write(self, name, text):
@@ -130,6 +151,7 @@ class PassSelectionTest(Repository):
         self.write(".env.example", "# B=1\n# A=1\n")
         self.write("script.sh", "#!/bin/bash\necho $1\n")
         self.write("a.yml", UNSORTED_YAML)
+        self.write("a.xml", MALFORMED_XML)
         self.write("test/test_a.py", SKIPPING_TEST)
         for runner in ("format", "lint", "test"):
             with self.subTest(runner=runner):
@@ -222,10 +244,12 @@ class PassSelectionTest(Repository):
         self.write("Makefile", VALID_MAKEFILE)
         self.write("a.svg", FORMATTED_SVG)
         self.write("b.yml", UNSORTED_YAML)
+        self.write("c.xml", OOXML_PART)
         # Each case gives the kind the passes name, and whether bin/format has a pass.
         cases = (
             ("svg_files", "a.svg", "SVG", True),
             ("yaml_lint_files", "b.yml", "lint-only YAML", False),
+            ("xml_lint_files", "c.xml", "lint-only XML", False),
             ("md_files", "a.md", "Markdown", True),
             ("toml_files", "a.toml", "TOML", True),
             ("dotenv_files", "a.env", "dotenv", True),
@@ -469,11 +493,33 @@ class FormatThenLintTest(Repository):
         self.assertEqual(self.runner_lines(result), [checking])
         self.write("p.yml", 'a: "#FFFFFF"\n')
         result = self.run_bin("lint")
-        self.assertFails(result, "lint: generated palette files are stale")
-        self.assertEqual(
-            self.runner_lines(result),
-            [checking, "lint: generated palette files are stale"],
+        self.assertFails(
+            result, "palette-generate: p.json or p.css is stale against p.yml"
         )
+        self.assertEqual(self.runner_lines(result), [checking])
+
+    def test_palette_lint_passes_palette_generate_s_own_failure(self):
+        # Neither is staleness, so lint adds no word of its own to the tool's.
+        for args, status, message in (
+            (
+                "gone.yml --prefix x --json p.json --css p.css",
+                1,
+                "palette-generate: gone.yml: no such file",
+            ),
+            ("p.yml --bogus", 2, "Usage: palette-generate"),
+        ):
+            with self.subTest(args=args):
+                self.settings(f"function palette_args {{ printf '%s\\0' {args}; }}\n")
+                result = self.run_bin("lint")
+                self.assertEqual(
+                    result.returncode, status, result.stdout + result.stderr
+                )
+                self.assertIn(message, result.stderr)
+                self.assertNotIn("stale", result.stderr)
+                self.assertEqual(
+                    self.runner_lines(result),
+                    ["lint: running palette-generate --check"],
+                )
 
 
 class FormatCarriesOnTest(Repository):
@@ -519,6 +565,10 @@ class FormatCarriesOnTest(Repository):
         # Each set names a file its tool fails on, or one that is missing, where before
         # is None. after is what the file holds once the run is over, and kind what the
         # pass says it formats, None for the palette, which counts no files.
+        #
+        # dotenv-linter's fix fails only where it cannot write a fix back, skipping a
+        # missing file and leaving a finding it cannot fix, so its file has a fixable
+        # finding and is made read-only, which the suite's uid, not root's, respects.
         cases = (
             (
                 "palette_args",
@@ -536,6 +586,7 @@ class FormatCarriesOnTest(Repository):
             ("svg_files", "a.svg", "<svg><path\n", "<svg><path\n", "SVG"),
             ("md_files", "gone.md", None, None, "Markdown"),
             ("toml_files", "a.toml", "a =\n", "a =\n", "TOML"),
+            ("dotenv_files", "a.env", "a=1\n", "a=1\n", "dotenv"),
         )
         for name, args, before, after, kind in cases:
             announcement = (
@@ -549,7 +600,9 @@ class FormatCarriesOnTest(Repository):
                     "function docker_files { printf '%s\\0' Dockerfile; }\n"
                 )
                 if before is not None:
-                    self.write(args, before)
+                    path = self.write(args, before)
+                    if name == "dotenv_files":
+                        path.chmod(0o444)
                 self.write("Dockerfile", UNFORMATTED_DOCKERFILE)
                 result = self.run_bin("format")
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -740,6 +793,42 @@ class CheckingPassTest(Repository):
             ".yamllint.yaml", "---\nextends: default\nrules:\n  truthy: disable\n"
         )
         self.assertPasses(self.run_bin("lint"))
+
+    def test_lint_only_xml_is_checked_and_never_rewritten(self):
+        self.settings("function xml_lint_files { printf '%s\\0' a.xml; }\n")
+        for text, message in (
+            (OOXML_PART, None),
+            (MALFORMED_XML, "a.xml:1:8: mismatched tag"),
+            ('<a xmlns:x="u"><y:b/></a>\n', "a.xml:1:15: unbound prefix"),
+        ):
+            with self.subTest(message=message):
+                self.write("a.xml", text)
+                result = self.run_bin("lint")
+                if message is None:
+                    self.assertPasses(result)
+                else:
+                    self.assertFails(result, message)
+                self.assertEqual(
+                    self.runner_lines(result),
+                    ["lint: checking 1 lint-only XML file(s)"],
+                )
+                result = self.run_bin("format")
+                self.assertPasses(result)
+                self.assertEqual(self.runner_lines(result), [])
+                # As bytes, since reading text would fold the CRLF.
+                self.assertEqual(
+                    (self.root / "a.xml").read_bytes(), text.encode("utf-8")
+                )
+
+    def test_lint_only_xml_reports_every_failing_file(self):
+        self.settings("function xml_lint_files { printf '%s\\0' a.xml b.xml c.xml; }\n")
+        self.write("a.xml", MALFORMED_XML)
+        self.write("b.xml", OOXML_PART)
+        self.write("c.xml", "<a>\n")
+        result = self.run_bin("lint")
+        self.assertFails(result, "a.xml:1:8: mismatched tag")
+        self.assertIn("c.xml:2:0: no element found", result.stdout + result.stderr)
+        self.assertNotIn("b.xml", result.stdout + result.stderr)
 
     def test_hadolint(self):
         self.settings("function docker_files { printf '%s\\0' Dockerfile; }\n")
@@ -955,6 +1044,20 @@ class GateTest(Repository):
                 self.assertPasses(result)
                 self.assertIn("1 passed", result.stdout)
 
+    def test_a_whole_worker_count_reaches_pytest_unchanged(self):
+        self.settings("function pytest_args { :; }\n")
+        self.write(
+            "test/test_a.py",
+            "import os\nimport unittest\n\n\nclass A(unittest.TestCase):\n"
+            "    def test_a(self):\n"
+            "        count = os.environ['PYTEST_XDIST_AUTO_NUM_WORKERS']\n"
+            "        self.assertEqual(count, '12')\n",
+        )
+        result = self.run_bin("test", env={"PYTEST_XDIST_AUTO_NUM_WORKERS": "12"})
+        self.assertPasses(result)
+        self.assertEqual(self.runner_lines(result), ["test: running pytest"])
+        self.assertIn("1 passed", result.stdout)
+
 
 class CoverageTest(Repository):
     # A test that runs the repository's own shell with kcov's trace descriptor, which
@@ -970,6 +1073,77 @@ class CoverageTest(Repository):
                 trace = int(os.environ["BASH_XTRACEFD"])
                 subprocess.run(["bin/hello"], pass_fds=(trace,), check=True)
     """
+
+    # TRACING_TEST for each of SCRIPTS.
+    TRACING_EACH_TEST = """
+        import os
+        import subprocess
+        import unittest
+
+
+        class A(unittest.TestCase):
+            def test_a(self):
+                trace = int(os.environ["BASH_XTRACEFD"])
+                for script in SCRIPTS:
+                    subprocess.run([script], pass_fds=(trace,), check=True)
+    """
+
+    # TRACING_TEST, then each of COMMANDS from the root, as a test runs a build, then
+    # passing where PASSES holds.
+    NODE_TEST = """
+        import os
+        import subprocess
+        import unittest
+
+
+        class A(unittest.TestCase):
+            def test_a(self):
+                trace = int(os.environ["BASH_XTRACEFD"])
+                subprocess.run(["bin/hello"], pass_fds=(trace,), check=True)
+                for command in COMMANDS:
+                    subprocess.run(command, check=True)
+                self.assertTrue(PASSES)
+    """
+
+    # Each branch on lines of its own, so the one not taken shows as missing.
+    BUILD_MJS = """
+        if (process.argv[2] === 'a') {
+          console.log('a');
+        } else {
+          console.log('b');
+        }
+    """
+
+    # The runner's lines up to the shell report, with which NODE_TEST's run ends where
+    # it prints no JavaScript report.
+    SHELL_LINES = (
+        "coverage: running bin/test under kcov",
+        "test: running pytest",
+        "coverage: reporting the shell's coverage",
+    )
+
+    # Settings a repository's own c8 configuration might give, as JSON, each of which
+    # would change the report, or fail the run, were c8 to take it.
+    C8_SETTINGS = json.dumps(
+        {
+            "100": True,
+            "all": True,
+            "check-coverage": True,
+            "exclude": ["build.mjs"],
+            "extension": [".cjs"],
+            "include": ["nothing/**"],
+            "lines": 100,
+            "reporter": ["text"],
+            "reporter-options": {
+                "cobertura": {"file": "other.xml", "projectRoot": "/"}
+            },
+            "reports-dir": "coverage",
+            "skip-full": True,
+        }
+    )
+
+    # bin/coverage's directory for the V8 data, which it gives bin/test.
+    NODE_DATA = "DESIGN_TOOLS_NODE_V8_COVERAGE"
 
     def setUp(self):
         super().setUp()
@@ -1007,6 +1181,20 @@ class CoverageTest(Repository):
             with self.subTest(pattern=pattern):
                 self.assertRegex(output, re.compile(pattern, re.MULTILINE))
 
+    def last_report(self, output, count):
+        """The last report, once count of them are printed."""
+        headers = list(re.finditer(r"(?m)^Name +Stmts +Miss +Cover +Missing", output))
+        self.assertEqual(len(headers), count, output)
+        return output[headers[-1].start() :]
+
+    def shell_report(self, output):
+        """The shell's report, which kcov-report prints after pytest-cov's."""
+        return self.last_report(output, 2)
+
+    def javascript_report(self, output):
+        """The JavaScript's report, which kcov-report prints after the shell's."""
+        return self.last_report(output, 3)
+
     def test_prints_both_reports_of_the_repository_s_own_files(self):
         self.settings("function pytest_args { :; }\n")
         self.write("test/test_a.py", self.TRACING_TEST)
@@ -1029,8 +1217,92 @@ class CoverageTest(Repository):
             r"^bin/hello +1 +0 +100%$",
         )
         self.assertEqual(result.stdout.count("\nTOTAL "), 2)
-        # This repository's runners, which a linking repository does not own.
-        self.assertNotIn(str(BIN), result.stdout)
+        self.assertLeavesNothing(before)
+
+    def copy_design_tools(self, to):
+        """This repository's runners and tools, copied, so they lie under the root.
+
+        Linked, they would lie outside it, where --include-path drops them anyway.
+        """
+        (self.root / to / "bin").mkdir(parents=True, exist_ok=True)
+        for runner in RUNNERS:
+            path = self.root / to / "bin" / runner
+            path.unlink(missing_ok=True)
+            shutil.copy2(BIN / runner, path)
+        shutil.copytree(
+            BIN.parent / "tools",
+            self.root / to / "tools",
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
+
+    def test_leaves_a_linked_copy_out_of_the_shell_report(self):
+        # Physical, as bash's $PWD is once a child starts in it, so the copy's path
+        # bin/runner resolves lies under the root kcov is given.
+        self.root = pathlib.Path(os.path.realpath(self.root))
+        self.copy_design_tools("lib/design-tools")
+        for runner in LINKED_RUNNERS:
+            (self.root / "bin" / runner).unlink()
+            (self.root / "bin" / runner).symlink_to(f"../lib/design-tools/bin/{runner}")
+        self.settings("function pytest_args { :; }\n")
+        self.write(
+            "test/test_a.py",
+            self.TRACING_EACH_TEST.replace(
+                "SCRIPTS", repr(("bin/hello", "lib/other/greet"))
+            ),
+        )
+        self.write("bin/hello", "#!/usr/bin/env bash\necho hello\n").chmod(0o755)
+        # Its command on line 3: kcov drops a hit whose line number is the last hit's,
+        # as the second of two scripts alike gives it.
+        other = self.write("lib/other/greet", "#!/usr/bin/env bash\n\necho hello\n")
+        other.chmod(0o755)
+        before = self.tree()
+        result = self.run_coverage("test/test_a.py")
+        self.assertPasses(result)
+        self.assertEqual(
+            self.runner_lines(result),
+            [
+                "coverage: running bin/test under kcov",
+                "test: running pytest",
+                "coverage: reporting the shell's coverage",
+            ],
+        )
+        shell = self.shell_report(result.stdout)
+        self.assertReports(
+            shell,
+            r"^bin/hello +1 +0 +100%$",
+            # Under lib/, yet the repository's own: only the copy is left out.
+            r"^lib/other/greet +1 +0 +100%$",
+        )
+        # The copy's bin/test and bin/runner, which kcov traced.
+        self.assertNotIn("lib/design-tools", shell)
+        self.assertLeavesNothing(before)
+
+    def test_in_this_repository_leaves_only_its_submodules_out_of_the_shell_report(
+        self,
+    ):
+        # Physical, so the runners' own root, which they resolve, is $PWD.
+        self.root = pathlib.Path(os.path.realpath(self.root))
+        self.copy_design_tools(".")
+        self.write("lib/sub/hello", "#!/usr/bin/env bash\necho hello\n").chmod(0o755)
+        self.settings("function pytest_args { :; }\n")
+        self.write(
+            "test/test_a.py",
+            self.TRACING_EACH_TEST.replace(
+                "SCRIPTS", repr(("bin/hello", "lib/sub/hello"))
+            ),
+        )
+        self.write("bin/hello", "#!/usr/bin/env bash\necho hello\n").chmod(0o755)
+        before = self.tree()
+        result = self.run_coverage("test/test_a.py")
+        self.assertPasses(result)
+        shell = self.shell_report(result.stdout)
+        self.assertReports(
+            shell,
+            r"^bin/hello +1 +0 +100%$",
+            # The runners are this repository's own here.
+            r"^bin/test +\d+ +\d+ +\d+%",
+        )
+        self.assertNotIn("lib/sub", shell)
         self.assertLeavesNothing(before)
 
     def test_without_pytest_args_prints_only_the_shell_report(self):
@@ -1081,6 +1353,163 @@ class CoverageTest(Repository):
         self.settings("")
         self.write("test/test_a.py", PASSING_TEST)
         self.assertFails(self.run_coverage("test/test_a.py"), "pytest_args is not set")
+
+    def write_node_test(self, *commands, passes=True):
+        self.settings("function pytest_args { :; }\n")
+        self.write("bin/hello", "#!/usr/bin/env bash\necho hello\n").chmod(0o755)
+        self.write(
+            "test/test_a.py",
+            self.NODE_TEST.replace("COMMANDS", repr(commands)).replace(
+                "PASSES", repr(passes)
+            ),
+        )
+
+    def assertReportsBuild(self, result):
+        self.assertPasses(result)
+        self.assertEqual(
+            self.runner_lines(result),
+            [*self.SHELL_LINES, "coverage: reporting the JavaScript's coverage"],
+        )
+        # Five lines, the else branch's among those missed.
+        self.assertReports(
+            self.javascript_report(result.stdout), r"^build\.mjs +5 +[1-9] +\d+% +\d"
+        )
+        self.assertEqual(result.stdout.count("\nTOTAL "), 3)
+
+    def assertNoJavaScriptReport(self, result):
+        self.assertPasses(result)
+        self.assertEqual(self.runner_lines(result), list(self.SHELL_LINES))
+        self.assertNotIn("JavaScript", result.stderr)
+        self.shell_report(result.stdout)
+        self.assertEqual(result.stdout.count("\nTOTAL "), 2)
+
+    def test_prints_the_javascript_report_of_a_script_the_tests_run(self):
+        self.write_node_test(["node", "build.mjs", "a"])
+        self.write("build.mjs", self.BUILD_MJS)
+        before = self.tree()
+        result = self.run_coverage("test/test_a.py")
+        self.assertReportsBuild(result)
+        self.assertLeavesNothing(before)
+
+    def test_reports_a_node_command_with_no_extension(self):
+        # As the commands in tools/ are named.
+        self.write_node_test(["tools/build"])
+        build = self.write(
+            "tools/build", "#!/usr/bin/env node\nconsole.log('built');\n"
+        )
+        build.chmod(0o755)
+        before = self.tree()
+        result = self.run_coverage("test/test_a.py")
+        self.assertPasses(result)
+        self.assertEqual(
+            self.runner_lines(result),
+            [*self.SHELL_LINES, "coverage: reporting the JavaScript's coverage"],
+        )
+        self.assertReports(
+            self.javascript_report(result.stdout), r"^tools/build +2 +0 +100%$"
+        )
+        self.assertLeavesNothing(before)
+
+    def test_prints_no_javascript_report_where_no_node_ran(self):
+        self.write_node_test()
+        before = self.tree()
+        result = self.run_coverage("test/test_a.py")
+        self.assertNoJavaScriptReport(result)
+        self.assertLeavesNothing(before)
+
+    def test_prints_no_javascript_report_where_node_ran_only_code_outside_the_root(
+        self,
+    ):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        outside = pathlib.Path(directory.name) / "outside.mjs"
+        outside.write_text("console.log('outside');\n")
+        # An evaluated script and Node's own modules lie in no file under the root
+        # either.
+        self.write_node_test(
+            ["node", str(outside)], ["node", "-e", "require('node:path')"]
+        )
+        before = self.tree()
+        result = self.run_coverage("test/test_a.py")
+        self.assertNoJavaScriptReport(result)
+        self.assertLeavesNothing(before)
+
+    def test_leaves_the_lint_s_node_out_of_the_javascript_report(self):
+        # Prettier loads its configuration, under the root, into the Node it runs.
+        self.write_node_test(["node", "build.mjs", "a"])
+        self.settings(
+            "function pytest_args { :; }\n"
+            "function css_files { printf '%s\\0' a.css; }\n"
+        )
+        self.write("build.mjs", self.BUILD_MJS)
+        self.write("a.css", "a {\n  color: red;\n}\n")
+        self.write("prettier.config.mjs", "export default {};\n")
+        before = self.tree()
+        result = self.run_coverage()
+        self.assertPasses(result)
+        self.assertIn("lint: checking 1 CSS and HTML file(s)", result.stderr)
+        self.assertIn("coverage: reporting the JavaScript's coverage", result.stderr)
+        report = self.javascript_report(result.stdout)
+        self.assertReports(report, r"^build\.mjs ")
+        self.assertNotIn("prettier.config.mjs", report)
+        self.assertLeavesNothing(before)
+
+    def test_a_failing_test_prints_no_javascript_report(self):
+        self.write_node_test(["node", "build.mjs", "a"], passes=False)
+        self.write("build.mjs", self.BUILD_MJS)
+        before = self.tree()
+        result = self.run_coverage("test/test_a.py")
+        self.assertFails(result, "1 failed")
+        self.assertNotIn("JavaScript", result.stderr)
+        self.assertLeavesNothing(before)
+
+    def test_a_repository_s_own_c8_settings_change_nothing(self):
+        self.write_node_test(["node", "build.mjs", "a"])
+        self.write("build.mjs", self.BUILD_MJS)
+        for name, text in (
+            (".c8rc", self.C8_SETTINGS),
+            ("package.json", f'{{"c8": {self.C8_SETTINGS}}}'),
+            # Not JSON, so c8 would fail the run were it to read the file at all.
+            (".nycrc", "{\n"),
+        ):
+            with self.subTest(name=name):
+                self.write(name, text)
+                self.addCleanup((self.root / name).unlink, missing_ok=True)
+                before = self.tree()
+                result = self.run_coverage("test/test_a.py")
+                self.assertReportsBuild(result)
+                self.assertLeavesNothing(before)
+                (self.root / name).unlink()
+
+    def test_bin_test_alone_sets_no_node_coverage(self):
+        self.settings("function pytest_args { :; }\n")
+        self.write(
+            "test/test_a.py",
+            "import os\nimport unittest\n\n\nclass A(unittest.TestCase):\n"
+            "    def test_a(self):\n"
+            "        self.assertNotIn('NODE_V8_COVERAGE', os.environ)\n",
+        )
+        # Empty, bin/coverage's variable is taken as unset.
+        for name, env in (("unset", None), ("empty", {self.NODE_DATA: ""})):
+            with self.subTest(name):
+                result = self.run_bin("test", env=env)
+                self.assertPasses(result)
+                self.assertIn("1 passed", result.stdout)
+
+    def test_bin_test_sets_node_coverage_for_pytest_from_bin_coverage_s_variable(
+        self,
+    ):
+        self.settings("function pytest_args { :; }\n")
+        data = str(self.tmp / "js.data")
+        self.write(
+            "test/test_a.py",
+            "import os\nimport unittest\n\n\nclass A(unittest.TestCase):\n"
+            "    def test_a(self):\n"
+            f"        self.assertEqual(os.environ['NODE_V8_COVERAGE'], {data!r})\n",
+        )
+        result = self.run_bin("test", env={self.NODE_DATA: data})
+        self.assertPasses(result)
+        self.assertIn("1 passed", result.stdout)
 
 
 class PreviewTest(Repository):

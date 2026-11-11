@@ -25,6 +25,7 @@ jobs:
       # Minted here, in the workflow only a person may change, by an action
       # pinned by full SHA, so the key never leaves the workflow.
       - id: token
+        name: Mint review app token
         # The action's name and a full commit SHA leave no way to break the
         # line.
         # yamllint disable-line rule:line-length

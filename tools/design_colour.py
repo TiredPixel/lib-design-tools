@@ -13,15 +13,22 @@ from collections.abc import Iterable
 
 _HEX = re.compile(r"#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})")
 
-# The CIE standard illuminant D65 white point, Y normalised to 1.
-D65 = (0.95047, 1.0, 1.08883)
-
-# Linear sRGB to CIE XYZ, derived from the IEC 61966-2-1 primaries and D65 above.
+# Linear sRGB to CIE XYZ, derived from the IEC 61966-2-1 primaries and D65.
 SRGB_TO_XYZ = (
     (0.4124564, 0.3575761, 0.1804375),
     (0.2126729, 0.7151522, 0.0721750),
     (0.0193339, 0.1191920, 0.9503041),
 )
+
+# The CIE standard illuminant D65 white point, as the matrix above maps sRGB white, so
+# that white is L* 100 and every grey has a* and b* of 0. The matrix's rounding puts
+# its Y at 1.0000001, so the quoted (0.95047, 1, 1.08883) would give greys a hue.
+D65 = tuple(sum(row) for row in SRGB_TO_XYZ)
+
+# The chroma below which a colour counts as achromatic. A grey's a* and b* come out
+# within float error of 0, under 1e-13; any other 8-bit colour has a chroma of over
+# 0.2.
+ACHROMATIC_CHROMA = 1e-9
 
 
 def channels(hex_colour: str) -> tuple[int, int, int]:
@@ -96,8 +103,13 @@ def chroma(hex_colour: str) -> float:
 
 
 def hue(hex_colour: str) -> float:
-    """CIELAB h(ab), in degrees from 0 up to, not including, 360."""
+    """CIELAB h(ab), in degrees from 0 up to, not including, 360.
+
+    ValueError for an achromatic colour, a grey, black or white, which has no hue.
+    """
     _, a, b = lab(hex_colour)
+    if math.hypot(a, b) < ACHROMATIC_CHROMA:
+        raise ValueError(f"{hex_colour} is achromatic, so has no hue")
     return math.degrees(math.atan2(b, a)) % 360
 
 
@@ -115,7 +127,8 @@ def hue_gap(a: float, b: float) -> float:
 def hue_spread(colours: Iterable[str]) -> float:
     """The widest hue gap between any two of COLOURS.
 
-    ValueError for fewer than two.
+    ValueError for fewer than two, or for an achromatic colour, as ``hue`` gives: it has
+    no hue to measure a gap from, so a caller leaving greys out filters them first.
     """
     colours = list(colours)
     if len(colours) < 2:
@@ -125,6 +138,13 @@ def hue_spread(colours: Iterable[str]) -> float:
 
 
 def hue_between(middle: float, start: float, end: float) -> bool:
-    """Whether hue MIDDLE lies on the shorter arc from hue START to hue END."""
+    """Whether hue MIDDLE lies on the shorter arc from hue START to hue END.
+
+    ValueError where START and END are 180 degrees apart, since neither arc is the
+    shorter.
+    """
+    gap = hue_gap(start, end)
+    if math.isclose(gap, 180):
+        raise ValueError(f"hues {start} and {end} are opposite, so no arc is shorter")
     arc = hue_gap(start, middle) + hue_gap(middle, end)
-    return math.isclose(arc, hue_gap(start, end))
+    return math.isclose(arc, gap)
