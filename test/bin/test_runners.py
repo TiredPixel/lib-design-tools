@@ -6,6 +6,7 @@ They run from the root of a fabricated repository whose bin/ links to them.
 import os
 import pathlib
 import re
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -17,6 +18,11 @@ import urllib.request
 import temp_tree
 
 BIN = pathlib.Path(__file__).resolve().parents[2] / "bin"
+
+# The runners a repository links, and with bin/runner, which they source, what a
+# copy of this repository's bin/ needs.
+LINKED_RUNNERS = ("format", "lint", "test", "coverage", "preview")
+RUNNERS = (*LINKED_RUNNERS, "runner")
 
 # A generous bound on any one child process, so a hang fails its test rather than
 # stalling a worker; not a measure of how long anything should take.
@@ -81,7 +87,7 @@ class Repository(temp_tree.TempTreeTestCase):
     def setUp(self):
         super().setUp()
         (self.root / "bin").mkdir()
-        for runner in ("format", "lint", "test", "coverage", "preview"):
+        for runner in LINKED_RUNNERS:
             (self.root / "bin" / runner).symlink_to(BIN / runner)
 
     def write(self, name, text):
@@ -541,6 +547,10 @@ class FormatCarriesOnTest(Repository):
         # Each set names a file its tool fails on, or one that is missing, where before
         # is None. after is what the file holds once the run is over, and kind what the
         # pass says it formats, None for the palette, which counts no files.
+        #
+        # dotenv-linter's fix fails only where it cannot write a fix back, skipping a
+        # missing file and leaving a finding it cannot fix, so its file has a fixable
+        # finding and is made read-only, which the suite's uid, not root's, respects.
         cases = (
             (
                 "palette_args",
@@ -558,6 +568,7 @@ class FormatCarriesOnTest(Repository):
             ("svg_files", "a.svg", "<svg><path\n", "<svg><path\n", "SVG"),
             ("md_files", "gone.md", None, None, "Markdown"),
             ("toml_files", "a.toml", "a =\n", "a =\n", "TOML"),
+            ("dotenv_files", "a.env", "a=1\n", "a=1\n", "dotenv"),
         )
         for name, args, before, after, kind in cases:
             announcement = (
@@ -571,7 +582,9 @@ class FormatCarriesOnTest(Repository):
                     "function docker_files { printf '%s\\0' Dockerfile; }\n"
                 )
                 if before is not None:
-                    self.write(args, before)
+                    path = self.write(args, before)
+                    if name == "dotenv_files":
+                        path.chmod(0o444)
                 self.write("Dockerfile", UNFORMATTED_DOCKERFILE)
                 result = self.run_bin("format")
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -977,6 +990,20 @@ class GateTest(Repository):
                 self.assertPasses(result)
                 self.assertIn("1 passed", result.stdout)
 
+    def test_a_whole_worker_count_reaches_pytest_unchanged(self):
+        self.settings("function pytest_args { :; }\n")
+        self.write(
+            "test/test_a.py",
+            "import os\nimport unittest\n\n\nclass A(unittest.TestCase):\n"
+            "    def test_a(self):\n"
+            "        count = os.environ['PYTEST_XDIST_AUTO_NUM_WORKERS']\n"
+            "        self.assertEqual(count, '12')\n",
+        )
+        result = self.run_bin("test", env={"PYTEST_XDIST_AUTO_NUM_WORKERS": "12"})
+        self.assertPasses(result)
+        self.assertEqual(self.runner_lines(result), ["test: running pytest"])
+        self.assertIn("1 passed", result.stdout)
+
 
 class CoverageTest(Repository):
     # A test that runs the repository's own shell with kcov's trace descriptor, which
@@ -991,6 +1018,20 @@ class CoverageTest(Repository):
             def test_a(self):
                 trace = int(os.environ["BASH_XTRACEFD"])
                 subprocess.run(["bin/hello"], pass_fds=(trace,), check=True)
+    """
+
+    # TRACING_TEST for each of SCRIPTS.
+    TRACING_EACH_TEST = """
+        import os
+        import subprocess
+        import unittest
+
+
+        class A(unittest.TestCase):
+            def test_a(self):
+                trace = int(os.environ["BASH_XTRACEFD"])
+                for script in SCRIPTS:
+                    subprocess.run([script], pass_fds=(trace,), check=True)
     """
 
     def setUp(self):
@@ -1029,6 +1070,12 @@ class CoverageTest(Repository):
             with self.subTest(pattern=pattern):
                 self.assertRegex(output, re.compile(pattern, re.MULTILINE))
 
+    def shell_report(self, output):
+        """The shell's report, which kcov-report prints after pytest-cov's."""
+        headers = list(re.finditer(r"(?m)^Name +Stmts +Miss +Cover +Missing", output))
+        self.assertEqual(len(headers), 2, output)
+        return output[headers[-1].start() :]
+
     def test_prints_both_reports_of_the_repository_s_own_files(self):
         self.settings("function pytest_args { :; }\n")
         self.write("test/test_a.py", self.TRACING_TEST)
@@ -1051,8 +1098,92 @@ class CoverageTest(Repository):
             r"^bin/hello +1 +0 +100%$",
         )
         self.assertEqual(result.stdout.count("\nTOTAL "), 2)
-        # This repository's runners, which a linking repository does not own.
-        self.assertNotIn(str(BIN), result.stdout)
+        self.assertLeavesNothing(before)
+
+    def copy_design_tools(self, to):
+        """This repository's runners and tools, copied, so they lie under the root.
+
+        Linked, they would lie outside it, where --include-path drops them anyway.
+        """
+        (self.root / to / "bin").mkdir(parents=True, exist_ok=True)
+        for runner in RUNNERS:
+            path = self.root / to / "bin" / runner
+            path.unlink(missing_ok=True)
+            shutil.copy2(BIN / runner, path)
+        shutil.copytree(
+            BIN.parent / "tools",
+            self.root / to / "tools",
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
+
+    def test_leaves_a_linked_copy_out_of_the_shell_report(self):
+        # Physical, as bash's $PWD is once a child starts in it, so the copy's path
+        # bin/runner resolves lies under the root kcov is given.
+        self.root = pathlib.Path(os.path.realpath(self.root))
+        self.copy_design_tools("lib/design-tools")
+        for runner in LINKED_RUNNERS:
+            (self.root / "bin" / runner).unlink()
+            (self.root / "bin" / runner).symlink_to(f"../lib/design-tools/bin/{runner}")
+        self.settings("function pytest_args { :; }\n")
+        self.write(
+            "test/test_a.py",
+            self.TRACING_EACH_TEST.replace(
+                "SCRIPTS", repr(("bin/hello", "lib/other/greet"))
+            ),
+        )
+        self.write("bin/hello", "#!/usr/bin/env bash\necho hello\n").chmod(0o755)
+        # Its command on line 3: kcov drops a hit whose line number is the last hit's,
+        # as the second of two scripts alike gives it.
+        other = self.write("lib/other/greet", "#!/usr/bin/env bash\n\necho hello\n")
+        other.chmod(0o755)
+        before = self.tree()
+        result = self.run_coverage("test/test_a.py")
+        self.assertPasses(result)
+        self.assertEqual(
+            self.runner_lines(result),
+            [
+                "coverage: running bin/test under kcov",
+                "test: running pytest",
+                "coverage: reporting the shell's coverage",
+            ],
+        )
+        shell = self.shell_report(result.stdout)
+        self.assertReports(
+            shell,
+            r"^bin/hello +1 +0 +100%$",
+            # Under lib/, yet the repository's own: only the copy is left out.
+            r"^lib/other/greet +1 +0 +100%$",
+        )
+        # The copy's bin/test and bin/runner, which kcov traced.
+        self.assertNotIn("lib/design-tools", shell)
+        self.assertLeavesNothing(before)
+
+    def test_in_this_repository_leaves_only_its_submodules_out_of_the_shell_report(
+        self,
+    ):
+        # Physical, so the runners' own root, which they resolve, is $PWD.
+        self.root = pathlib.Path(os.path.realpath(self.root))
+        self.copy_design_tools(".")
+        self.write("lib/sub/hello", "#!/usr/bin/env bash\necho hello\n").chmod(0o755)
+        self.settings("function pytest_args { :; }\n")
+        self.write(
+            "test/test_a.py",
+            self.TRACING_EACH_TEST.replace(
+                "SCRIPTS", repr(("bin/hello", "lib/sub/hello"))
+            ),
+        )
+        self.write("bin/hello", "#!/usr/bin/env bash\necho hello\n").chmod(0o755)
+        before = self.tree()
+        result = self.run_coverage("test/test_a.py")
+        self.assertPasses(result)
+        shell = self.shell_report(result.stdout)
+        self.assertReports(
+            shell,
+            r"^bin/hello +1 +0 +100%$",
+            # The runners are this repository's own here.
+            r"^bin/test +\d+ +\d+ +\d+%",
+        )
+        self.assertNotIn("lib/sub", shell)
         self.assertLeavesNothing(before)
 
     def test_without_pytest_args_prints_only_the_shell_report(self):
