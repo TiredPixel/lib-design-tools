@@ -8,7 +8,7 @@ Working on this repository, or on one that takes it as a submodule, needs:
 
 - Docker Engine or Docker Desktop with Compose v2
 - `git` with submodule support
-- `make`
+- GNU `make` 3.82 or later
 - `bash` 4.4 or later
 
 Upgrading this repository's pins (*Upgrading the pins*) runs `docker/upgrade` on the host, so it also needs `curl`, `jq`, `sha256sum` and `timeout` there.
