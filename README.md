@@ -59,6 +59,42 @@ A repository leaves the link out of `docker_files`, since the file is not its ow
 
 The `wheels` and `dev` stages bind-mount `Dockerfile.lock` whole from the repository's tree wherever they read a lock, since through a link BuildKit resolves only the first path below it, so a linked lock builds as a copied one does, even with `dev` built alone. The test stage copies the whole tree. So the repository's `.dockerignore` keeps `.git`, `.env`, `tmp/` and anything local out of it, and must not exclude `Dockerfile.lock` or the submodule. Excluding every top-level dot path, `/.*`, and letting the repository's own dot files back in by name, such as `!/.github`, keeps a per-user directory such as `.claude` out without naming it. A submodule is a checkout too, with a `.env`, `tmp/` and Compose override of its own, so the same exclusions are repeated for each depth submodules sit at, as `/lib/*/.*`, `/lib/*/docker-compose.*.yml` and `/lib/*/tmp/`, and under `/lib/*/lib/*/` for this repository's own submodule.
 
+A repository's CI keeps a registry build cache of its own through the scripts in this repository's `lib/shell-common`. It names its own image in `.dockerrepo`, at its root, which the scripts read:
+
+```text
+ghcr.io/OWNER/NAME
+```
+
+Its `build` job holds `contents: read` and `packages: read`. After checking the repository out with its submodules, recursively, and logging in to the registry, it builds `dev` with `docker/build-dev-latest-nopush`, which pushes nothing, before `make build`, on the same daemon. The script takes layers from the branch's `.dev` image, and from `latest.dev`, which a push to a branch named `latest` writes:
+
+```yaml
+build:
+  permissions:
+    contents: read
+    packages: read
+  steps:
+    - name: Build dev
+      run: |
+        lib/design-tools/lib/shell-common/docker/build-dev-latest-nopush
+        make build
+```
+
+Its `cache` job runs only on a person's push to a branch, never an app's, whose tree would otherwise run with the job's write, and holds `packages: write`. After the same checkout and login, it builds `dev` with `docker/build-dev-latest`, which pushes it as the branch's `.dev` image:
+
+```yaml
+cache:
+  if: |-
+    github.event_name == 'push' && github.ref_type == 'branch' &&
+    github.event.sender.type == 'User'
+  permissions:
+    contents: read
+    packages: write
+  steps:
+    - name: Push dev
+      run: |
+        lib/design-tools/lib/shell-common/docker/build-dev-latest
+```
+
 ### Linking the runners
 
 `bin/format`, `bin/lint`, `bin/test`, `bin/coverage` and `bin/preview` run in the image, from the repository's root, and do only what the repository's own `bin/settings` names (*Configuring the passes*). A repository links the ones it uses; each finds this repository by resolving its link:
