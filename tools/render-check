@@ -13,6 +13,7 @@ when Chromium cannot be found.
 from __future__ import annotations
 
 import argparse
+import math
 import pathlib
 import shutil
 import sys
@@ -66,8 +67,9 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
             parser.error(str(error))
     else:
         arguments.marker_class = None
-    if arguments.budget_ms <= 0 or arguments.timeout_s <= 0:
-        parser.error("--budget-ms and --timeout-s must be positive")
+    # float() reads nan and inf, which no comparison with 0 refuses.
+    if arguments.budget_ms <= 0 or not 0 < arguments.timeout_s < math.inf:
+        parser.error("--budget-ms and --timeout-s must be positive and finite")
     if not arguments.root.is_dir():
         parser.error(f"--root {arguments.root} is not a directory")
     for path in arguments.files:
