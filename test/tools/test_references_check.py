@@ -83,6 +83,10 @@ class ClassifyTest(unittest.TestCase):
             "ftp://h/x": ("external", ""),
             "a%20b.css?v=2#frag": ("local", "a b.css"),
             "/root.css": ("local", "/root.css"),
+            "img\\x.png?a\\b": ("local", "img/x.png"),
+            "a%5Cb.png": ("local", "a\\b.png"),
+            "/\\cdn/x.js": ("external", ""),
+            "\\\\cdn\\x.js": ("external", ""),
         }
         for reference, expected in cases.items():
             with self.subTest(reference=reference):
@@ -287,9 +291,134 @@ class HtmlTest(ReferencesTestCase):
         markup = '<img alt="see src=below"\n  src="gone.png">\n'
         self.assertEqual(self.html_problems(markup), [(2, "gone.png does not exist")])
 
-    def test_attribute_line_of_a_repeated_attribute_is_the_last(self) -> None:
-        markup = '<img src="img/x.png"\n  src="gone.png">\n'
+    def test_attribute_line_of_a_repeated_attribute_is_the_first(self) -> None:
+        markup = '<img alt="a"\n  src="gone.png"\n  src="img/x.png">\n'
         self.assertEqual(self.html_problems(markup), [(2, "gone.png does not exist")])
+
+    def test_a_repeated_attribute_keeps_its_first_value(self) -> None:
+        self.assertEqual(self.html_problems('<img src="img/x.png" src="gone.png">'), [])
+        markup = (
+            '<script src="https://cdn/e.js" src="img/x.png"></script>\n'
+            '<script src="https://cdn/f.js" integrity="" integrity="sha384-abc"'
+            " crossorigin></script>\n"
+        )
+        self.assertEqual(
+            self.html_problems(markup, require_integrity=True),
+            [
+                (1, "external script https://cdn/e.js lacks integrity and crossorigin"),
+                (2, "external script https://cdn/f.js lacks integrity"),
+            ],
+        )
+        self.assertEqual(
+            self.html_problems(markup, no_external=True, require_integrity=True),
+            [
+                (1, "external https://cdn/e.js, which --no-external refuses"),
+                (2, "external https://cdn/f.js, which --no-external refuses"),
+            ],
+        )
+
+    def test_svg_references_are_read(self) -> None:
+        markup = (
+            '<svg><script href="gone-1.js"></script>\n'
+            '<script xlink:href="gone-2.js"></script>\n'
+            '<filter><feImage href="gone-3.png"/>\n'
+            '<feImage xlink:href="gone-4.png"/></filter>\n'
+            '<a xlink:href="gone-5.html">x</a>\n'
+            '<script href="/top.js"></script><feImage href="img/x.png"/></svg>\n'
+        )
+        self.assertEqual(
+            self.html_problems(markup),
+            [
+                (1, "gone-1.js does not exist"),
+                (2, "gone-2.js does not exist"),
+                (3, "gone-3.png does not exist"),
+                (4, "gone-4.png does not exist"),
+                (5, "gone-5.html does not exist"),
+            ],
+        )
+
+    def test_no_external_refuses_svg_loads_but_not_links(self) -> None:
+        markup = (
+            '<svg><script href="https://cdn/a.js"></script>\n'
+            '<script xlink:href="https://cdn/b.js"></script>\n'
+            '<feImage href="https://cdn/c.png"/>\n'
+            '<feImage xlink:href="https://cdn/d.png"/>\n'
+            '<a xlink:href="https://example.com/">x</a></svg>\n'
+        )
+        refused = "which --no-external refuses"
+        self.assertEqual(
+            self.html_problems(markup, no_external=True),
+            [
+                (1, f"external https://cdn/a.js, {refused}"),
+                (2, f"external https://cdn/b.js, {refused}"),
+                (3, f"external https://cdn/c.png, {refused}"),
+                (4, f"external https://cdn/d.png, {refused}"),
+            ],
+        )
+
+    def test_require_integrity_fails_every_external_svg_script(self) -> None:
+        markup = (
+            f'<svg><script href="https://cdn/a.js" {SRI}></script>\n'
+            '<script\n  xlink:href="//cdn/b.js"></script>\n'
+            '<script href="/top.js"></script>\n'
+            '<feImage href="https://cdn/c.png"/></svg>\n'
+        )
+        uncovered = "which no integrity covers"
+        self.assertEqual(
+            self.html_problems(markup, require_integrity=True),
+            [
+                (1, f"external script https://cdn/a.js loads by href, {uncovered}"),
+                (3, f"external script //cdn/b.js loads by xlink:href, {uncovered}"),
+            ],
+        )
+        # A load refused outright is not reported again for lacking integrity.
+        self.assertEqual(
+            self.html_problems(markup, no_external=True, require_integrity=True),
+            self.html_problems(markup, no_external=True),
+        )
+
+    def test_a_trailing_slash_on_a_file_fails(self) -> None:
+        markup = (
+            '<link rel="stylesheet" href="a.css/">\n'
+            '<a href="/site/a.css/">a</a>\n'
+            '<a href="a.css/.">b</a>\n'
+            '<a href="img/x.png/..">c</a>\n'
+            '<a href="dir/">d</a><a href="dir/.">e</a><a href="dir/a/..">f</a>\n'
+            '<a href="a.css">g</a><a href="a.css/?q">h</a>\n'
+        )
+        self.assertEqual(
+            self.html_problems(markup),
+            [
+                (1, "a.css/ ends in a slash, but is a file"),
+                (2, "/site/a.css/ ends in a slash, but is a file"),
+                (3, "a.css/. ends in a slash, but is a file"),
+                (4, "img/x.png/.. is a directory with no index.html or index.htm"),
+                (6, "a.css/ ends in a slash, but is a file"),
+            ],
+        )
+
+    def test_an_encoded_nul_does_not_resolve(self) -> None:
+        self.assertEqual(
+            self.html_problems(
+                '<img src="a%00b.png">\n<img src="gone.png">\n'
+                '<a href="../../x%00">a</a>\n'
+            ),
+            [
+                (1, "a%00b.png does not exist"),
+                (2, "gone.png does not exist"),
+                (3, "../../x%00 resolves outside --root"),
+            ],
+        )
+
+    def test_a_backslash_reads_as_a_slash(self) -> None:
+        self.assertEqual(
+            self.html_problems('<img src="img\\x.png">\n<img src="\\site\\gone.png">'),
+            [(2, "/site/gone.png does not exist")],
+        )
+        self.assertEqual(
+            self.html_problems('<img src="/\\cdn/x.png">', no_external=True),
+            [(1, "external /\\cdn/x.png, which --no-external refuses")],
+        )
 
     def test_base_element(self) -> None:
         problems = self.html_problems('<head><base href="/site/"></head>')
@@ -536,6 +665,25 @@ class CssTest(ReferencesTestCase):
             ],
         )
 
+    def test_a_namespace_url_is_no_reference(self) -> None:
+        css = (
+            "@namespace svg url(http://www.w3.org/2000/svg);\n"
+            '@namespace url("http://www.w3.org/1999/xhtml");\n'
+            "@NAMESPACE x 'https://cdn/x';\n"
+            "@namespace y url(gone-1.png); .a { background: url(https://cdn/y.png) }\n"
+            "@n\\61mespace z url( 'gone-2.png' ) { .b { mask: url(gone-3.png) } }\n"
+            "@media print { .c { background: url(gone-4.png) } }\n"
+            "@namespace url(gone-5.png)"
+        )
+        self.assertEqual(
+            self.css_problems(css, no_external=True),
+            [
+                (4, "external https://cdn/y.png, which --no-external refuses"),
+                (5, "gone-3.png does not exist"),
+                (6, "gone-4.png does not exist"),
+            ],
+        )
+
     def test_image_set_strings(self) -> None:
         css = (
             ".a { background: image-set('gone-1.png' 1x, \"img/x.png\" 2x) }\n"
@@ -771,9 +919,10 @@ class CssTest(ReferencesTestCase):
             self.css_problems('.a { background: url("gone.png\\'),
             [(1, "gone.png does not exist")],
         )
+        # The escaped backslash is kept, and read as a slash.
         self.assertEqual(
             self.css_problems('.a { background: url("img/x.png\\\\'),
-            [(1, "img/x.png\\ does not exist")],
+            [(1, "img/x.png/ ends in a slash, but is a file")],
         )
 
     def test_a_backslash_ending_an_unquoted_url_reads_as_replacement(self) -> None:
@@ -783,7 +932,7 @@ class CssTest(ReferencesTestCase):
         )
         self.assertEqual(
             self.css_problems(".a { background: url(gone\\\\\\"),
-            [(1, "gone\\\ufffd does not exist")],
+            [(1, "gone/\ufffd does not exist")],
         )
 
 
@@ -865,6 +1014,19 @@ class MainTest(ReferencesTestCase):
             result.stderr,
             f"{page}:1: gone.png does not exist\n"
             "references-check: checked 1 file(s): 1 problem(s)\n",
+        )
+
+    def test_an_encoded_nul_leaves_later_files_checked(self) -> None:
+        page = self.write("site/p.html", '<img src="a%00b.png">')
+        sheet = self.write("site/s.css", "a { b: url(gone%00.svg) }\na { b: url(c) }")
+        status, output = self.run_main("--root", str(self.root), str(page), str(sheet))
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            output,
+            f"{page}:1: a%00b.png does not exist\n"
+            f"{sheet}:1: gone%00.svg does not exist\n"
+            f"{sheet}:2: c does not exist\n"
+            "references-check: checked 2 file(s): 3 problem(s)\n",
         )
 
     def test_not_utf8(self) -> None:
@@ -1023,6 +1185,36 @@ class UnresolvedTest(ReferencesTestCase):
             "exemption\n"
             "references-check: --unresolved /site/empty matches no reference\n"
             "references-check: checked 1 file(s): 4 problem(s)\n",
+        )
+
+    def test_an_exemption_holding_an_encoded_nul(self) -> None:
+        page = self.write("site/p.html", '<a href="/es%00/">a</a>\n')
+        self.assertEqual(
+            self.run_exempt(["/es%00"], page),
+            (0, "references-check: checked 1 file(s): 0 problem(s)\n"),
+        )
+        self.assertEqual(
+            self.run_exempt(["/fr%00"], page),
+            (
+                1,
+                (
+                    f"{page}:1: /es%00/ does not exist\n"
+                    "references-check: --unresolved /fr%00 matches no reference\n"
+                    "references-check: checked 1 file(s): 2 problem(s)\n"
+                ),
+            ),
+        )
+        loading = self.write("site/q.html", '<img src="/es%00">\n')
+        self.assertEqual(
+            self.run_exempt(["/es%00"], loading),
+            (
+                1,
+                (
+                    f"{loading}:1: /es%00 is exempt by --unresolved but loads into"
+                    " the page\n"
+                    "references-check: checked 1 file(s): 1 problem(s)\n"
+                ),
+            ),
         )
 
     def test_an_exempt_directory_holding_only_index_htm_is_stale(self) -> None:

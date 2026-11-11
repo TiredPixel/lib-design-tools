@@ -6,7 +6,8 @@ HTML is read by element and attribute, never by pattern, so that a ``data-src`` 
 attributes read on each element, ``srcset`` and ``imagesrcset`` included, ``src`` on
 ``input`` only where it is an image, and ``content`` on ``meta`` only where it is a
 refresh. CSS, whether a stylesheet, a ``<style>`` element or a ``style`` attribute, is
-read for ``url(...)``, ``@import`` and each string in ``image-set()``. A relative
+read for ``url(...)``, ``@import`` and each string in ``image-set()``, but not for an
+``@namespace`` rule's URL, which names a namespace and is never fetched. A relative
 reference resolves against the referencing file and a ``/``-rooted one against
 ``--root``; neither may leave ``--root``, since nothing outside it is served. A
 directory resolves only where it holds an index page, so the page loads rather than a
@@ -14,9 +15,11 @@ listing.
 
 With ``--require-integrity``, every external stylesheet and script must also carry
 ``integrity`` and ``crossorigin``, so a changed or compromised CDN file fails to load
-rather than running. With ``--no-external``, nothing external may load at all: only an
-``a``, an ``area``, a refresh and a ``link`` whose every ``rel`` loads nothing, such as
-``canonical``, may point outside, since following a link loads nothing into the page.
+rather than running; a script loaded by ``href`` or ``xlink:href``, as SVG's is, fails
+whenever it is external, since SVG's ``script`` takes no ``integrity``. With
+``--no-external``, nothing external may load at all: only an ``a``, an ``area``, a
+refresh and a ``link`` whose every ``rel`` loads nothing, such as ``canonical``, may
+point outside, since following a link loads nothing into the page.
 
 Each ``--unresolved PATH`` exempts a ``/``-rooted path served by something other than
 these files, such as a sibling site, so a reference to it need not resolve. It matches
@@ -53,11 +56,15 @@ import design_render
 
 CSS_SUFFIXES = frozenset({".css"})
 
+# Keyed by tag name as html.parser gives it, lower-cased, so SVG's feImage is
+# "feimage". An element is read the same in HTML and in SVG, where an a and a script
+# load from href or xlink:href, since telling them apart would take the tree.
 REFERENCE_ATTRIBUTES = {
-    "a": ("href",),
+    "a": ("href", "xlink:href"),
     "area": ("href",),
     "audio": ("src",),
     "embed": ("src",),
+    "feimage": ("href", "xlink:href"),
     "iframe": ("src",),
     "image": ("href", "xlink:href"),
     "img": ("src", "srcset"),
@@ -65,7 +72,7 @@ REFERENCE_ATTRIBUTES = {
     "link": ("href", "imagesrcset"),
     "meta": ("content",),
     "object": ("data",),
-    "script": ("src",),
+    "script": ("src", "href", "xlink:href"),
     "source": ("src", "srcset"),
     "track": ("src",),
     "use": ("href", "xlink:href"),
@@ -74,8 +81,12 @@ REFERENCE_ATTRIBUTES = {
 
 SRCSET_ATTRIBUTES = frozenset({"imagesrcset", "srcset"})
 
-# The attribute a stylesheet or script loads from, which is what integrity covers.
-INTEGRITY_ATTRIBUTES = {"link": "href", "script": "src"}
+# The attributes a stylesheet or script loads from, which is what integrity covers.
+INTEGRITY_ATTRIBUTES = {"link": ("href",), "script": ("src", "href", "xlink:href")}
+
+# The attributes an SVG script loads from, which no integrity can cover, since an SVG
+# script element takes none.
+SVG_SCRIPT_ATTRIBUTES = frozenset({"href", "xlink:href"})
 
 # The script-like destinations of the Fetch standard, and none, which a modulepreload
 # reads as script.
@@ -125,6 +136,9 @@ _CSS_STRING = r"""("[^"]*(?:"|\Z)|'[^']*(?:'|\Z))"""
 _CSS_URL_STRING = re.compile(rf"[ \t\n\r\f]*{_CSS_STRING}[ \t\n\r\f]*(?:\)|\Z)")
 _CSS_IMPORT_STRING = re.compile(rf"[ \t\n\r\f]*{_CSS_STRING}")
 _CSS_IMAGE_SETS = frozenset({"image-set", "-webkit-image-set"})
+# Ends an at-rule's prelude in _scan_css's masked CSS, where no string, comment or
+# unquoted url() holds one.
+_CSS_PRELUDE_END = re.compile(r"[;{]")
 
 _CSS_SPACE = " \t\n\r\f"
 _CSS_ESCAPE = re.compile(r"\\(?:([0-9A-Fa-f]{1,6})[ \t\n\r\f]?|(\n)|(.))", re.DOTALL)
@@ -451,12 +465,19 @@ def css_references(css: str) -> Iterator[tuple[int, str]]:
                 found.append((match.start(1), strings[match.start(1)]))
         elif name in _CSS_IMAGE_SETS:
             found.extend(_image_set_strings(scanned, paren))
+    namespaces = []
     for after, name in scanned.at_keywords.items():
         match = _CSS_IMPORT_STRING.match(masked, after)
         if name == "import" and match is not None:
             found.append((match.start(1), strings[match.start(1)]))
+        elif name == "namespace":
+            # Its prelude runs to a ; or a block, and its URL is an identifier, so
+            # nothing in it is fetched.
+            end = _CSS_PRELUDE_END.search(masked, after)
+            namespaces.append(range(after, len(masked) if end is None else end.start()))
     for start, target in sorted(found):
-        yield masked.count("\n", 0, start), target
+        if not any(start in prelude for prelude in namespaces):
+            yield masked.count("\n", 0, start), target
 
 
 def classify(reference: str) -> tuple[str, str]:
@@ -464,11 +485,15 @@ def classify(reference: str) -> tuple[str, str]:
 
     The path is the decoded local path, stripped of query and fragment; it is empty for
     anything that is not local.
+
+    A ``\\`` is read as ``/``, as the WHATWG URL parser reads it in an http(s) URL,
+    which is what every reference from a served page is; that it is also read so in a
+    query or fragment changes nothing, since neither is kept.
     """
     reference = reference.strip()
     if not reference or reference.startswith("#"):
         return "ignore", ""
-    parts = urllib.parse.urlsplit(reference)
+    parts = urllib.parse.urlsplit(reference.replace("\\", "/"))
     scheme = parts.scheme.lower()
     if scheme in IGNORED_SCHEMES:
         return "ignore", ""
@@ -502,8 +527,25 @@ def root_key(
     return normal
 
 
-def _resolve_key(path: str, key: str, root: pathlib.Path) -> str | None:
-    """Return why ``path``, landing at ``key``, does not resolve, else None."""
+def _ends_in_slash(path: str) -> bool:
+    """Return whether a URL with ``path`` ends in a slash once its dots are resolved.
+
+    A last segment of ``.`` or ``..`` leaves one, as the WHATWG URL parser resolves it.
+    """
+    return path.endswith("/") or posixpath.basename(path) in (".", "..")
+
+
+def _resolve_key(
+    path: str, key: str, root: pathlib.Path, slash: bool = False
+) -> str | None:
+    """Return why ``path``, landing at ``key``, does not resolve, else None.
+
+    With ``slash``, the URL ends in a slash, which a static server answers with 404
+    for a file.
+    """
+    if "\0" in key:
+        # No file name holds a NUL.
+        return f"{path} does not exist"
     target = (root / key).resolve()
     if not target.is_relative_to(root.resolve()):
         return f"{path} resolves outside --root"
@@ -513,6 +555,8 @@ def _resolve_key(path: str, key: str, root: pathlib.Path) -> str | None:
         return None
     if not target.is_file():
         return f"{path} does not exist"
+    if slash:
+        return f"{path} ends in a slash, but is a file"
     return None
 
 
@@ -542,15 +586,17 @@ def _problem(
         return f"external {reference}, which --no-external refuses"
     if kind != "local":
         return None
+    # A NUL is shown encoded, as it was written, so that no message holds the byte.
+    shown = path.replace("\0", "%00")
     key = root_key(path, referrer, root)
     if key is None:
-        return f"{path} resolves outside --root"
+        return f"{shown} resolves outside --root"
     if key in exemptions.paths:
         exemptions.used.add(key)
         if loads:
-            return f"{path} is exempt by --unresolved but loads into the page"
+            return f"{shown} is exempt by --unresolved but loads into the page"
         return None
-    return _resolve_key(path, key, root)
+    return _resolve_key(shown, key, root, _ends_in_slash(path))
 
 
 def _relations(attributes: dict[str, str | None]) -> list[str]:
@@ -593,14 +639,15 @@ class _HtmlReferences(html.parser.HTMLParser):
         """Return the line holding attribute ``name`` of the current tag.
 
         Only called for an attribute the parser read a value for, so the tag's text
-        always holds it. A repeated attribute takes its last occurrence, whose value the
-        parser keeps.
+        always holds it. A repeated attribute takes its first occurrence, whose value
+        the HTML tokeniser keeps.
         """
         tag = self.get_starttag_text()
         start = 0
         for match in _TAG_ATTRIBUTE.finditer(tag, _TAG_NAME.match(tag).end()):
             if match.group(1).lower() == name:
                 start = match.start()
+                break
         return self.getpos()[0] + tag.count("\n", 0, start)
 
     def _check(self, line: int, reference: str, loads: bool) -> None:
@@ -644,6 +691,17 @@ class _HtmlReferences(html.parser.HTMLParser):
         reference = attributes[name]
         if classify(reference)[0] != "external":
             return
+        if tag == "script" and name in SVG_SCRIPT_ATTRIBUTES:
+            self.problems.append(
+                (
+                    self._attribute_line(name),
+                    (
+                        f"external script {reference} loads by {name}, which no "
+                        "integrity covers"
+                    ),
+                )
+            )
+            return
         missing = []
         if not attributes.get("integrity"):
             missing.append("integrity")
@@ -658,7 +716,10 @@ class _HtmlReferences(html.parser.HTMLParser):
             )
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attributes = dict(attrs)
+        # The HTML tokeniser drops a repeated attribute, keeping the first.
+        attributes: dict[str, str | None] = {}
+        for attribute, value in attrs:
+            attributes.setdefault(attribute, value)
         if tag == "base":
             self.problems.append(
                 (
@@ -688,7 +749,7 @@ class _HtmlReferences(html.parser.HTMLParser):
             # Refused outright under --no-external, so not reported twice.
             if (
                 self._require_integrity
-                and name == INTEGRITY_ATTRIBUTES.get(tag)
+                and name in INTEGRITY_ATTRIBUTES.get(tag, ())
                 and not (self._no_external and loads)
             ):
                 self._check_integrity(tag, name, attributes)
