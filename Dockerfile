@@ -49,8 +49,6 @@ RUN --mount=type=bind,source=Dockerfile.lock,target=/lock \
 #===============================================================================
 FROM docker.io/library/debian@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 AS dev
 
-LABEL org.opencontainers.image.source=https://github.com/TiredPixel/lib-design-tools
-
 SHELL ["/bin/bash", "-Eeuo", "pipefail", "-O", "inherit_errexit", "-O", "failglob", "-c"]
 
 # Without python3-psutil, which nothing here installs, xdist's -n auto counts
@@ -275,6 +273,12 @@ WORKDIR /home/x/r
 # invalidates no earlier layer.
 ARG GIT_DESCRIBE
 LABEL org.opencontainers.image.version=$GIT_DESCRIBE
+
+# The repository the image is built from, so that a repository linking this
+# Dockerfile can name itself rather than this one. Beside GIT_DESCRIBE, so
+# another value invalidates no earlier layer.
+ARG IMAGE_SOURCE=https://github.com/TiredPixel/lib-design-tools
+LABEL org.opencontainers.image.source=$IMAGE_SOURCE
 #===============================================================================
 FROM dev AS test
 
