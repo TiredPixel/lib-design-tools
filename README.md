@@ -57,6 +57,8 @@ ln -s lib/design-tools/Dockerfile.lock Dockerfile.lock
 
 A repository leaves the link out of `docker_files`, since the file is not its own: `make format` never mounts the submodule, so a rewrite through the link would reach only the image's copy and be lost.
 
+The image's `org.opencontainers.image.source` label takes the build argument `IMAGE_SOURCE`, defaulting to this repository's URL, so a repository that pushes the image passes its own, as in `--build-arg IMAGE_SOURCE=https://github.com/OWNER/REPO`.
+
 The `wheels` and `dev` stages bind-mount `Dockerfile.lock` whole from the repository's tree wherever they read a lock, since through a link BuildKit resolves only the first path below it, so a linked lock builds as a copied one does, even with `dev` built alone. The test stage copies the whole tree. So the repository's `.dockerignore` keeps `.git`, `.env`, `tmp/` and anything local out of it, and must not exclude `Dockerfile.lock` or the submodule. Excluding every top-level dot path, `/.*`, and letting the repository's own dot files back in by name, such as `!/.github`, keeps a per-user directory such as `.claude` out without naming it. A submodule is a checkout too, with a `.env`, `tmp/` and Compose override of its own, so the same exclusions are repeated for each depth submodules sit at, as `/lib/*/.*`, `/lib/*/docker-compose.*.yml` and `/lib/*/tmp/`, and under `/lib/*/lib/*/` for this repository's own submodule.
 
 A repository's CI keeps a registry build cache of its own through the scripts in this repository's `lib/shell-common`. It names its own image in `.dockerrepo`, at its root, which the scripts read:
