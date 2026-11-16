@@ -2,7 +2,7 @@
   "dependencies": {
     "@prettier/plugin-xml": "3.4.2",
     "c8": "12.0.0",
-    "prettier": "3.9.10",
+    "prettier": "3.10.1",
     "semistandard": "17.0.0"
   },
   "private": true

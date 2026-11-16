@@ -101,64 +101,64 @@ ARG YQ_VERSION=4.54.3
 ARG YQ_SHA256_AMD64=129534601871538efe0ba4c5e62a34fb1d5f469bcb975c4fddeb467d82974973
 ARG YQ_SHA256_ARM64=89f69310b61b68d1245065a1241d1fc843f7a36cd6103ffd77ad987613bd1b67
 RUN case $(dpkg --print-architecture) in \
-    amd64) arch=amd64 sha256=${YQ_SHA256_AMD64} ;; \
-    arm64) arch=arm64 sha256=${YQ_SHA256_ARM64} ;; \
-    *) exit 1 ;; \
+        amd64) arch=amd64 sha256=${YQ_SHA256_AMD64} ;; \
+        arm64) arch=arm64 sha256=${YQ_SHA256_ARM64} ;; \
+        *) exit 1 ;; \
     esac \
-    && curl -fsL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_${arch}" -o /tmp/yq \
-    && echo "${sha256}  /tmp/yq" | sha256sum -c - \
-    && install -m 755 /tmp/yq /usr/local/bin/yq \
-    && rm /tmp/yq \
-    && yq --version \
-    && yq --version | grep -qF "version v${YQ_VERSION}"
+        && curl -fsL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_${arch}" -o /tmp/yq \
+        && echo "${sha256}  /tmp/yq" | sha256sum -c - \
+        && install -m 755 /tmp/yq /usr/local/bin/yq \
+        && rm /tmp/yq \
+        && yq --version \
+        && yq --version | grep -qF "version v${YQ_VERSION}"
 
 ARG ACTIONLINT_VERSION=1.7.12
 ARG ACTIONLINT_SHA256_AMD64=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
 ARG ACTIONLINT_SHA256_ARM64=325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6
 RUN case $(dpkg --print-architecture) in \
-    amd64) arch=amd64 sha256=${ACTIONLINT_SHA256_AMD64} ;; \
-    arm64) arch=arm64 sha256=${ACTIONLINT_SHA256_ARM64} ;; \
-    *) exit 1 ;; \
+        amd64) arch=amd64 sha256=${ACTIONLINT_SHA256_AMD64} ;; \
+        arm64) arch=arm64 sha256=${ACTIONLINT_SHA256_ARM64} ;; \
+        *) exit 1 ;; \
     esac \
-    && curl -fsL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${arch}.tar.gz" -o /tmp/actionlint.tar.gz \
-    && echo "${sha256}  /tmp/actionlint.tar.gz" | sha256sum -c - \
-    && tar -xzf /tmp/actionlint.tar.gz -C /usr/local/bin actionlint \
-    && rm /tmp/actionlint.tar.gz \
-    && actionlint --version \
-    && actionlint --version | grep -qFx "${ACTIONLINT_VERSION}"
+        && curl -fsL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${arch}.tar.gz" -o /tmp/actionlint.tar.gz \
+        && echo "${sha256}  /tmp/actionlint.tar.gz" | sha256sum -c - \
+        && tar -xzf /tmp/actionlint.tar.gz -C /usr/local/bin actionlint \
+        && rm /tmp/actionlint.tar.gz \
+        && actionlint --version \
+        && actionlint --version | grep -qFx "${ACTIONLINT_VERSION}"
 
 ARG CHECKMAKE_VERSION=0.3.2
 ARG CHECKMAKE_SHA256_AMD64=e2effb876913f3ee2caef0ba35f6202c5e8a3cd55a077d8d2b9ce2034257b6af
 ARG CHECKMAKE_SHA256_ARM64=409167c4abb99407bd232c3bbd351b8a39df57997feafde5a08bddffb0f2dcb4
 RUN case $(dpkg --print-architecture) in \
-    amd64) arch=amd64 sha256=${CHECKMAKE_SHA256_AMD64} ;; \
-    arm64) arch=arm64 sha256=${CHECKMAKE_SHA256_ARM64} ;; \
-    *) exit 1 ;; \
+        amd64) arch=amd64 sha256=${CHECKMAKE_SHA256_AMD64} ;; \
+        arm64) arch=arm64 sha256=${CHECKMAKE_SHA256_ARM64} ;; \
+        *) exit 1 ;; \
     esac \
-    && curl -fsL "https://github.com/checkmake/checkmake/releases/download/v${CHECKMAKE_VERSION}/checkmake-v${CHECKMAKE_VERSION}.linux.${arch}" -o /tmp/checkmake \
-    && echo "${sha256}  /tmp/checkmake" | sha256sum -c - \
-    && install -m 755 /tmp/checkmake /usr/local/bin/checkmake \
-    && rm /tmp/checkmake \
-    && checkmake --version \
-    && checkmake --version | grep -qF "checkmake v${CHECKMAKE_VERSION} "
+        && curl -fsL "https://github.com/checkmake/checkmake/releases/download/v${CHECKMAKE_VERSION}/checkmake-v${CHECKMAKE_VERSION}.linux.${arch}" -o /tmp/checkmake \
+        && echo "${sha256}  /tmp/checkmake" | sha256sum -c - \
+        && install -m 755 /tmp/checkmake /usr/local/bin/checkmake \
+        && rm /tmp/checkmake \
+        && checkmake --version \
+        && checkmake --version | grep -qF "checkmake v${CHECKMAKE_VERSION} "
 
 # dockerfmt publishes only an MD5 beside each asset (its release page,
 # github.com/reteps/dockerfmt/releases, checked 2026-11), so the hashes are
 # taken from the downloads themselves.
-ARG DOCKERFMT_VERSION=0.6.0
-ARG DOCKERFMT_SHA256_AMD64=c77c7fe6c068de8d2132cbc00b3d17e53e8bcd0ae2bb14f0dadf42c8f6206247
-ARG DOCKERFMT_SHA256_ARM64=801c1a9583a91144c57ff65fc1ddf71bfe446220a1a0f423d3e1444fc8faa767
+ARG DOCKERFMT_VERSION=1.0.0
+ARG DOCKERFMT_SHA256_AMD64=da0cd8bbb3f1b6cdbe0bc16d4e762ffb2351a69eb259d84a7ddc35bcf156e1f7
+ARG DOCKERFMT_SHA256_ARM64=fb361d10597b998766c72db47c4a70350832860571bb772a8b8cfc780377b7c9
 RUN case $(dpkg --print-architecture) in \
-    amd64) arch=amd64 sha256=${DOCKERFMT_SHA256_AMD64} ;; \
-    arm64) arch=arm64 sha256=${DOCKERFMT_SHA256_ARM64} ;; \
-    *) exit 1 ;; \
+        amd64) arch=amd64 sha256=${DOCKERFMT_SHA256_AMD64} ;; \
+        arm64) arch=arm64 sha256=${DOCKERFMT_SHA256_ARM64} ;; \
+        *) exit 1 ;; \
     esac \
-    && curl -fsL "https://github.com/reteps/dockerfmt/releases/download/v${DOCKERFMT_VERSION}/dockerfmt-v${DOCKERFMT_VERSION}-linux-${arch}.tar.gz" -o /tmp/dockerfmt.tar.gz \
-    && echo "${sha256}  /tmp/dockerfmt.tar.gz" | sha256sum -c - \
-    && tar -xzf /tmp/dockerfmt.tar.gz -C /usr/local/bin dockerfmt \
-    && rm /tmp/dockerfmt.tar.gz \
-    && dockerfmt version \
-    && dockerfmt version | grep -qF "${DOCKERFMT_VERSION}"
+        && curl -fsL "https://github.com/reteps/dockerfmt/releases/download/v${DOCKERFMT_VERSION}/dockerfmt-v${DOCKERFMT_VERSION}-linux-${arch}.tar.gz" -o /tmp/dockerfmt.tar.gz \
+        && echo "${sha256}  /tmp/dockerfmt.tar.gz" | sha256sum -c - \
+        && tar -xzf /tmp/dockerfmt.tar.gz -C /usr/local/bin dockerfmt \
+        && rm /tmp/dockerfmt.tar.gz \
+        && dockerfmt version \
+        && dockerfmt version | grep -qF "${DOCKERFMT_VERSION}"
 
 # dotenv-linter publishes no checksum (its release page,
 # github.com/dotenv-linter/dotenv-linter/releases, checked 2026-11), so the
@@ -167,31 +167,31 @@ ARG DOTENV_LINTER_VERSION=4.0.0
 ARG DOTENV_LINTER_SHA256_AMD64=9e2f1f6eb88a71ac15ef209f78f5a68644db82f132d2677112b4f80ec2bd2127
 ARG DOTENV_LINTER_SHA256_ARM64=c4113aafd35e5f9095b2f757061d07cc8eb5cc0bcd755249877af08b7ffafb9a
 RUN case $(dpkg --print-architecture) in \
-    amd64) arch=x86_64 sha256=${DOTENV_LINTER_SHA256_AMD64} ;; \
-    arm64) arch=aarch64 sha256=${DOTENV_LINTER_SHA256_ARM64} ;; \
-    *) exit 1 ;; \
+        amd64) arch=x86_64 sha256=${DOTENV_LINTER_SHA256_AMD64} ;; \
+        arm64) arch=aarch64 sha256=${DOTENV_LINTER_SHA256_ARM64} ;; \
+        *) exit 1 ;; \
     esac \
-    && curl -fsL "https://github.com/dotenv-linter/dotenv-linter/releases/download/v${DOTENV_LINTER_VERSION}/dotenv-linter-linux-${arch}.tar.gz" -o /tmp/dotenv-linter.tar.gz \
-    && echo "${sha256}  /tmp/dotenv-linter.tar.gz" | sha256sum -c - \
-    && tar -xzf /tmp/dotenv-linter.tar.gz -C /usr/local/bin dotenv-linter \
-    && rm /tmp/dotenv-linter.tar.gz \
-    && dotenv-linter --version \
-    && dotenv-linter --version | grep -qF " ${DOTENV_LINTER_VERSION}"
+        && curl -fsL "https://github.com/dotenv-linter/dotenv-linter/releases/download/v${DOTENV_LINTER_VERSION}/dotenv-linter-linux-${arch}.tar.gz" -o /tmp/dotenv-linter.tar.gz \
+        && echo "${sha256}  /tmp/dotenv-linter.tar.gz" | sha256sum -c - \
+        && tar -xzf /tmp/dotenv-linter.tar.gz -C /usr/local/bin dotenv-linter \
+        && rm /tmp/dotenv-linter.tar.gz \
+        && dotenv-linter --version \
+        && dotenv-linter --version | grep -qF " ${DOTENV_LINTER_VERSION}"
 
 ARG HADOLINT_VERSION=2.15.1
 ARG HADOLINT_SHA256_AMD64=c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
 ARG HADOLINT_SHA256_ARM64=f6198ef8090f404dbb771abfee086eb8c48ac177f30da7fd3510aca35b344b5d
 RUN case $(dpkg --print-architecture) in \
-    amd64) arch=x86_64 sha256=${HADOLINT_SHA256_AMD64} ;; \
-    arm64) arch=arm64 sha256=${HADOLINT_SHA256_ARM64} ;; \
-    *) exit 1 ;; \
+        amd64) arch=x86_64 sha256=${HADOLINT_SHA256_AMD64} ;; \
+        arm64) arch=arm64 sha256=${HADOLINT_SHA256_ARM64} ;; \
+        *) exit 1 ;; \
     esac \
-    && curl -fsL "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-${arch}" -o /tmp/hadolint \
-    && echo "${sha256}  /tmp/hadolint" | sha256sum -c - \
-    && install -m 755 /tmp/hadolint /usr/local/bin/hadolint \
-    && rm /tmp/hadolint \
-    && hadolint --version \
-    && hadolint --version | grep -qF " ${HADOLINT_VERSION}"
+        && curl -fsL "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-${arch}" -o /tmp/hadolint \
+        && echo "${sha256}  /tmp/hadolint" | sha256sum -c - \
+        && install -m 755 /tmp/hadolint /usr/local/bin/hadolint \
+        && rm /tmp/hadolint \
+        && hadolint --version \
+        && hadolint --version | grep -qF " ${HADOLINT_VERSION}"
 
 # taplo publishes no checksum (its release page,
 # github.com/tamasfe/taplo/releases, checked 2026-11), so the hashes are taken
@@ -200,17 +200,17 @@ ARG TAPLO_VERSION=0.10.0
 ARG TAPLO_SHA256_AMD64=8fe196b894ccf9072f98d4e1013a180306e17d244830b03986ee5e8eabeb6156
 ARG TAPLO_SHA256_ARM64=033681d01eec8376c3fd38fa3703c79316f5e14bb013d859943b60a07bccdcc3
 RUN case $(dpkg --print-architecture) in \
-    amd64) arch=x86_64 sha256=${TAPLO_SHA256_AMD64} ;; \
-    arm64) arch=aarch64 sha256=${TAPLO_SHA256_ARM64} ;; \
-    *) exit 1 ;; \
+        amd64) arch=x86_64 sha256=${TAPLO_SHA256_AMD64} ;; \
+        arm64) arch=aarch64 sha256=${TAPLO_SHA256_ARM64} ;; \
+        *) exit 1 ;; \
     esac \
-    && curl -fsL "https://github.com/tamasfe/taplo/releases/download/${TAPLO_VERSION}/taplo-linux-${arch}.gz" -o /tmp/taplo.gz \
-    && echo "${sha256}  /tmp/taplo.gz" | sha256sum -c - \
-    && gunzip -c /tmp/taplo.gz >/usr/local/bin/taplo \
-    && chmod 755 /usr/local/bin/taplo \
-    && rm /tmp/taplo.gz \
-    && taplo --version \
-    && taplo --version | grep -qFx "taplo ${TAPLO_VERSION}"
+        && curl -fsL "https://github.com/tamasfe/taplo/releases/download/${TAPLO_VERSION}/taplo-linux-${arch}.gz" -o /tmp/taplo.gz \
+        && echo "${sha256}  /tmp/taplo.gz" | sha256sum -c - \
+        && gunzip -c /tmp/taplo.gz > /usr/local/bin/taplo \
+        && chmod 755 /usr/local/bin/taplo \
+        && rm /tmp/taplo.gz \
+        && taplo --version \
+        && taplo --version | grep -qFx "taplo ${TAPLO_VERSION}"
 
 # ruff, and mdformat with its gfm and frontmatter plugins, from pipx outside
 # root's home and on the PATH of x, who runs them. Offline, pip can take only
