@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#
+# Builds the Word template bin/settings' dotx_args describes, from the root of
+# the repository, in the image.
+set -Eeuo pipefail
+shopt -s inherit_errexit failglob
+
+prog=${0##*/}
+
+usage() {
+    echo "Usage: $prog > FILE" >&2
+    exit 2
+}
+
+[ $# -eq 0 ] || usage
+
+dir=$(dirname "$(dirname "$(readlink -f "$0")")")
+# shellcheck source=SCRIPTDIR/../lib/shell-common/runner/core
+source "$dir/lib/shell-common/runner/core"
+
+dotx=()
+collect dotx dotx_args
+# shellcheck disable=SC2154 # Set by bin/settings, which runner/core sources.
+PYTHONPATH=$tools exec python3 -m dotx "${dotx[@]}"

@@ -1,0 +1,2 @@
+# One line per paragraph, which renderers reflow.
+wrap = "no"

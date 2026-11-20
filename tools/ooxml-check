@@ -1,0 +1,355 @@
+#!/usr/bin/env python3
+"""Checks that the parts of each Word template given agree with each other.
+
+Word refuses a package with a part it has no content type for or a relationship to a
+part that is not there, and quietly drops a reference to a missing style, list or font,
+so each such reference is checked against the part it names: every part has a content
+type, and one that only the generic XML default types has an Override; each internal
+relationship's target is a part; each relationship id a part uses is in its .rels; each
+style, list and font a part names is defined in its scope, the glossary's own parts for
+the glossary, the template's for the rest. ``--pandoc`` checks that the template
+carries each style id pandoc's docx writer looks up. ``--fonts DIR`` checks that each
+style's face, as Word resolves it for each script and table condition, is one a TrueType
+file in DIR names.
+
+Exit status: 0 when every template passes, 1 when any check fails, and 2 on a usage
+error.
+"""
+
+import argparse
+import pathlib
+import posixpath
+import sys
+import xml.etree.ElementTree as ET
+import zipfile
+
+import design_ttf
+
+CONTENT_TYPES = "[Content_Types].xml"
+CT = "{http://schemas.openxmlformats.org/package/2006/content-types}"
+PR = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+# A Default of plain XML types no WordprocessingML or package part, so each XML part it
+# would cover needs an Override of its own.
+GENERIC = "application/xml"
+
+# Word resolves a part's styles, lists and fonts against the parts beside its own
+# document: the glossary's against its own copies.
+SCOPES = ("word/glossary/", "word/")
+
+STYLE_REFERENCES = {
+    "pStyle": "paragraph",
+    "rStyle": "character",
+    "tblStyle": "table",
+    "styleLink": "numbering",
+    "numStyleLink": "numbering",
+}
+LINKED = {"paragraph": "character", "character": "paragraph"}
+FONT_SLOTS = ("ascii", "hAnsi", "cs", "eastAsia")
+# Word sets basic Latin in the ascii font, accented Latin, Greek and Cyrillic in hAnsi,
+# and complex scripts in cs, whose bold and italic are bCs and iCs.
+SCRIPTS = (("ascii", "b", "i"), ("hAnsi", "b", "i"), ("cs", "bCs", "iCs"))
+
+# The style ids pandoc's docx writer looks up.
+PANDOC = {
+    "Abstract": "paragraph",
+    "AbstractTitle": "paragraph",
+    "Author": "paragraph",
+    "Bibliography": "paragraph",
+    "BlockText": "paragraph",
+    "BodyText": "paragraph",
+    "CaptionedFigure": "paragraph",
+    "Compact": "paragraph",
+    "Date": "paragraph",
+    "Definition": "paragraph",
+    "DefinitionTerm": "paragraph",
+    "Figure": "paragraph",
+    "FirstParagraph": "paragraph",
+    "FootnoteReference": "character",
+    "FootnoteText": "paragraph",
+    "Heading4": "paragraph",
+    "Heading5": "paragraph",
+    "Heading6": "paragraph",
+    "ImageCaption": "paragraph",
+    "ListParagraph": "paragraph",
+    "SourceCode": "paragraph",
+    "TOC1": "paragraph",
+    "TOC2": "paragraph",
+    "TOC3": "paragraph",
+    "TOCHeading": "paragraph",
+    "Table": "table",
+    "TableCaption": "paragraph",
+    "VerbatimChar": "character",
+}
+
+
+def val(element):
+    return element.get(f"{W}val")
+
+
+class Template:
+    """A template's parts, each parsed once."""
+
+    def __init__(self, path):
+        with zipfile.ZipFile(path) as archive:
+            self.data = {name: archive.read(name) for name in archive.namelist()}
+        self.parts = sorted(set(self.data) - {CONTENT_TYPES})
+        self.roots = {}
+
+    def root(self, path):
+        if path not in self.roots:
+            self.roots[path] = ET.fromstring(self.data[path])
+        return self.roots[path]
+
+    def scoped(self, directory):
+        """The XML parts whose references name DIRECTORY's styles, lists and fonts."""
+        return [
+            p
+            for p in self.parts
+            if p.endswith(".xml")
+            and next((s for s in SCOPES if p.startswith(s)), None) == directory
+        ]
+
+    def styles(self, directory):
+        """Each style id in DIRECTORY's styles part, with its type."""
+        return {
+            s.get(f"{W}styleId"): s.get(f"{W}type")
+            for s in self.root(directory + "styles.xml").iter(f"{W}style")
+        }
+
+
+def content_type_problems(template):
+    types = template.root(CONTENT_TYPES)
+    defaults = {
+        d.get("Extension").lower(): d.get("ContentType")
+        for d in types.iter(f"{CT}Default")
+    }
+    overrides = {o.get("PartName").lstrip("/") for o in types.iter(f"{CT}Override")}
+    for path in template.parts:
+        _, dot, extension = posixpath.basename(path).rpartition(".")
+        default = defaults.get(extension.lower()) if dot else None
+        if path in overrides:
+            continue
+        if default is None:
+            yield path, "has no content type"
+        elif default == GENERIC:
+            yield path, f"has no Override, only the {GENERIC} Default"
+
+
+def relationship_problems(template):
+    for rels in (p for p in template.parts if p.endswith(".rels")):
+        source = posixpath.dirname(posixpath.dirname(rels))
+        for rel in template.root(rels).iter(f"{PR}Relationship"):
+            if rel.get("TargetMode") == "External":
+                continue
+            target = rel.get("Target")
+            resolved = (
+                target.lstrip("/")
+                if target.startswith("/")
+                else posixpath.normpath(posixpath.join(source, target))
+            )
+            if resolved not in template.parts:
+                yield rels, f"{rel.get('Id')} targets {target}, which is no part"
+    for path in (p for p in template.parts if p.endswith(".xml")):
+        named = {
+            value
+            for element in template.root(path).iter()
+            for key, value in element.attrib.items()
+            if key.startswith(R)
+        }
+        if not named:
+            continue
+        directory, name = posixpath.split(path)
+        rels = posixpath.join(directory, "_rels", name + ".rels")
+        ids = (
+            {r.get("Id") for r in template.root(rels).iter(f"{PR}Relationship")}
+            if rels in template.data
+            else set()
+        )
+        for rid in sorted(named - ids):
+            yield path, f"names {rid}, which {rels} does not hold"
+
+
+def style_problems(template):
+    def wrong(known, style_id, kind):
+        if known.get(style_id) != kind:
+            return f"{style_id} is no {kind} style"
+        return None
+
+    for directory in SCOPES:
+        known = template.styles(directory)
+        for path in template.scoped(directory):
+            root = template.root(path)
+            for tag, kind in STYLE_REFERENCES.items():
+                for ref in root.iter(f"{W}{tag}"):
+                    if problem := wrong(known, val(ref), kind):
+                        yield path, f"{tag}: {problem}"
+            for part_pr in root.iter(f"{W}docPartPr"):
+                for style in part_pr.iter(f"{W}style"):
+                    if problem := wrong(known, val(style), "paragraph"):
+                        yield path, f"docPart: {problem}"
+        styles = directory + "styles.xml"
+        for style in template.root(styles).iter(f"{W}style"):
+            kind = style.get(f"{W}type")
+            expected = {"basedOn": kind, "next": "paragraph", "link": LINKED.get(kind)}
+            for tag, target in expected.items():
+                for ref in style.iter(f"{W}{tag}"):
+                    if problem := wrong(known, val(ref), target):
+                        name = style.get(f"{W}styleId")
+                        yield styles, f"{name}: {tag}: {problem}"
+
+
+def pandoc_problems(template):
+    known = template.styles("word/")
+    for style_id, kind in PANDOC.items():
+        if known.get(style_id) != kind:
+            yield "word/styles.xml", f"no {kind} style {style_id}, which pandoc reads"
+
+
+def numbering_problems(template):
+    for directory in SCOPES:
+        path = directory + "numbering.xml"
+        numbering = template.root(path)
+        nums = {n.get(f"{W}numId") for n in numbering.iter(f"{W}num")}
+        abstracts = {
+            a.get(f"{W}abstractNumId") for a in numbering.iter(f"{W}abstractNum")
+        }
+        for part in template.scoped(directory):
+            for num_pr in template.root(part).iter(f"{W}numPr"):
+                num_id = num_pr.find(f"{W}numId")
+                if num_id is not None and val(num_id) not in nums | {"0"}:
+                    yield part, f"numId {val(num_id)} is not defined"
+        for num in numbering.iter(f"{W}num"):
+            abstract = val(num.find(f"{W}abstractNumId"))
+            if abstract not in abstracts:
+                num_id = num.get(f"{W}numId")
+                yield path, f"num {num_id}: abstractNum {abstract} is not defined"
+
+
+def font_problems(template):
+    for directory in SCOPES:
+        table = template.root(directory + "fontTable.xml")
+        declared = {f.get(f"{W}name") for f in table.iter(f"{W}font")}
+        for path in template.scoped(directory):
+            named = {
+                r.get(f"{W}{slot}")
+                for r in template.root(path).iter(f"{W}rFonts")
+                for slot in FONT_SLOTS
+                if r.get(f"{W}{slot}")
+            }
+            for font in sorted(named - declared):
+                yield path, f"names font {font}, which fontTable.xml does not declare"
+
+
+def shipped_faces(directory):
+    """Every (family, bold, italic) the TrueType files in DIRECTORY give Word."""
+    found = set()
+    for path in sorted(directory.glob("*.ttf")):
+        names = design_ttf.names(path.read_bytes())
+        subfamily = names[design_ttf.SUBFAMILY]
+        found.add(
+            (names[design_ttf.FAMILY], "Bold" in subfamily, "Italic" in subfamily)
+        )
+    return found
+
+
+def face_problems(template, faces):
+    root = template.root("word/styles.xml")
+    defaults = root.find(f"{W}docDefaults/{W}rPrDefault/{W}rPr")
+    by_id = {s.get(W + "styleId"): s for s in root.iter(W + "style")}
+
+    def chain(style):
+        found = []
+        while style is not None:
+            found.append(style)
+            based = style.find(W + "basedOn")
+            style = by_id[val(based)] if based is not None else None
+        return found
+
+    # A table style's conditional formatting, such as its first row's, from wherever
+    # along the basedOn chain sets it, then the style's own. Given an attribute, only
+    # an element carrying it counts, as each of rFonts' attributes is inherited on its
+    # own.
+    def setting(style, tag, condition, attribute=None):
+        ancestors = chain(style)
+        run_properties = [
+            conditional.find(W + "rPr")
+            for ancestor in ancestors
+            for conditional in ancestor.iterfind(W + "tblStylePr")
+            if conditional.get(W + "type") == condition
+        ]
+        run_properties += [ancestor.find(W + "rPr") for ancestor in ancestors]
+        for properties in run_properties:
+            found = None if properties is None else properties.find(W + tag)
+            if found is not None and (
+                attribute is None or found.get(W + attribute) is not None
+            ):
+                return found
+        return None if defaults is None else defaults.find(W + tag)
+
+    def on(element):
+        return element is not None and val(element) not in ("0", "false")
+
+    for style_id, style in by_id.items():
+        conditions = {
+            c.get(W + "type")
+            for ancestor in chain(style)
+            for c in ancestor.iterfind(W + "tblStylePr")
+        }
+        for condition in (None, *sorted(conditions)):
+            for attribute, bold, italic in SCRIPTS:
+                fonts = setting(style, "rFonts", condition, attribute)
+                face = (
+                    None if fonts is None else fonts.get(W + attribute),
+                    on(setting(style, bold, condition)),
+                    on(setting(style, italic, condition)),
+                )
+                if face not in faces:
+                    where = style_id if condition is None else f"{style_id} {condition}"
+                    yield (
+                        "word/styles.xml",
+                        f"{where}: {attribute} face {face} is not shipped",
+                    )
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="ooxml-check", description=__doc__.split("\n\n")[0]
+    )
+    parser.add_argument("--fonts", type=pathlib.Path, metavar="DIR")
+    parser.add_argument("--pandoc", action="store_true")
+    parser.add_argument("templates", nargs="+", type=pathlib.Path, metavar="TEMPLATE")
+    arguments = parser.parse_args(argv)
+    faces = None if arguments.fonts is None else shipped_faces(arguments.fonts)
+    failures = 0
+    for path in arguments.templates:
+        template = Template(path)
+        checks = [
+            content_type_problems,
+            relationship_problems,
+            style_problems,
+            numbering_problems,
+            font_problems,
+        ]
+        if arguments.pandoc:
+            checks.append(pandoc_problems)
+        for check in checks:
+            for part, message in check(template):
+                print(f"{path}: {part}: {message}", file=sys.stderr)
+                failures += 1
+        if faces is not None:
+            for part, message in face_problems(template, faces):
+                print(f"{path}: {part}: {message}", file=sys.stderr)
+                failures += 1
+    print(
+        f"ooxml-check: checked {len(arguments.templates)} template(s): "
+        f"{failures} problem(s)",
+        file=sys.stderr,
+    )
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

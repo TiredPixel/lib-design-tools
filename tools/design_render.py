@@ -506,6 +506,37 @@ def print_pdf(
         return out.read_bytes()
 
 
+def screenshot(
+    url: str,
+    width: int,
+    height: int,
+    *,
+    chromium: str = DEFAULT_CHROMIUM,
+    budget_ms: int = DEFAULT_BUDGET_MS,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+) -> bytes:
+    """Load ``url`` in headless Chromium and return a screenshot of it as a PNG.
+
+    The window is ``width`` by ``height`` pixels, and the ground transparent.
+    """
+    with tempfile.TemporaryDirectory(prefix="design-render-") as profile:
+        out = pathlib.Path(profile) / "screenshot.png"
+        _chromium(
+            url,
+            [
+                f"--screenshot={out}",
+                f"--window-size={width},{height}",
+                "--hide-scrollbars",
+                "--default-background-color=00000000",
+            ],
+            profile=profile,
+            chromium=chromium,
+            budget_ms=budget_ms,
+            timeout_s=timeout_s,
+        )
+        return out.read_bytes()
+
+
 def sheet_count(pdf: bytes) -> int:
     """The number of pages in a PDF Chromium printed.
 

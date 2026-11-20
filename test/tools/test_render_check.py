@@ -1,7 +1,7 @@
 """Tests for tools/design_render.py and tools/render-check.
 
 Chromium itself is replaced by a fake executable everywhere except the tests in
-``RealChromiumTest``, which run only where ``chromium`` is on PATH.
+``RealChromiumTest``.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ import json
 import os
 import pathlib
 import re
-import shutil
 import signal
 import subprocess
 import sys
@@ -880,9 +879,6 @@ class RenderCheckTest(TempDirTestCase):
         )
 
 
-@unittest.skipUnless(
-    shutil.which(design_render.DEFAULT_CHROMIUM), "needs chromium on PATH"
-)
 class RealChromiumTest(TempDirTestCase):
     def render(self, body: str, head: str = "") -> design_render.Render:
         page = self.write(
@@ -994,6 +990,17 @@ class RealChromiumTest(TempDirTestCase):
                 result = self.render(f"<script>{script}</script>")
                 self.assertEqual(self.kinds(result), [kind])
                 self.assertIn("boom", result.errors[0]["message"])
+
+    def test_screenshot_of_an_svg(self) -> None:
+        svg = self.write(
+            "a.svg",
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 2">'
+            '<rect width="4" height="2" fill="#123456"/></svg>\n',
+        )
+        png = design_render.screenshot(svg.as_uri(), 40, 20)
+        self.assertEqual(png[:8], b"\x89PNG\r\n\x1a\n")
+        # IHDR, the first chunk, opens with the width and height.
+        self.assertEqual(png[16:24], (40).to_bytes(4) + (20).to_bytes(4))
 
     def test_render_check_marker(self) -> None:
         page = self.write("m.html", '<html><body><p class="load-error">x</p>')

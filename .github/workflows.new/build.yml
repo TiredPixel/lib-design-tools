@@ -1,0 +1,80 @@
+---
+# TRACK USES actions/checkout@v7
+# TRACK USES docker/login-action@v4
+concurrency:
+  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+defaults:
+  run:
+    shell: bash -Eeuo pipefail -O inherit_errexit -O failglob {0}
+jobs:
+  build:
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # Full history and tags, for the git describe the build scripts pass
+          # to the build as GIT_DESCRIBE.
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: recursive
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
+        with:
+          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+      # Takes its layers from latest.dev, which cache pushes, for the Compose
+      # build to reuse on the same daemon.
+      - name: Build dev
+        run: |
+          lib/shell-common/docker/build-dev-latest-nopush
+          make build
+      - name: Test
+        run: |
+          make test
+      - name: Check no workflow is pending
+        run: |
+          lib/shell-common/github/workflows-pending
+    timeout-minutes: 15
+  # Only on a person's push to a branch: an app's push would otherwise run its
+  # tree here with packages write, and a tag's dev image is never read. An app's
+  # commit on latest still runs here at a person's next push unless a ruleset
+  # keeps latest to people.
+  cache:
+    if: |-
+      github.event_name == 'push' && github.ref_type == 'branch' &&
+      github.event.sender.type == 'User'
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: recursive
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
+        with:
+          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+      - name: Push dev
+        run: |
+          lib/shell-common/docker/build-dev-latest
+    timeout-minutes: 15
+name: CI
+"on":
+  pull_request:
+    branches:
+      - latest
+  push:
+    branches:
+      - latest

@@ -1,3 +1,5 @@
+# The .env files and Compose overrides hold a checkout's settings, not the
+# tree's.
 /.env*
 /docker-compose.*.yml
 /tmp/

@@ -1,0 +1,74 @@
+# shellcheck shell=bash
+#
+# The design passes, which bin/settings sources: lint_extra and format_extra,
+# which runner/lint and runner/format run after the generic passes, each pass
+# running only where bin/settings defines what it reads.
+
+# shellcheck disable=SC2154 # Set by runner/core, which sources bin/settings.
+design_tools=$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")
+# shellcheck disable=SC2034 # Read by the scripts that source this file.
+tools=$design_tools/tools
+
+# Prettier resolves a plugin named as a package from the working directory, the
+# repository's root, where it is not installed, so the XML plugin is named by
+# its path, resolved beside the Prettier that runs.
+prettier_xml_plugin() {
+    node -p 'require.resolve("@prettier/plugin-xml", {paths: [process.argv[1]]})' \
+        "$(readlink -f "$(command -v prettier)")"
+}
+
+lint_extra() {
+    local -a palette svg xml_lint references render ooxml
+
+    if defines palette_args; then
+        collect palette palette_args
+        echo "$prog: running palette-generate --check" >&2
+        check palette-generate "$tools/palette-generate" "${palette[@]}" --check
+    fi
+    if defines svg_files; then
+        collect svg svg_files
+        echo "$prog: checking ${#svg[@]} SVG file(s)" >&2
+        check prettier-svg prettier --check --plugin "$(prettier_xml_plugin)" \
+            "${svg[@]}"
+    fi
+    # expat's xmlwf, which only reports, for XML a reader takes byte for byte,
+    # such as an OOXML part; -k carries on past a failing file.
+    if defines xml_lint_files; then
+        collect xml_lint xml_lint_files
+        echo "$prog: checking ${#xml_lint[@]} lint-only XML file(s)" >&2
+        check xmlwf xmlwf -n -k -- "${xml_lint[@]}"
+    fi
+    if defines references_args; then
+        collect references references_args
+        echo "$prog: running references-check" >&2
+        check references-check "$tools/references-check" "${references[@]}"
+    fi
+    if defines render_args; then
+        collect render render_args
+        echo "$prog: running render-check" >&2
+        check render-check "$tools/render-check" "${render[@]}"
+    fi
+    if defines ooxml_args; then
+        collect ooxml ooxml_args
+        echo "$prog: running ooxml-check" >&2
+        check ooxml-check "$tools/ooxml-check" "${ooxml[@]}"
+    fi
+}
+
+format_extra() {
+    local -a svg palette
+
+    if defines svg_files; then
+        collect svg svg_files
+        echo "$prog: formatting ${#svg[@]} SVG file(s)" >&2
+        check prettier-svg prettier --write --plugin "$(prettier_xml_plugin)" \
+            "${svg[@]}"
+    fi
+    # Last, after the formatters of the files it reads, and in make format rather
+    # than a target of its own, so one run leaves the palette's outputs current.
+    if defines palette_args; then
+        collect palette palette_args
+        echo "$prog: running palette-generate" >&2
+        check palette-generate "$tools/palette-generate" "${palette[@]}"
+    fi
+}

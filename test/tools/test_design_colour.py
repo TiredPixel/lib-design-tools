@@ -1,5 +1,6 @@
 """tools/design_colour.py, against reference values."""
 
+import re
 import unittest
 
 import design_colour
@@ -161,3 +162,26 @@ class HueTest(unittest.TestCase):
                     self.assertRaisesRegex(ValueError, "are opposite"),
                 ):
                     design_colour.hue_between(middle, start, end)
+
+
+class FlattenTest(unittest.TestCase):
+    def test_returns_an_opaque_colour_as_itself(self):
+        self.assertEqual(design_colour.flatten("#12abEF", "#000000"), "#12abEF")
+        self.assertEqual(design_colour.flatten("#fA0", "#000000"), "#ffAA00")
+
+    def test_composites_a_translucent_colour_over_the_ground(self):
+        self.assertEqual(
+            design_colour.flatten("#00000080", "#FFFFFF"),
+            design_colour.composite("#000000", 0x80 / 255 * 100, "#FFFFFF"),
+        )
+        self.assertEqual(design_colour.flatten("#0008", "#FFFFFF"), "#777777")
+        self.assertEqual(design_colour.flatten("#123456FF", "#FFFFFF"), "#123456")
+        self.assertEqual(design_colour.flatten("#12345600", "#ABCDEF"), "#ABCDEF")
+
+    def test_refuses_anything_but_a_hex_colour(self):
+        for value in ("#12345", "123456", "#12345G", "", "red", "#1234567"):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, re.escape(repr(value))),
+            ):
+                design_colour.flatten(value, "#FFFFFF")

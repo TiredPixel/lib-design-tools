@@ -6,24 +6,28 @@
 set -Eeuo pipefail
 shopt -s inherit_errexit failglob
 
-# Not followed, since a repository linking this runner has no bin/runner beside
-# the link for ShellCheck to find; bin/runner is linted on its own.
-# shellcheck source=/dev/null
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/runner"
-# Declared again for the reason bin/test gives: tools set by bin/runner, and
-# preview_start by bin/settings, which it sources. Declaring one bin/settings
-# leaves unset keeps it unset, so the check below still catches it.
-declare tools preview_start
+prog=${0##*/}
 
+usage() {
+    echo "Usage: $prog" >&2
+    exit 2
+}
+
+[ $# -eq 0 ] || usage
+
+dir=$(dirname "$(dirname "$(readlink -f "$0")")")
+# shellcheck source=SCRIPTDIR/../lib/shell-common/runner/core
+source "$dir/lib/shell-common/runner/core"
 # Unlike the other settings, a variable rather than a function.
 if declare -F preview_start >/dev/null; then
-    echo "bin/settings: preview_start must be a variable, not a function" >&2
+    echo "$prog: bin/settings: preview_start must be a variable, not a function" >&2
     exit 1
 fi
 if [ -z "${preview_start:-}" ]; then
-    echo "bin/settings: preview_start is not set" >&2
+    echo "$prog: bin/settings: preview_start is not set" >&2
     exit 1
 fi
 
+# shellcheck disable=SC2154 # Set by bin/settings, which runner/core sources.
 exec "$tools/preview-serve" --address=0.0.0.0 --port=8080 --root=. \
     --start="$preview_start"

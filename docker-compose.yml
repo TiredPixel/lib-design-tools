@@ -1,61 +1,14 @@
-# The services, which this repository uses itself and another repository links
-# as its own docker-compose.yml. Compose resolves paths against the folder
-# holding the link, so every path here is that repository's: its tree, and its
-# Dockerfile, a link to this one's. Each service runs on the tree the test stage
-# copied, which carries the submodules the linked runners resolve into, and
-# none mounts the whole tree.
 ---
 services:
-  # Runs bin/format, whose writes reach the host only through the paths
-  # bin/format-host mounts by name over the copy, which make format runs; it
-  # sets the variable bin/format refuses to run without, so a bare run formats
-  # nothing. A mount here would need a fixed list, which no tree linking this
-  # file shares.
-  design:
-    build:
-      context: .
-      target: test
-    init: true
-    network_mode: none
-    profiles:
-      - test
-    user: ${DC_BIND_USER:-}
-  # Runs bin/lint, bin/test and bin/coverage on the copy: no mount, so what a
-  # run checks cannot change under it and nothing it writes reaches the host,
-  # and no network, so nothing a page loads can come from outside the tree.
-  # init, as PID 1, reaps the Chromium processes a timeout's kill orphans, and
-  # passes make test's signals on, where bin/test as PID 1 would ignore a TERM
-  # or INT it sets no trap for.
-  design_test:
-    build:
-      context: .
-      target: test
-    environment:
-      - PYTEST_XDIST_AUTO_NUM_WORKERS
-    init: true
-    network_mode: none
-    profiles:
-      - test
-  # bin/preview on the copy, with src/ and preview/, which README.md says hold
-  # everything a preview loads, mounted read-only over it, so an edit there
-  # shows on reload. create_host_path is off, so a missing directory fails the
-  # start rather than being created empty. Under a profile of its own, which
-  # make preview selects, so a bare docker compose up starts nothing a
-  # repository has not asked for. An init process forwards the stop signal,
-  # which Python running as PID 1 would ignore. README.md, Previewing pages,
-  # gives the host port and address.
   preview:
-    build:
+    build: &preview_build
+      args:
+        USER_GID: ${DC_GID:-1000}
+        USER_UID: ${DC_UID:-1000}
       context: .
       target: test
     command:
       - preview
-    healthcheck:
-      test:
-        - CMD
-        - python3
-        - -c
-        - import urllib.request as r; r.urlopen("http://localhost:8080/")
     init: true
     ports:
       - ${DC_PREVIEW_HOST:-127.0.0.1}:${DC_PREVIEW_PORT:-0}:8080
@@ -74,3 +27,27 @@ services:
         source: ./preview
         target: /home/x/r/preview
         type: bind
+  # make format binds the tree's own paths over the copy at run time.
+  tooling:
+    build: *preview_build
+    init: true
+    network_mode: none
+    profiles:
+      - test
+    user: ${DC_BIND_USER:-}
+  # No mount, so what a run checks cannot change under it.
+  tooling_test:
+    build: *preview_build
+    environment:
+      PYTEST_XDIST_AUTO_NUM_WORKERS: ${PYTEST_XDIST_AUTO_NUM_WORKERS:-}
+    init: true
+    network_mode: none
+    profiles:
+      - test
+  # A network, since a project's version mover fetches its releases.
+  tooling_upgrade:
+    build: *preview_build
+    init: true
+    profiles:
+      - test
+    user: ${DC_BIND_USER:-}

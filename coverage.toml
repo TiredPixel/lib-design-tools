@@ -1,0 +1,10 @@
+[tool.coverage.html]
+directory = "${COVERAGE_RUN_DIR?}/report/python"
+
+[tool.coverage.run]
+branch = true
+data_file = "${COVERAGE_RUN_DIR?}/python/.coverage"
+# Absolute, since a test may start Python in a scratch directory, where a
+# relative path would match nothing.
+include = ["${COVERAGE_ROOT?}/*"]
+parallel = true
