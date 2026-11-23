@@ -3,6 +3,7 @@
 import contextlib
 import io
 import pathlib
+import re
 import struct
 import zipfile
 
@@ -43,6 +44,7 @@ DOCUMENT_RELS = (
     '<Relationship Id="rId2" Target="https://example.org/" TargetMode="External" '
     'Type="t"/></Relationships>'
 )
+TYPES = "[Content_Types].xml"
 PARTS = {
     "[Content_Types].xml": (
         '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
@@ -99,8 +101,15 @@ def font(family, subfamily):
 
 class OoxmlCheckTest(temp_tree.TempTreeTestCase):
     def package(self, **changes):
-        """The template, each part in CHANGES set to its text, or left out for None."""
+        """The template, each part in CHANGES set to its text, or left out for None.
+
+        A part left out loses its Override too, as a template without it has none.
+        """
         parts = {k: v for k, v in {**PARTS, **changes}.items() if v is not None}
+        for name in (k for k, v in changes.items() if v is None and TYPES in parts):
+            parts[TYPES] = re.sub(
+                f'<Override PartName="/{re.escape(name)}"[^>]*/>', "", parts[TYPES]
+            )
         path = self.root / "a.dotx"
         with zipfile.ZipFile(path, "w") as archive:
             for name, text in parts.items():
@@ -221,6 +230,44 @@ class OoxmlCheckTest(temp_tree.TempTreeTestCase):
         self.assertIn(
             f"{path}: word/styles.xml: no paragraph style Abstract, which pandoc reads",
             lines,
+        )
+
+    def test_a_face_turned_off_is_not_looked_for(self):
+        fonts = self.root / "fonts"
+        fonts.mkdir()
+        (fonts / "A-Regular.ttf").write_bytes(font("A", "Regular"))
+        for value in ("0", "false", "off"):
+            with self.subTest(value=value):
+                styles = STYLES.replace("<w:b/>", f'<w:b w:val="{value}"/>')
+                self.assertProblems(
+                    self.package(**{"word/styles.xml": styles}),
+                    arguments=("--fonts", fonts),
+                )
+
+    def test_an_override_for_no_part_or_retyping_relationships(self):
+        types = PARTS["[Content_Types].xml"].replace(
+            "</Types>",
+            '<Override PartName="/word/gone.xml" ContentType="application/xml"/>'
+            '<Override PartName="/_rels/.rels" ContentType="application/xml"/></Types>',
+        )
+        self.assertProblems(
+            self.package(**{"[Content_Types].xml": types}),
+            "[Content_Types].xml: Override names word/gone.xml, which is no part",
+            "[Content_Types].xml: Override types _rels/.rels as no relationships part",
+        )
+
+    def test_an_override_without_a_content_type(self):
+        types = PARTS["[Content_Types].xml"].replace(
+            f'<Override PartName="/word/document.xml" ContentType="{MAIN}.document.'
+            'main+xml"/>',
+            '<Override PartName="/word/document.xml"/>',
+        )
+        self.assertNotEqual(types, PARTS["[Content_Types].xml"])
+        self.assertProblems(
+            self.package(**{"[Content_Types].xml": types}),
+            "[Content_Types].xml: Override for /word/document.xml has no ContentType",
+            f"word/document.xml: has no Override, only the {ooxml_check.GENERIC} "
+            "Default",
         )
 
     def test_each_style_face_is_shipped(self):
@@ -360,6 +407,39 @@ class OoxmlCheckTest(temp_tree.TempTreeTestCase):
             self.package(**{"word/_rels/document.xml.rels": rels}),
             "word/_rels/document.xml.rels: rId1 targets ../../out.xml, which is no "
             "part",
+        )
+
+    def test_a_relationship_without_an_id(self):
+        rels = DOCUMENT_RELS.replace('Id="rId2" ', "")
+        self.assertNotEqual(rels, DOCUMENT_RELS)
+        self.assertProblems(
+            self.package(**{"word/_rels/document.xml.rels": rels}),
+            "word/_rels/document.xml.rels: Relationship has no Id",
+        )
+
+    def test_an_external_relationship_without_a_target(self):
+        rels = DOCUMENT_RELS.replace('Target="https://example.org/" ', "")
+        self.assertNotEqual(rels, DOCUMENT_RELS)
+        self.assertProblems(
+            self.package(**{"word/_rels/document.xml.rels": rels}),
+            "word/_rels/document.xml.rels: Relationship has no Target",
+        )
+
+    def test_a_package_without_its_rels(self):
+        self.assertProblems(
+            self.package(**{"_rels/.rels": None}),
+            "_rels/.rels: is missing, so the package names no document",
+        )
+
+    def test_a_list_definition_without_its_id(self):
+        numbering = NUMBERING.replace(' w:abstractNumId="1"/>', "/>").replace(
+            '<w:num w:numId="1">', "<w:num>"
+        )
+        self.assertProblems(
+            self.package(**{"word/numbering.xml": numbering}),
+            "word/document.xml: numId 1 is not defined",
+            "word/numbering.xml: abstractNum has no w:abstractNumId",
+            "word/numbering.xml: num has no w:numId",
         )
 
     def test_a_part_without_its_rels(self):

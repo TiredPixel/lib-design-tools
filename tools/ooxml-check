@@ -29,6 +29,8 @@ import zipfile
 import design_ttf
 
 CONTENT_TYPES = "[Content_Types].xml"
+PACKAGE_RELS = "_rels/.rels"
+RELS_TYPE = "application/vnd.openxmlformats-package.relationships+xml"
 CT = "{http://schemas.openxmlformats.org/package/2006/content-types}"
 PR = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -202,8 +204,17 @@ def content_type_problems(template):
     for override in types.iter(f"{CT}Override"):
         if problem := missing(override, "PartName"):
             yield CONTENT_TYPES, problem
+        elif not override.get("ContentType"):
+            # Left out of the parts covered, so the part is reported as well.
+            part = override.get("PartName")
+            yield CONTENT_TYPES, f"Override for {part} has no ContentType"
         else:
-            overrides.add(override.get("PartName").lstrip("/"))
+            part = override.get("PartName").lstrip("/")
+            overrides.add(part)
+            if part not in template.parts:
+                yield CONTENT_TYPES, f"Override names {part}, which is no part"
+            elif part.endswith(".rels") and override.get("ContentType") != RELS_TYPE:
+                yield CONTENT_TYPES, f"Override types {part} as no relationships part"
     for path in template.parts:
         _, dot, extension = posixpath.basename(path).rpartition(".")
         default = defaults.get(extension.lower()) if dot else None
@@ -216,13 +227,15 @@ def content_type_problems(template):
 
 
 def relationship_problems(template):
+    if PACKAGE_RELS not in template.data:
+        yield PACKAGE_RELS, "is missing, so the package names no document"
     for rels in (p for p in template.parts if p.endswith(".rels")):
         source = posixpath.dirname(posixpath.dirname(rels))
         for rel in template.root(rels).iter(f"{PR}Relationship"):
-            if rel.get("TargetMode") == "External":
-                continue
-            if problem := missing(rel, "Target"):
+            if problem := missing(rel, "Id") or missing(rel, "Target"):
                 yield rels, problem
+                continue
+            if rel.get("TargetMode") == "External":
                 continue
             target = rel.get("Target")
             resolved = (
@@ -315,10 +328,15 @@ def numbering_problems(template):
                     yield part, problem
                 elif val(num_id) not in nums | {"0"}:
                     yield part, f"numId {val(num_id)} is not defined"
+        for abstract in numbering.iter(f"{W}abstractNum"):
+            if problem := missing(abstract, f"{W}abstractNumId"):
+                yield path, problem
         for num in numbering.iter(f"{W}num"):
             num_id = num.get(f"{W}numId")
             abstract = num.find(f"{W}abstractNumId")
-            if abstract is None:
+            if problem := missing(num, f"{W}numId"):
+                yield path, problem
+            elif abstract is None:
                 yield path, f"num {num_id}: has no abstractNumId"
             elif problem := missing(abstract, f"{W}val"):
                 yield path, f"num {num_id}: {problem}"
@@ -396,7 +414,8 @@ def face_problems(template, faces):
         return None if defaults is None else defaults.find(W + tag)
 
     def on(element):
-        return element is not None and val(element) not in ("0", "false")
+        # Each value ST_OnOff reads as off; with no value, the element turns it on.
+        return element is not None and val(element) not in ("0", "false", "off")
 
     for style_id, style in by_id.items():
         # A tblStylePr without a type, which style_problems reports, sets no condition.
