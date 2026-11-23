@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""Usage: fonts-upgrade DIRECTORY
+
+Replaces each font and licence file DIRECTORY/SHA256SUMS lists with its counterpart from
+its publisher's latest release on GitHub, then rewrites SHA256SUMS from the files
+written and DIRECTORY/RELEASES, which holds the release each publisher's files come
+from, as a line "OWNER/REPO TAG" for each. Prints a line "OWNER/REPO OLD -> NEW" on
+stdout for each publisher whose release moved.
+
+DIRECTORY/families.toml names the publishers, one [[family]] table each: the prefix
+its files' names start with, then a hyphen; its GitHub repository; in
+[family.directories], the directory holding each kind of font in the release's .zip
+assets, by suffix; and licences-from-repository, true where its licence is taken from
+the repository's root at the release's tag. A font, a .ttf or .woff2, is the one file
+carrying its name in such a directory, at any depth; a licence is named the prefix, a
+hyphen and the publisher's own name for it, taken from the top of the release's assets,
+where a file sits in no directory or in one alone, and where they lack it, from the
+repository's root at the release's tag. Everything is downloaded and checked before
+anything is written, so a release lacking a font, or a licence its repository also
+lacks at the tag, or holding either twice, writes nothing.
+
+Requests to GitHub's API carry the token in GH_TOKEN, else GITHUB_TOKEN, where either is
+set.
+"""
+
+import dataclasses
+import hashlib
+import io
+import json
+import os
+import pathlib
+import sys
+import tomllib
+import urllib.error
+import urllib.parse
+import urllib.request
+import warnings
+import zipfile
+
+PROGRAM = "fonts-upgrade"
+API = "https://api.github.com"
+# Files at a tag, served outside the API, so they count against none of its limits.
+RAW = "https://raw.githubusercontent.com"
+# Bounded, so a stalled server fails the run rather than hanging it.
+TIMEOUT_S = 60
+SUMS = "SHA256SUMS"
+RELEASES = "RELEASES"
+FAMILIES = "families.toml"
+# A macOS archiver's resource forks, which carry a file's name but not the file.
+RESOURCE_FORKS = "__MACOSX/"
+
+
+@dataclasses.dataclass(frozen=True)
+class Family:
+    prefix: str
+    repository: str
+    # The directory holding each kind of font in the release's archives, by suffix: the
+    # publisher's static cuts, which another directory may hold under the same name.
+    directories: tuple[tuple[str, str], ...]
+    licences_from_repository: bool
+
+    def directory(self, name):
+        for suffix, directory in self.directories:
+            if name.endswith(suffix):
+                return directory
+        return None
+
+
+class Refusal(Exception):
+    """A reason the upgrade cannot go ahead, printed after the program's name."""
+
+
+class Missing(Refusal):
+    """A file the release's assets do not hold where it is looked for."""
+
+
+def fetch(url, accept="application/vnd.github+json"):
+    """The body at URL, following redirects."""
+    headers = {"Accept": accept, "X-GitHub-Api-Version": "2022-11-28"}
+    # Without a token the API's rate limit is low and counts every request from the
+    # address, whatever made it (GitHub's REST API docs, Rate limits for the REST API).
+    # Only the API's own requests carry the token, since urllib passes it on through a
+    # redirect to another host.
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token and url.startswith(f"{API}/"):
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:
+            return response.read()
+    except urllib.error.HTTPError as error:
+        # It holds the response open until closed.
+        error.close()
+        raise Refusal(f"{url}: {error}") from error
+    except (urllib.error.URLError, TimeoutError) as error:
+        raise Refusal(f"{url}: {error}") from error
+
+
+def read_families(directory):
+    """The publishers families.toml names, in its order."""
+    with (directory / FAMILIES).open("rb") as file:
+        table = tomllib.load(file)
+    return tuple(
+        Family(
+            family["prefix"],
+            family["repository"],
+            tuple(family["directories"].items()),
+            family.get("licences-from-repository", False),
+        )
+        for family in table["family"]
+    )
+
+
+def read_releases(directory, families):
+    """Each publisher's repository and the tag its files come from."""
+    path = directory / RELEASES
+    releases = dict(line.split(" ") for line in path.read_text().splitlines())
+    expected = {family.repository for family in families}
+    if set(releases) != expected:
+        raise Refusal(f"{path}: lists {sorted(releases)}, not {sorted(expected)}")
+    return releases
+
+
+def read_names(directory):
+    """The names SHA256SUMS lists, each a file of DIRECTORY's own.
+
+    A name with a directory in it, or one that is a symbolic link, would carry the write
+    out of DIRECTORY, and SHA256SUMS and RELEASES are written through as well.
+    """
+    names = [
+        line.partition("  ")[2] for line in (directory / SUMS).read_text().splitlines()
+    ]
+    for name in names:
+        if name in ("", ".", "..", SUMS, RELEASES, FAMILIES) or "/" in name:
+            raise Refusal(f"{directory / SUMS}: {name!r} is not a file of {directory}")
+    for name in (*names, SUMS, RELEASES):
+        if (directory / name).is_symlink():
+            raise Refusal(f"{directory / name}: is a symbolic link")
+    return names
+
+
+def latest(fetch, repository):
+    """The latest release's tag and the archives among its assets.
+
+    Each is checked against the SHA-256 digest GitHub gives for it, where it gives one.
+    """
+    release = json.loads(fetch(f"{API}/repos/{repository}/releases/latest"))
+    tag = release["tag_name"]
+    archives = []
+    for asset in release["assets"]:
+        if not asset["name"].endswith(".zip"):
+            continue
+        content = fetch(asset["browser_download_url"], "application/octet-stream")
+        digest = asset.get("digest")
+        if digest is not None:
+            expected = digest.partition(":")[2]
+            if hashlib.sha256(content).hexdigest() != expected:
+                raise Refusal(f"{asset['name']}: does not match its digest")
+        try:
+            archive = zipfile.ZipFile(io.BytesIO(content))
+        except zipfile.BadZipFile as error:
+            raise Refusal(f"{asset['name']}: {error}") from error
+        archives.append((asset["name"], archive))
+    return tag, archives
+
+
+def member(archives, name, release, directory):
+    """The one file named NAME in ARCHIVES whose parent is named DIRECTORY.
+
+    Where DIRECTORY is None, it is the one that sits in no directory or in one alone.
+    """
+    found = []
+    for archive_name, archive in archives:
+        for info in archive.infolist():
+            if info.is_dir() or info.filename.startswith(RESOURCE_FORKS):
+                continue
+            parts = info.filename.split("/")
+            if parts[-1] != name:
+                continue
+            if directory is None:
+                placed = len(parts) <= 2
+            else:
+                placed = len(parts) >= 2 and parts[-2] == directory
+            if placed:
+                found.append((archive_name, archive, info))
+    where = "at the top of" if directory is None else f"in a {directory}/ of"
+    if not found:
+        raise Missing(f"{release}: no {name} {where} its assets")
+    if len(found) > 1:
+        listed = ", ".join(f"{a}:{info.filename}" for a, _, info in found)
+        raise Refusal(f"{release}: {name} more than once {where} its assets: {listed}")
+    _, archive, info = found[0]
+    return archive.read(info)
+
+
+def repository_file(fetch, repository, tag, name):
+    ref = urllib.parse.quote(tag)
+    url = f"{RAW}/{repository}/refs/tags/{ref}/{urllib.parse.quote(name)}"
+    return fetch(url, "application/octet-stream")
+
+
+def upgrade(directory, fetch):
+    """Writes the latest releases' files into DIRECTORY; returns the moves."""
+    # A link at DIRECTORY, or on the way to it from here, would carry every write to
+    # wherever it points.
+    for path in (directory, *(() if directory.is_absolute() else directory.parents)):
+        if path.is_symlink():
+            raise Refusal(f"{path}: is a symbolic link")
+    families = read_families(directory)
+    held = read_releases(directory, families)
+    by_family = {family: [] for family in families}
+    for name in read_names(directory):
+        family = next((f for f in families if name.startswith(f.prefix + "-")), None)
+        if family is None:
+            raise Refusal(f"{directory / SUMS}: {name} is of no family in {FAMILIES}")
+        by_family[family].append(name)
+
+    contents = {}
+    tags = {}
+    for family, family_names in by_family.items():
+        tag, archives = latest(fetch, family.repository)
+        tags[family.repository] = tag
+        release = f"{family.repository} {tag}"
+        print(f"{PROGRAM}: {release}: the latest release", file=sys.stderr)
+        for name in family_names:
+            directory_in_archive = family.directory(name)
+            if directory_in_archive is not None:
+                contents[name] = member(archives, name, release, directory_in_archive)
+                continue
+            own = name[len(family.prefix) + 1 :]
+            if family.licences_from_repository:
+                contents[name] = repository_file(fetch, family.repository, tag, own)
+                continue
+            try:
+                contents[name] = member(archives, own, release, None)
+            except Missing as missing:
+                try:
+                    contents[name] = repository_file(fetch, family.repository, tag, own)
+                except Refusal as refusal:
+                    raise Refusal(f"{missing}, and {refusal}") from refusal
+
+    for name, content in contents.items():
+        (directory / name).write_bytes(content)
+    (directory / SUMS).write_text(
+        "".join(
+            f"{hashlib.sha256(contents[name]).hexdigest()}  {name}\n"
+            for name in sorted(contents)
+        )
+    )
+    (directory / RELEASES).write_text(
+        "".join(f"{repository} {tags[repository]}\n" for repository in sorted(tags))
+    )
+    return [
+        f"{repository} {held[repository]} -> {tags[repository]}"
+        for repository in sorted(tags)
+        if tags[repository] != held[repository]
+    ]
+
+
+def main(argv, fetch=fetch):
+    warnings.simplefilter("error")
+    if len(argv) != 1 or argv[0].startswith("-"):
+        print(f"Usage: {PROGRAM} DIRECTORY", file=sys.stderr)
+        return 2
+    try:
+        moves = upgrade(pathlib.Path(argv[0]), fetch)
+    except Refusal as refusal:
+        print(f"{PROGRAM}: {refusal}", file=sys.stderr)
+        return 1
+    for move in moves:
+        print(move)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

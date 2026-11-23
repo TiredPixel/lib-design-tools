@@ -26,16 +26,13 @@ these files, such as a sibling site, so a reference to it need not resolve. It m
 where a reference lands, decoded and normalised, so ``/es``, ``/es/?q``, ``/%65s`` and,
 from ``/docs/page.html``, ``../es/`` all match ``--unresolved /es``, which may itself be
 percent-encoded. Only a reference that loads nothing into the page, as under
-``--no-external``, may be exempt, since a page missing what it loads is broken. An
-exemption is stale, and fails, when its path resolves or nothing references it, so that
-none outlives its reason; that nothing references it is not claimed where a file could
-not be read, since that file may hold the reference.
+``--no-external``, may be exempt, since a page missing what it loads is broken.
 
 Exit status: 0 when every file passes, 1 when a reference does not resolve, an external
 stylesheet or script lacks ``integrity`` or ``crossorigin`` under
 ``--require-integrity``, something external loads under ``--no-external``, an exempt
-reference loads into the page, an exemption is stale, or a file holds a ``<base>``
-element or is not valid UTF-8, and 2 on a usage error.
+reference loads into the page, or a file holds a ``<base>`` element or is not valid
+UTF-8, and 2 on a usage error.
 """
 
 from __future__ import annotations
@@ -562,10 +559,9 @@ def _resolve_key(
 
 @dataclasses.dataclass
 class Exemptions:
-    """The ``--unresolved`` paths as given, by root key, and the keys matched so far."""
+    """The ``--unresolved`` paths as given, by root key."""
 
     paths: dict[str, str] = dataclasses.field(default_factory=dict)
-    used: set[str] = dataclasses.field(default_factory=set)
 
 
 def _problem(
@@ -592,7 +588,6 @@ def _problem(
     if key is None:
         return f"{shown} resolves outside --root"
     if key in exemptions.paths:
-        exemptions.used.add(key)
         if loads:
             return f"{shown} is exempt by --unresolved but loads into the page"
         return None
@@ -863,28 +858,10 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     return arguments
 
 
-def stale_exemptions(
-    exemptions: Exemptions, root: pathlib.Path, every_file_read: bool
-) -> Iterator[str]:
-    """Yield why each exemption is stale, in the order given.
-
-    An exemption is stale where its path resolves, or no reference matched it.
-
-    That no reference matched is said only when ``every_file_read``, since the only one
-    may sit in a file that could not be read, which has already failed.
-    """
-    for key, given in exemptions.paths.items():
-        if _resolve_key(given, key, root) is None:
-            yield f"--unresolved {given} resolves, so needs no exemption"
-        elif every_file_read and key not in exemptions.used:
-            yield f"--unresolved {given} matches no reference"
-
-
 def main(argv: list[str] | None = None) -> int:
     arguments = parse_arguments(argv)
     exemptions = arguments.exemptions
     failures = 0
-    every_file_read = True
     for path in arguments.files:
         try:
             if path.suffix.lower() in design_render.HTML_SUFFIXES:
@@ -904,14 +881,10 @@ def main(argv: list[str] | None = None) -> int:
                 f"references-check: {path}: not valid UTF-8: {error}", file=sys.stderr
             )
             failures += 1
-            every_file_read = False
             continue
         for line, message in problems:
             print(f"{path}:{line}: {message}", file=sys.stderr)
         failures += len(problems)
-    for message in stale_exemptions(exemptions, arguments.root, every_file_read):
-        print(f"references-check: {message}", file=sys.stderr)
-        failures += 1
     print(
         f"references-check: checked {len(arguments.files)} file(s): "
         f"{failures} problem(s)",

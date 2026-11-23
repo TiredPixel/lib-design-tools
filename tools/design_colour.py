@@ -2,8 +2,9 @@
 
 Every colour is an opaque sRGB hex string, ``#RGB`` or ``#RRGGBB`` in either case; any
 other string, an alpha form included, raises ValueError, since a translucent colour has
-no contrast or Lab value until it is composited over a ground with ``composite``.
-Nothing here reads a file.
+no contrast or Lab value until it is composited over a ground. ``flatten`` alone takes
+the alpha forms, ``#RGBA`` and ``#RRGGBBAA``, and composites them. Nothing here reads a
+file.
 """
 
 import itertools
@@ -12,6 +13,7 @@ import re
 from collections.abc import Iterable
 
 _HEX = re.compile(r"#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})")
+_ALPHA_HEX = re.compile(r"#([0-9A-Fa-f]{4}|[0-9A-Fa-f]{8})")
 
 # Linear sRGB to CIE XYZ, derived from the IEC 61966-2-1 primaries and D65.
 SRGB_TO_XYZ = (
@@ -76,6 +78,26 @@ def composite(colour: str, percent: float, ground: str) -> str:
         for c, g in zip(channels(colour), channels(ground), strict=True)
     )
     return "#" + "".join(f"{c:02X}" for c in mixed)
+
+
+def flatten(colour: str, ground: str) -> str:
+    """COLOUR as the #RRGGBB it shows over the opaque GROUND.
+
+    An opaque colour is returned as itself, a #RGB one expanded digit by digit; a
+    #RGBA or #RRGGBBAA one is composited over GROUND at its alpha.
+    """
+    if _HEX.fullmatch(colour):
+        if len(colour) == 4:
+            return "#" + "".join(digit * 2 for digit in colour[1:])
+        return colour
+    if _ALPHA_HEX.fullmatch(colour) is None:
+        raise ValueError(
+            f"{colour!r} is not a #RGB, #RGBA, #RRGGBB or #RRGGBBAA colour"
+        )
+    digits = colour[1:]
+    if len(digits) == 4:
+        digits = "".join(digit * 2 for digit in digits)
+    return composite("#" + digits[:6], int(digits[6:], 16) / 255 * 100, ground)
 
 
 def _f(t: float) -> float:

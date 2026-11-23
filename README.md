@@ -1,35 +1,36 @@
 # lib-design-tools
 
-Tools for working on a design system, or on a design built on one: generating a palette's CSS and JSON, checking that pages load and render, colour maths for a design's own tests, a preview server, and a container image to run them in. A repository takes the parts it wants as a submodule and calls them; nothing here checks, rewrites or tests a repository that has not asked for it.
-
-## Requirements
-
-Working on this repository, or on one that takes it as a submodule, needs:
-
-- Docker Engine or Docker Desktop with Compose v2
-- `git` with submodule support
-- GNU `make` 3.82 or later
-- `bash` 4.4 or later
-
-Upgrading this repository's pins (*Upgrading the pins*) runs `docker/upgrade` on the host, so it also needs `curl`, `jq`, `sha256sum` and `timeout` there.
+Tools for working on a design system, or on a design built on one: generating a palette's CSS and JSON, checking that pages load and render, colour maths and font checks for a design's own tests, a preview server, moving fonts to their latest releases, building and checking Word templates, and a container image to run them in. A repository takes the parts it wants as a submodule and calls them; nothing here checks, rewrites or tests a repository that has not asked for it.
 
 ## Using the tools
 
 Each command prints its usage with `--help`.
 
 - `tools/palette-generate` – the JSON and the CSS from a palette YAML, one custom property per colour; `--check` compares them with the files instead of writing. A property is named `--`, the `--prefix` given and a hyphen, then the full YAML key path, lowercased, with `_` written as `-` and list items numbered from 1, so `greys: {warm: [a, b]}` with prefix `x` gives `--x-greys-warm-1` and `--x-greys-warm-2`; a key that would put anything but letters, digits, hyphens or non-ASCII characters in a name fails the run, as do two leaves that come out with the same name, a YAML that holds no colour at all or whose top level is not a mapping, a value starting with `#` that is not a `#RGB`, `#RGBA`, `#RRGGBB` or `#RRGGBBAA` colour, and a value left empty, as an unquoted `#` colour is, since YAML reads it as a comment. Aliases and merge keys are expanded in both outputs alike.
-- `tools/references-check` – every local reference in HTML and CSS resolves under `--root`: each attribute that loads or links something, such as `href`, `src`, `srcset`, `imagesrcset`, `poster` and `data`, a refresh's target, and each `url()`, `@import` and `image-set()` string, SVG's `href` and `xlink:href` included, but not an `@namespace` rule's URL, which is never fetched. A reference that leaves `--root` fails, as does one to a directory with no `index.html` or `index.htm` or to a file written with a trailing slash, which a server answers with 404, and so does a file that holds a `<base>` element, which changes how every reference resolves, or that is not valid UTF-8. `--no-external` refuses anything external a page loads, and `--require-integrity` requires `integrity` and `crossorigin` on every external stylesheet and script, and fails any external script loaded by `href` or `xlink:href`, as SVG's is, since SVG's `script` takes no `integrity`. `--unresolved PATH`, repeatable, exempts a `/`-rooted path served by something else, such as a sibling site, for a link, an `area`, a refresh or a `link` whose every `rel` loads nothing, matching wherever a reference lands, query and fragment aside; an exempt path that something loads into the page fails, as does an exemption whose path resolves or that nothing references.
+- `tools/references-check` – every local reference in HTML and CSS resolves under `--root`: each attribute that loads or links something, such as `href`, `src`, `srcset`, `imagesrcset`, `poster` and `data`, a refresh's target, and each `url()`, `@import` and `image-set()` string, SVG's `href` and `xlink:href` included, but not an `@namespace` rule's URL, which is never fetched. A reference that leaves `--root` fails, as does one to a directory with no `index.html` or `index.htm` or to a file written with a trailing slash, which a server answers with 404, and so does a file that holds a `<base>` element, which changes how every reference resolves, or that is not valid UTF-8. `--no-external` refuses anything external a page loads, and `--require-integrity` requires `integrity` and `crossorigin` on every external stylesheet and script, and fails any external script loaded by `href` or `xlink:href`, as SVG's is, since SVG's `script` takes no `integrity`. `--unresolved PATH`, repeatable, exempts a `/`-rooted path served by something else, such as a sibling site, for a link, an `area`, a refresh or a `link` whose every `rel` loads nothing, matching wherever a reference lands, query and fragment aside; an exempt path that something loads into the page fails.
 - `tools/render-check` – each page loaded in headless Chromium, failing on an uncaught error, an unhandled rejection, a `console.error`, a failed load the page or its stylesheets start, such as an image, script, stylesheet, `@import`, font or background image, or an element matching `--error-marker`, and on a page Chromium fails or times out on, or where the browser cannot report failed loads started from CSS. A request the page's own script makes, such as `fetch`, is left to the script; the page's icon is not checked, and a load from another origin that does not use CORS counts only where its element reports an error.
 - `tools/preview-serve` – the tree as it is on disk, for previewing while editing: nothing cached, dot paths and paths outside the tree refused and left out of listings, directories listed, and `/` redirected to `--start`, the page the preview opens on. For development only.
-- `tools/kcov-report` – a Cobertura report, as kcov or c8 writes one for `bin/coverage`, printed as pytest-cov's term-missing report: a header, a line for each file, named relative to `ROOT` where it lies inside it, with its statements, misses, percentage covered and missing lines, and a `TOTAL` line. A statement is a line of a class's own, not the line a method is declared on, which c8's report also lists. A file it cannot read, that is not a Cobertura report it can read or that measures no file fails the run.
+- `tools/kcov-report` – a Cobertura report, such as kcov or c8 writes, printed as pytest-cov's term-missing report: a header, a line for each file, named relative to `ROOT` where it lies inside it, with its statements, misses, percentage covered and missing lines, and a `TOTAL` line. A statement is a line of a class's own, not the line a method is declared on, which c8's report also lists. A file it cannot read, that is not a Cobertura report it can read or that measures no file fails the run.
+- `tools/fonts-upgrade` – the font and licence files a fonts directory's `SHA256SUMS` lists, moved to each publisher's latest GitHub release, as its `families.toml` describes the publishers, with `SHA256SUMS` and `RELEASES` rewritten; it prints a line `OWNER/REPO OLD -> NEW` for each publisher that moved (*Laying out the repository*).
+- `tools/ooxml-check` – each Word template's parts checked against each other: content types, relationships, and the styles, lists and fonts each part names; `--pandoc` also checks the style ids pandoc's docx writer reads, and `--fonts DIR` that each style's face is one a TrueType file in `DIR` names.
 
 Importable from a repository's own Python tests, with `tools/` on the path, as `bin/test` puts it:
 
-- `tools/design_colour.py` – colour maths on opaque `#RGB` and `#RRGGBB` colours: WCAG luminance and contrast, compositing a colour at a given opacity over a ground, CIELAB lightness, chroma and hue, which a grey, black or white has none of, so asking for it raises `ValueError`, the gap and spread between hues and whether one lies on the shorter arc between two others that are not opposite, and CIE76 ΔE.
-- `tools/design_render.py` – the harness under `render-check`: serving a tree, rendering a page or printing it to PDF in headless Chromium, and reading what it reports.
-- `tools/pytest_no_skips.py` – a pytest plugin, which `bin/test` loads, adding `--no-skips`, which fails a run in which any test skipped.
+- `tools/design_colour.py` – colour maths on opaque `#RGB` and `#RRGGBB` colours: WCAG luminance and contrast, compositing a colour at a given opacity over a ground, CIELAB lightness, chroma and hue, which a grey, black or white has none of, so asking for it raises `ValueError`, the gap and spread between hues and whether one lies on the shorter arc between two others that are not opposite, CIE76 ΔE, and `flatten`, which takes the alpha forms `#RGBA` and `#RRGGBBAA` too and gives the opaque colour one shows over a ground.
+- `tools/design_render.py` – the harness under `render-check`: serving a tree, rendering a page, printing it to PDF or taking a screenshot of it in headless Chromium, and reading what it reports.
+- `tools/pytest_no_skips.py` – a pytest plugin, which `bin/test` and `bin/coverage` load, adding `--no-skips`, which fails a run in which any test skipped.
+- `tools/design_ttf.py` – a TrueType font's tables, and its Windows Unicode BMP US English names, the ones Word reads.
+- `tools/design_fonts.py` – a fonts directory checked against its `SHA256SUMS`, and the `@font-face` rules of a stylesheet against the font files they name, each `url()` read against the stylesheet, taking the formats each face must carry, such as `("woff2", "truetype")`.
 
 ## Adding the tools to a repository
+
+A repository taking this one needs:
+
+- Docker Engine or Docker Desktop with Compose v2
+- `git` with submodule support
+- GNU `make` 3.82 or later
+- `bash` 4.4 or later
+- for `make coverage`, `tar`, which unpacks its report on the host
 
 A repository takes this one at `lib/design-tools`, cloned recursively, since the runners use its own `lib/shell-common`:
 
@@ -42,7 +43,9 @@ Each part below is taken on its own. A tool needs nothing here outside `tools/` 
 
 ### Laying out the repository
 
-A repository using the services keeps its designs in `src/` and the page the preview opens on in `preview/`, and everything a preview loads in one of the two, since the `preview` service mounts only those (*Previewing pages*). A file a pass generates, such as a palette's CSS and JSON, lives in a directory `make format` mounts whole, such as `src/`, one holding no ignored path and no submodule: it mounts only the paths that exist when it starts, and takes any other directory entry by entry (*Running the make targets*), so a new file written anywhere else stays in the container's copy and is lost without a word.
+A repository using the services keeps its designs in `src/` and the page the preview opens on in `preview/`, and everything a preview loads in one of the two, since the `preview` service mounts only those (*Previewing pages*). A file a pass generates, such as a palette's CSS and JSON, lives in a directory `make format` binds whole, such as `src/`, one holding no ignored path and no submodule: it binds only the paths that exist when it starts, and takes any other directory entry by entry (lib-shell-common's `runner/format-host`), so a new file written anywhere else stays in the container's copy and is lost without a word.
+
+A repository whose fonts `make upgrade-fonts` moves keeps them in `src/fonts`, with `SHA256SUMS`, `RELEASES` and `families.toml`, a `[[family]]` table for each publisher that `tools/fonts-upgrade` reads.
 
 ### Linking the image
 
@@ -59,7 +62,7 @@ A repository leaves the link out of `docker_files`, since the file is not its ow
 
 The image's `org.opencontainers.image.source` label takes the build argument `IMAGE_SOURCE`, defaulting to this repository's URL, so a repository that pushes the image passes its own, as in `--build-arg IMAGE_SOURCE=https://github.com/OWNER/REPO`.
 
-The `wheels` and `dev` stages bind-mount `Dockerfile.lock` whole from the repository's tree wherever they read a lock, since through a link BuildKit resolves only the first path below it, so a linked lock builds as a copied one does, even with `dev` built alone. The test stage copies the whole tree. So the repository's `.dockerignore` keeps `.git`, `.env`, `tmp/` and anything local out of it, and must not exclude `Dockerfile.lock` or the submodule. Excluding every top-level dot path, `/.*`, and letting the repository's own dot files back in by name, such as `!/.github`, keeps a per-user directory such as `.claude` out without naming it. A submodule is a checkout too, with a `.env`, `tmp/` and Compose override of its own, so the same exclusions are repeated for each depth submodules sit at, as `/lib/*/.*`, `/lib/*/docker-compose.*.yml` and `/lib/*/tmp/`, and under `/lib/*/lib/*/` for this repository's own submodule.
+The `wheels` and `dev` stages bind-mount `Dockerfile.lock` whole from the repository's tree wherever they read a lock, since through a link BuildKit resolves only the first path below it, so a linked lock builds as a copied one does, even with `dev` built alone. The test stage copies the whole tree. So the repository's `.dockerignore` keeps `.git`, `.env`, `tmp/` and anything local out of it, and must not exclude `Dockerfile.lock` or the submodule. Excluding every top-level dot path, `/.*`, and letting the repository's own dot files back in by name, such as `!/.github`, keeps a per-user directory out without naming it. A submodule is a checkout too, with a `.env` and `tmp/` of its own, so the same exclusions are repeated for each depth submodules sit at, as `/lib/*/.*` and `/lib/*/tmp/`, and under `/lib/*/lib/*/` for this repository's own submodule. A repository that links or extends a dot file of this one, such as `.yamllint.yaml`, lets its target back in by name, as `!/lib/design-tools/.yamllint.yaml`.
 
 A repository's CI keeps a registry build cache of its own through the scripts in this repository's `lib/shell-common`. It names its own image in `.dockerrepo`, at its root, which the scripts read:
 
@@ -99,7 +102,7 @@ cache:
 
 ### Linking the runners
 
-`bin/format`, `bin/lint`, `bin/test`, `bin/coverage` and `bin/preview` run in the image, from the repository's root, and do only what the repository's own `bin/settings` names (*Configuring the passes*). A repository links the ones it uses; each finds this repository by resolving its link:
+`bin/format`, `bin/lint`, `bin/test`, `bin/coverage` and `bin/preview` run in the image, from the repository's root, and do only what the repository's own `bin/settings` names (*Configuring the passes*). `bin/lint` and `bin/format` are links to lib-shell-common's runners in `lib/shell-common/runner/`. A repository links the ones it uses; each finds this repository by resolving its link:
 
 ```sh
 mkdir -p bin
@@ -108,50 +111,47 @@ for runner in format lint test coverage preview; do ln -s "../lib/design-tools/b
 
 ### Linking the services
 
-This repository's `docker-compose.yml` holds the `design`, `design_test` and `preview` services, which run the runners in the image. A repository links it, and Compose resolves every path in it, and reads `.env`, against the repository holding the link:
+This repository's `docker-compose.yml` holds the `preview`, `tooling`, `tooling_test` and `tooling_upgrade` services, which run the runners in the image. A repository links it, and Compose resolves every path in it, and reads `.env`, against the repository holding the link:
 
 ```sh
 ln -s lib/design-tools/docker-compose.yml docker-compose.yml
 ```
 
-The `design` and `design_test` services sit under the `test` profile, which `make build`, `make coverage`, `make format`, `make lint` and `make test` pass, and the `preview` service under the `preview` profile, which `make preview` selects, so a bare `docker compose up` starts no service. Every service runs from `test`, on the image's copy of the tree, and none mounts the whole tree. The `design` service runs `bin/format`, with the paths it rewrites mounted by name, which only `make format` gives it (*Running the make targets*). The `design_test` service runs the gates and `bin/coverage` on its copy, with no mount and no network. The `preview` service runs `bin/preview` with `src/` and `preview/` mounted read-only over its copy (*Previewing pages*).
+The `tooling`, `tooling_test` and `tooling_upgrade` services sit under the `test` profile, which `make build`, `make coverage`, `make format`, `make lint`, `make test` and `make upgrade-fonts` pass, and the `preview` service under the `preview` profile, which `make preview` passes, so a bare `docker compose up` starts no service. Every service runs from `test`, on the image's copy of the tree, and none mounts the whole tree. `tooling` runs `bin/format`, with the tree's own paths bound over its copy by `make format` (*Running the make targets*). `tooling_test` runs the gates and `bin/coverage` on its copy, with no mount and no network. `tooling_upgrade` has a network, for `make upgrade-fonts`. `preview` runs `bin/preview` with `src/` and `preview/` mounted read-only over its copy (*Previewing pages*).
 
 A repository whose YAML pass would cover `docker-compose.yml` leaves the link out of `yaml_files`, since the file is not its own and a rewrite through the link would reach only the image's copy, as with `docker_files` (*Linking the image*).
 
+A repository links `.env.example` too, which lists the settings the services read, each commented out with its default:
+
+```sh
+ln -s lib/design-tools/.env.example .env.example
+```
+
+It leaves the link out of `dotenv_files`, since the file is not its own, as with `docker_files` (*Linking the image*).
+
 ### Configuring the passes
 
-`bin/settings` is the repository's own, sourced by every runner. Each pass runs only where it defines what the pass reads, so a repository with an empty `bin/settings` gets no pass at all. Each is a function printing NUL-separated paths or arguments; a defined one that fails, or that names nothing, fails the run, except `pytest_args`, which may name nothing. `preview_start`, which `bin/preview` requires, is the one variable.
+`bin/settings` is the repository's own, sourced by every runner. lib-shell-common's README, *Linting and formatting a repository*, gives the sets of the generic passes, such as `shell_files`, `yaml_files` and `md_files`, and their tools. A repository's `bin/settings` sources `lib/design-tools/bin/layer`, which adds the design passes below. Each runs only where `bin/settings` defines what it reads, as a function printing NUL-separated paths or arguments; one that fails, or that names nothing, fails the run, except `pytest_args`, which may name nothing.
 
-What `bin/format` rewrites and `bin/lint` checks for drift:
+What `bin/format` rewrites and `bin/lint` checks:
 
-- `palette_args` – `tools/palette-generate`'s arguments. The files it generates belong to this pass alone, so no other set names them: Prettier, for one, lowercases the hex colours the CSS keeps as the YAML writes them, and the JSON pass would sort the keys it keeps in the YAML's order, so format and lint would never agree.
-- `shell_files` – shfmt, indented by 4; `bin/lint` also runs ShellCheck.
-- `python_files` – ruff, under the repository's own ruff configuration.
-- `yaml_files` – yq, laid out by its `-P` with keys sorted, which `bin/lint` checks with shell-common's `lint/yaml-keys`; `bin/lint` also runs `yamllint --strict`, under the repository's own yamllint configuration.
-- `json_files` – indented by 2 with keys sorted, by jq.
-- `js_files` – semistandard.
-- `css_files` and `html_files` – Prettier, under the repository's own Prettier configuration.
 - `svg_files` – Prettier, with its XML plugin, `@prettier/plugin-xml`, under the repository's own Prettier configuration.
-- `md_files` – mdformat, with its GFM and front matter plugins, one paragraph per line.
-- `toml_files` – taplo, under the repository's own taplo configuration.
-- `dotenv_files` – dotenv-linter, whose fixes `bin/format` applies without leaving a backup.
-- `docker_files` – dockerfmt, ending each file with a newline; `bin/lint` also runs hadolint, under the repository's own hadolint configuration, and shell-common's `lint/dockerfile-locks`, which fails an install from PyPI or npm that no hashed lock pins. Never the link to this repository's `Dockerfile` (*Linking the image*).
-
-A tool that fails, on a finding it cannot fix or a file it cannot parse, fails `bin/format`, but only once every later pass has run.
+- `palette_args` – `tools/palette-generate`'s arguments, run after every other pass. The files it generates belong to this pass alone, so no other set names them: Prettier, for one, lowercases the hex colours the CSS keeps as the YAML writes them, and the JSON pass would sort the keys it keeps in the YAML's order, so format and lint would never agree.
 
 What `bin/lint` checks only:
 
-- `compose_files` – Compose files, each validated on its own, with every profile enabled, by `docker-compose --profile '*' config -q`. It checks neither layout nor key order, so each is also named in `yaml_files`, except the link to this repository's `docker-compose.yml` (*Linking the services*).
-- `workflow_files` – GitHub Actions workflows, checked by actionlint, under the repository's own `.github/actionlint.yaml` or `.github/actionlint.yml`; like `compose_files`, each is also named in `yaml_files` for its layout and key order.
-- `yaml_lint_files` – YAML that `yaml_files` would reorder or lay out anew, such as a file whose key order carries meaning, checked by `yamllint --strict` alone, under the repository's own yamllint configuration. Leave a file named here out of `yaml_files`, whose yq would rewrite it.
-- `xml_lint_files` – XML a reader takes byte for byte, such as an OOXML part, checked for well-formedness and namespaces by expat's `xmlwf -n` alone. Leave a file named here out of `svg_files`, whose Prettier would rewrite it.
-- `make_files` – Makefiles, checked by checkmake, under the repository's own `checkmake.ini`.
+- `xml_lint_files` – XML a reader takes byte for byte, such as an OOXML part, checked by expat's `xmlwf -n` alone. Leave a file named here out of `svg_files`, whose Prettier would rewrite it.
 - `references_args` – `tools/references-check`'s arguments.
 - `render_args` – `tools/render-check`'s arguments, such as `--root . pages/*.html`.
+- `ooxml_args` – `tools/ooxml-check`'s arguments, such as `--pandoc Template.dotx`.
 
 What `bin/test` runs, after the lint unless tests are named:
 
-- `pytest_args` – pytest's options, which may be none, for the repository's own tests under its own pytest configuration; `--no-skips` fails a run in which a test skipped. Unless tests are named, `bin/test` passes pytest no paths, so a configuration that does not confine collection, as `testpaths` does, also collects this repository's own tests from `lib/design-tools`. Where it is not defined, naming tests fails the run, and `make coverage` prints no Python report.
+- `pytest_args` – pytest's options, which may be none, for the repository's own tests under its own pytest configuration; `--no-skips` fails a run in which a test skipped. Unless tests are named, `bin/test` passes pytest no paths, so a configuration that does not confine collection, as `testpaths` does, also collects this repository's own tests from `lib/design-tools`. Where it is not defined, naming tests fails the run.
+
+What `bin/build-dotx` reads:
+
+- `dotx_args` – `tools/dotx.py`'s arguments (*Building a Word template*).
 
 And `bin/preview`:
 
@@ -161,39 +161,37 @@ A `bin/settings` for a design system with a preview page and a palette:
 
 ```bash
 # shellcheck shell=bash
+# shellcheck source=lib/design-tools/bin/layer
+source lib/design-tools/bin/layer
 
-# Read only by bin/preview, so it looks unused here.
-# shellcheck disable=SC2034
-preview_start=/preview/
-
-function palette_args {
+palette_args() {
     printf '%s\0' src/palette/palette.yml --prefix x --json src/palette/palette.json --css src/palette/palette.css
 }
 
-function css_files {
-    printf '%s\0' preview/*.css src/*.css
+css_files() {
+    files_sorted preview src -type f -name '*.css'
 }
 
-function render_args {
+render_args() {
     printf '%s\0' --root . preview/index.html
 }
 
-function pytest_args {
+pytest_args() {
     printf '%s\0' --no-skips
 }
+
+# shellcheck disable=SC2034 # Read by bin/preview, which sources this file.
+preview_start=/preview/
 ```
 
 ### Running the make targets
 
-`common.mk` gives `build`, `coverage`, `format`, `lint`, `preview`, `test`, `upgrade` and `upgrade-post`, run through the services, and `workflows-approve`, run on the host (*Approving workflows*), and runs every recipe, the including `Makefile`'s own among them, in bash with `-Eeuo pipefail`, `inherit_errexit` and `failglob`. A repository's `Makefile` includes it and adds its own `upgrade-pre`, which moves the submodule to its latest commit and its own submodules to the commits that one records. Its first two lines make the submodule a repository of its own before anything runs in it, since git run in an uninitialised submodule's empty directory acts on the parent instead:
+`common.mk` gives `build`, `coverage`, `format`, `lint`, `preview`, `test`, `upgrade`, `upgrade-pre`, `upgrade-post`, `upgrade-discard`, `upgrade-fonts` and, where a repository sets `DOTX` (*Building a Word template*), `dotx`, run through the services, and `workflows-approve`, run on the host (*Approving workflows*), and runs every recipe, the including `Makefile`'s own among them, in bash with `-Eeuo pipefail`, `inherit_errexit` and `failglob`. A repository's `Makefile` includes it, and sets after the include those of its upgrade variables that differ from their defaults: `UPGRADE_SUBMODULES`, the submodules `make upgrade` moves, `lib/design-tools` by default; `UPGRADE_STEPS`, the targets it runs between moving the pins and building, such as `upgrade-fonts`, none by default; and `UPGRADE_PIN_ARGS`, what `docker/upgrade` re-pins, the workflows by default:
 
 ```make
 include lib/design-tools/common.mk
 
-upgrade-pre:
-	git submodule sync lib/design-tools
-	git submodule update --init --checkout lib/design-tools
-	cd lib/design-tools && git checkout latest && git pull --ff-only && git submodule update --init --recursive
+UPGRADE_STEPS = upgrade-fonts
 ```
 
 `make build` builds the image's three stages (*Linking the image*):
@@ -202,7 +200,7 @@ upgrade-pre:
 make build
 ```
 
-`make test` runs `bin/test`, which *Configuring the passes* describes, in the `design_test` service; named tests are pytest's arguments, paths from the repository's root:
+`make test` runs `bin/test`, which *Configuring the passes* describes, in the `tooling_test` service; named tests are pytest's arguments, paths from the repository's root:
 
 ```sh
 make test TESTS='test/<file>.py'
@@ -214,13 +212,13 @@ make test TESTS='test/<file>.py'
 make lint
 ```
 
-`make format` rewrites the tree in place with the passes `bin/format` runs. It runs `bin/format-host` on the host, which reads git's list of the tracked paths and the untracked ones not ignored, and mounts each top-level entry by name over the `design` service's copy of the tree, taking a directory that holds a submodule or an ignored path entry by entry instead. A submodule, `tmp/`, anything ignored, an untracked dot path, a symlink and a path missing on disk are never mounted. `bin/format` refuses to run without those mounts, so a bare `docker compose run design format` fails rather than formatting a copy:
+`make format` rewrites the tree in place with the passes `bin/format` runs. It runs lib-shell-common's `runner/format-host` on the host, which binds the tree's own paths over the `tooling` service's copy, as that script's header and lib-shell-common's README give, and sets `FORMAT_MOUNTS`, without which `bin/format` refuses to run, so a bare `docker compose run tooling bin/format` fails rather than formatting a copy:
 
 ```sh
 make format
 ```
 
-`make coverage` runs `bin/test`, taking `TESTS` as `make test` does, in the `design_test` service, measuring the shell under kcov, the Python under pytest-cov and the JavaScript Node runs under the tests through `NODE_V8_COVERAGE`, and prints the reports in pytest-cov's term-missing form: the Python one as the tests finish, then, once they pass, the shell one and the JavaScript one, through `tools/kcov-report`. It measures only files under the repository's root, and its shell report leaves out the copy of this repository. It writes nothing to the tree, keeping the measurements in a temporary directory in the container:
+`make coverage` runs the tests, taking `TESTS` as `make test` does, in the `tooling_test` service, measuring the shell under kcov, the Python under pytest-cov and the JavaScript Node runs under the tests through `NODE_V8_COVERAGE`, and writes the report to `tmp/coverage/index.html`. It measures only files under the repository's root, and its shell report leaves out the copy of this repository:
 
 ```sh
 make coverage
@@ -228,17 +226,20 @@ make coverage
 
 kcov traces a script only where its trace descriptor, the one `BASH_XTRACEFD` names, is open to it. Python's `subprocess` closes it in a child and pytest-xdist's workers start without it, so a script a test starts goes unmeasured, unless the test runs in pytest's own process and passes the descriptor on with `pass_fds`.
 
-`bin/test` sets `NODE_V8_COVERAGE` only where `bin/coverage` runs it, so `make test` and `make lint` set nothing, and for pytest alone, so the lint's Prettier and ESLint, with the configuration files they load, go unmeasured. Every Node process under the tests is measured, such as a script a test starts with `node build.mjs` or a command in `tools/` with no extension, unless a test gives it an environment without the variable. The JavaScript report holds each file under the root that one ran, test files included, and none under `node_modules`; it prints only where there is one, so a repository with no JavaScript sees no line about it. `bin/coverage` gives c8 every setting its report reads, so no `.c8rc`, `.nycrc` or `"c8"` key in `package.json` changes it.
+`bin/coverage` sets `NODE_V8_COVERAGE` for the pytest run alone, so `make test` and `make lint` set nothing and no lint tool is measured. Every Node process under the tests is measured, such as a script a test starts with `node build.mjs` or a command in `tools/` with no extension, unless a test gives it an environment without the variable. The JavaScript report holds each file under the root that one ran, test files included, and none under `node_modules`. `bin/coverage` gives c8 every setting its report reads, so no `.c8rc`, `.nycrc` or `"c8"` key in `package.json` changes it.
 
-Node writes a process's data as it exits, so one ended by a signal it does not handle, other than one it sends itself, writes none, and a test that stops a Node process, as with `terminate()`, leaves that run out (Node's `src/node.cc`, checked 2026-11). c8 counts every line of a file as a statement, blank and comment lines included (v8-to-istanbul's `lib/source.js`, checked 2026-11), so the JavaScript report's statements are lines.
+Node writes a process's data as it exits, so one ended by a signal it does not handle, other than one it sends itself, writes none, and a test that stops a Node process, as with `terminate()`, leaves that run out (Node's `src/node.cc`, read 2026-11-20). c8 counts every line of a file as a statement, blank and comment lines included (v8-to-istanbul's `lib/source.js`, read 2026-11-20), so the JavaScript report's statements are lines.
 
 `make preview` serves the tree for a look while editing (*Previewing pages*).
 
-`make upgrade` runs `upgrade-pre`, then `upgrade-post`, which builds and tests, so a change that breaks the repository shows before the bump is committed, and then runs the command in `UPGRADE_COMMIT` where the `Makefile` sets one. A repository sets `UPGRADE_COMMIT` to commit the bump its own way; without it, `make upgrade` leaves the bump uncommitted.
+`make upgrade-fonts` runs `tools/fonts-upgrade src/fonts` in the `tooling_upgrade` service, with `GH_TOKEN` and `GITHUB_TOKEN` passed through, and records each publisher that moved for the `Upgrade pins` commit; `make upgrade` runs it where `UPGRADE_STEPS` names it.
+
+`make upgrade` runs `upgrade-pre`, which moves the submodules and re-pins, then each of `UPGRADE_STEPS`, then `upgrade-post`, which builds, formats and tests, so a change that breaks the repository shows before the bump is committed, and commits the whole tree as `Upgrade pins`. It refuses to start on a tree with changes or untracked files, or while a record from an unfinished upgrade is left. Where the build or tests fail, fix them and run `make upgrade-post`; `make upgrade-discard` instead puts back what the upgrade moved.
 
 Every target works with no `.env`. Where one exists, it sets local options for Compose, read against the repository holding the link; `.env.example` lists each with its default:
 
-- `DC_BIND_USER`, empty by default for the image's own uid 1000; `0:0` where Docker is rootless or the host user's uid is not 1000, so that `make format` can write to the tree.
+- `DC_BIND_USER`, empty by default, for the image's user; `0:0` where Docker is rootless, so that `make format` can write to the tree.
+- `DC_GID` and `DC_UID`, the image user's ids, by default 1000; the host user's where Docker is rootful and those differ, with a rebuild.
 - `PYTEST_XDIST_AUTO_NUM_WORKERS`, the worker count for pytest-xdist's `-n auto` under `make test` and `make coverage`, where the repository's pytest configuration uses it; empty by default, for one worker for each CPU the container may use.
 - `DC_PREVIEW_HOST` and `DC_PREVIEW_PORT`, where `make preview` publishes its port, by default `127.0.0.1` and `0`, a free port (*Previewing pages*).
 
@@ -256,68 +257,111 @@ With no port pinned, read it back from another terminal:
 docker compose port preview 8080
 ```
 
+### Building a Word template
+
+`bin/build-dotx` builds a Word template from `src/` and a design system, in the image, writing it to stdout. A repository links it and names its arguments in `dotx_args`:
+
+```sh
+ln -s ../lib/design-tools/bin/build-dotx bin/build-dotx
+```
+
+Each file in `src/` is a part, its package path flattened: `word__styles.xml` is `word/styles.xml`, and `-Content_Types-.xml` is `[Content_Types].xml`. `--design-system PATH` names the design system, which the other paths are read from. Each `--tokens FILE` is a stylesheet whose `:root` custom properties the parts name as `{--name}`, in a colour attribute or a style's character spacing, a later file's token winning. `--logo FILE` is an SVG, embedded as `word/media/image2.svg`, with a PNG fallback 1600 pixels wide as `word/media/image1.png`, the names the template's relationships target. Each `--literal PART=RRGGBB` lets `PART` write that colour as a literal; any other literal but the page's `FFFFFF` fails the build. The glossary's styles, numbering and font table are built from the template's, so `src/` holds none of them. Every entry is dated at the `TemplateVersion` custom property, which `docProps/core.xml`'s `dcterms:modified` must give as midnight UTC.
+
+```sh
+docker compose --profile test run --rm -T tooling_test bin/build-dotx > Template.dotx
+```
+
+A repository setting `DOTX = FILE` before including `common.mk` gets `make dotx`, which writes the template to `FILE`, replacing it only once the build succeeds, and has the build added to `make upgrade`'s steps. `UPGRADE_STEPS` set with `=` after the include would replace that step, so a further step is added with `+=`:
+
+```make
+DOTX = Template.dotx
+
+include lib/design-tools/common.mk
+```
+
 ## Working on this repository
 
 This repository uses its own runners, services and make targets as a repository that takes it does (*Adding the tools to a repository*); each task below gives only what is particular to it here.
 
-### Installing it
+### Setting up a working copy
 
-Clone the repository with its submodules:
+Working on this repository needs what a repository taking it needs (*Adding the tools to a repository*), and:
+
+- for `make upgrade` and `make workflows-approve`, which run on the host, the tools lib-shell-common's README lists for `docker/` and `github/` under *Adding the library to a repository*: `docker/upgrade` drives the Docker daemon, and the upgrade scripts read and write the checkout's git state, which the image leaves out
 
 ```sh
 git clone --recurse-submodules https://github.com/TiredPixel/lib-design-tools.git
 cd lib-design-tools
 ```
 
-It needs no `.env`; to change a local option (*Running the make targets*), copy `.env.example` to `.env` and uncomment the line:
+It works with no `.env`. `.env.example` lists each setting `docker-compose.yml` reads, each commented out with its default or an example; copy it to `.env` only to change one:
 
 ```sh
 cp .env.example .env
 ```
 
-### Testing it
+`make format` writes to the tree as the container's user, whose ids default to those `.env.example` lists. Where Docker is rootless, uid 0 in the container is the host user, so set this in `.env`:
 
-`make test` runs this repository's lint, then its tests, in the `design_test` container (*Linking the services*). The lint fails where anything is unformatted; `make format` (*Formatting it*) fixes it.
+```sh
+DC_BIND_USER=0:0
+```
+
+Where Docker is rootful and the host user's uid or gid differs from those defaults, leave `DC_BIND_USER` unset and instead set the host user's ids in `.env`, as `id -g` and `id -u` print them, then rebuild with `make build`:
+
+```sh
+DC_GID=1001
+DC_UID=1001
+```
+
+### Testing
+
+`make test` runs the lint, then the tests:
 
 ```sh
 make test
 ```
 
-The tests run under pytest, side by side on one worker for each CPU the container may use, unless `.env` sets the worker count (*Running the make targets*). A test that skips fails the run: the image carries everything the tests look for, so a skip means something is missing. *Running the make targets* gives how to name tests and run the lint alone.
+Named tests skip the lint:
 
-### Measuring its coverage
+```sh
+make test TESTS=test/tools/test_design_colour.py
+```
 
-`make coverage` (*Running the make targets*) measures the shell in `bin/` and the Python in `tools/` and `test/`, and prints both reports:
+CI runs `make test` on each pull request to `latest` and each push to it.
+
+### Measuring coverage
+
+`make coverage` runs the tests with coverage measured, taking `TESTS` as `make test` does, and writes the report to `tmp/coverage/index.html`:
 
 ```sh
 make coverage
 ```
 
-The shell report holds the runners in `bin/` as the gate itself runs them, but not `tools/palette-generate` or the runners the tests run in a fabricated repository: the tests start them through Python's `subprocess` on pytest-xdist's workers, where kcov cannot trace them. `lib/shell-common` measures its own coverage, so the report leaves it out.
+### Formatting
 
-### Formatting it
-
-`make format` (*Running the make targets*) fixes what the lint finds unformatted:
+`make format` rewrites the tree in place with each tool's safe fixes:
 
 ```sh
 make format
 ```
 
-### Building the image
+### Linting
 
-`make build` (*Running the make targets*):
+`make lint` runs the lint alone and writes nothing:
+
+```sh
+make lint
+```
+
+### Building the images
 
 ```sh
 make build
 ```
 
-### Upgrading the pins
+### Upgrading
 
-Base images are pinned by digest, tools downloaded from releases by `ARG` and checked against a SHA-256 pinned beside each, Python and npm tools by a hashed lock in `Dockerfile.lock/`, and the workflow's actions by commit SHA.
-
-`make upgrade` moves `lib/shell-common` to its latest commit and runs its `docker/upgrade` to re-pin each pin the `Dockerfile` names on a `# TRACK FROM` or `# TRACK ARG` line, rebuild each lock it names on a `# TRACK LOCK` line, and re-pin each action the workflow names on a `# TRACK USES` line, proposing a re-pinned workflow in `.github/workflows.new/` (*Approving workflows*). It then builds, tests and commits the result as `Upgrade pins`, with a line for each move as the body, as *Running the make targets* describes; it never pushes.
-
-`docker/upgrade` refuses to start while the `Dockerfile` or `Dockerfile.lock/` has changes not committed or a workflow proposal is pending. It runs on the host, with the tools *Requirements* lists:
+`make upgrade` moves `lib/shell-common`, re-pins each `# TRACK` line in the `Dockerfile` and the workflows' `# TRACK USES` lines, proposes each workflow whose actions move in `.github/workflows.new/`, then builds, formats and tests and commits the result as `Upgrade pins`; it never pushes, and refuses to start while a workflow proposal is pending:
 
 ```sh
 make upgrade
@@ -327,6 +371,12 @@ Where the build or tests fail, fix them, then finish the upgrade:
 
 ```sh
 make upgrade-post
+```
+
+To abandon the upgrade instead, `make upgrade-discard` puts back what it moved and removes what it wrote:
+
+```sh
+make upgrade-discard
 ```
 
 ### Approving workflows
@@ -339,7 +389,7 @@ make workflows-approve
 
 ### Reviewing pull requests
 
-A pull request into `latest` merges only once Codex's code and security reviews come back clean on its head commit, which `.github/workflows/review.yml` posts as the checks `review/codex/code` and `review/codex/security`. It is lib-shell-common's review gate, copied from `lib/shell-common/github/review.yml` and copied again only when that template's triggers, job settings or token step change; lib-shell-common's README, *Gating merges on reviews*, gives how the checks are read. A comment on the pull request starts the reviews:
+`.github/workflows/review.yml` posts Codex's code and security reviews of a pull request's head commit as the checks `review/codex/code` and `review/codex/security`. lib-shell-common's README says how the checks are read under *Gating merges on reviews*, and sets the gate up under *Setting a repository up*. A comment on the pull request starts the reviews:
 
 ```text
 @codex review

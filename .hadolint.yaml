@@ -1,6 +1,12 @@
-# DL3008 asks for each apt package pinned to an exact version. The packages
-# float within the Debian release the base image's digest pins instead, so the
-# release's updates reach the image on each build.
 ---
+# Distribution packages are left unpinned and taken current at each uncached
+# build; other tools are pinned by their locks and ARGs.
 ignored:
   - DL3008
+  - DL3013
+  - DL3016
+  - DL3018
+  - DL3028
+  - DL3033
+  - DL3037
+  - DL3041

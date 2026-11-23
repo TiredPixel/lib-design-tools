@@ -1168,25 +1168,6 @@ class UnresolvedTest(ReferencesTestCase):
             "references-check: checked 2 file(s): 5 problem(s)\n",
         )
 
-    def test_stale_exemptions_fail_in_the_order_given(self) -> None:
-        page = self.write(
-            "site/p.html", '<a href="a.css">a</a>\n<a href="/es/">b</a>\n'
-        )
-        status, output = self.run_exempt(
-            ["/zz", "/site/a.css", "/es", "/site/dir/", "/site/empty"], page
-        )
-        self.assertEqual(status, 1)
-        self.assertEqual(
-            output,
-            "references-check: --unresolved /zz matches no reference\n"
-            "references-check: --unresolved /site/a.css resolves, so needs no "
-            "exemption\n"
-            "references-check: --unresolved /site/dir/ resolves, so needs no "
-            "exemption\n"
-            "references-check: --unresolved /site/empty matches no reference\n"
-            "references-check: checked 1 file(s): 4 problem(s)\n",
-        )
-
     def test_an_exemption_holding_an_encoded_nul(self) -> None:
         page = self.write("site/p.html", '<a href="/es%00/">a</a>\n')
         self.assertEqual(
@@ -1199,8 +1180,7 @@ class UnresolvedTest(ReferencesTestCase):
                 1,
                 (
                     f"{page}:1: /es%00/ does not exist\n"
-                    "references-check: --unresolved /fr%00 matches no reference\n"
-                    "references-check: checked 1 file(s): 2 problem(s)\n"
+                    "references-check: checked 1 file(s): 1 problem(s)\n"
                 ),
             ),
         )
@@ -1215,40 +1195,6 @@ class UnresolvedTest(ReferencesTestCase):
                     "references-check: checked 1 file(s): 1 problem(s)\n"
                 ),
             ),
-        )
-
-    def test_an_exempt_directory_holding_only_index_htm_is_stale(self) -> None:
-        self.write("site/htm/index.htm", "")
-        page = self.write("site/p.html", '<a href="/site/htm/">a</a>\n')
-        status, output = self.run_exempt(["/site/htm/"], page)
-        self.assertEqual(status, 1)
-        self.assertEqual(
-            output,
-            "references-check: --unresolved /site/htm/ resolves, so needs no "
-            "exemption\n"
-            "references-check: checked 1 file(s): 1 problem(s)\n",
-        )
-
-    def test_an_unreadable_file_leaves_only_resolving_exemptions_stale(
-        self,
-    ) -> None:
-        unreadable = self.write("site/u.html", b'<a href="/es/">\xff</a>')
-        page = self.write("site/p.html", "")
-        status, output = self.run_exempt(["/es", "/site/a.css"], unreadable, page)
-        self.assertEqual(status, 1)
-        lines = output.splitlines()
-        self.assertTrue(
-            lines[0].startswith(f"references-check: {unreadable}: not valid UTF-8")
-        )
-        self.assertEqual(
-            lines[1:],
-            [
-                (
-                    "references-check: --unresolved /site/a.css resolves, so needs no "
-                    "exemption"
-                ),
-                "references-check: checked 2 file(s): 2 problem(s)",
-            ],
         )
 
     def test_the_option_repeats(self) -> None:
