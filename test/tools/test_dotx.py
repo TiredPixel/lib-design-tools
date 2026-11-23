@@ -344,6 +344,20 @@ class HardeningTest(Template):
         self.assertIn('w:val="112233"', document)
         self.assertIn(f'w:fill="{mixed[1:]}"', document)
 
+    def test_a_spacing_token_in_other_white_space_or_quotes(self):
+        for written in (
+            '<w:spacing w:val="{--wide}" />',
+            "<w:spacing  w:val = '{--wide}'/>",
+            '<w:spacing\n w:val="{--wide}"\n/>',
+        ):
+            with self.subTest(written=written):
+                self.styles(
+                    '<w:style w:type="paragraph" w:styleId="S"><w:rPr>'
+                    f'{written}<w:sz w:val="40"/></w:rPr></w:style>'
+                )
+                styles = self.part(self.built(), "word/styles.xml")
+                self.assertIn('<w:spacing w:val="20"/>', styles)
+
     def test_a_style_id_written_with_a_reference(self):
         for written in ("A&amp;B", "A&#38;B"):
             with self.subTest(written=written):

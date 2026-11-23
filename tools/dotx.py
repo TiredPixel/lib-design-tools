@@ -40,7 +40,9 @@ GLOSSARY_TWINS = ("styles.xml", "numbering.xml", "fontTable.xml")
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 _TOKEN = re.compile(r"\{(--[a-z0-9-]+)\}")
-_SPACING = re.compile(r'<w:spacing w:val="\{(--[a-z0-9-]+)\}"/>')
+# In any white space and either quote XML allows, so laying a part out again changes
+# nothing.
+_SPACING = re.compile(r"""<w:spacing\s+w:val\s*=\s*["']\{(--[a-z0-9-]+)\}["']\s*/>""")
 # A style id holds no "<", which keeps what this captures parseable as an attribute.
 _STYLE = re.compile(r'<w:style [^>]*w:styleId="([^"<]+)"[^>]*>.*?</w:style>', re.DOTALL)
 _ROOT = re.compile(r":root\s*\{(.*?)\}", re.DOTALL)

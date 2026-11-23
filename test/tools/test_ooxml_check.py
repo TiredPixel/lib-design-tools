@@ -147,6 +147,13 @@ class OoxmlCheckTest(temp_tree.TempTreeTestCase):
         self.assertEqual(status, 1)
         self.assertEqual(lines[0], "ooxml-check: /dev/zero: not a regular file")
 
+    def test_a_directory_entry_is_no_part(self):
+        path = self.package()
+        with zipfile.ZipFile(path, "a") as archive:
+            for directory in ("word/", "word/media/", "word/glossary/"):
+                archive.writestr(directory, "")
+        self.assertProblems(path)
+
     def test_a_template_without_a_glossary_passes(self):
         glossary = {part: None for part in PARTS if part.startswith("word/glossary/")}
         self.assertProblems(self.package(**glossary))

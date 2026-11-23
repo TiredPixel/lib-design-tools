@@ -144,7 +144,12 @@ class Template:
             raise Unreadable(error.strerror or str(error)) from error
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as archive:
-                self.data = {name: archive.read(name) for name in archive.namelist()}
+                # A directory's own entry, which some archivers write, is no part.
+                self.data = {
+                    name: archive.read(name)
+                    for name in archive.namelist()
+                    if not name.endswith("/")
+                }
         # Whatever zipfile and its decompressors raise for an archive they cannot read,
         # which differs by damage and by Python release, is this template's one report.
         except Exception as error:
