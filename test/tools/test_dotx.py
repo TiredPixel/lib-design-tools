@@ -358,6 +358,20 @@ class HardeningTest(Template):
                 styles = self.part(self.built(), "word/styles.xml")
                 self.assertIn('<w:spacing w:val="20"/>', styles)
 
+    def test_a_style_tag_in_other_white_space_or_quotes(self):
+        for opening in (
+            """<w:style w:type="paragraph" w:styleId='S'>""",
+            '<w:style\n w:styleId = "S"\n w:type="paragraph"\n>',
+        ):
+            with self.subTest(opening=opening):
+                self.styles(
+                    '<w:style w:type="paragraph" w:styleId="Empty"/>'
+                    f'{opening}<w:rPr><w:spacing w:val="{{--wide}}"/>'
+                    '<w:sz w:val="40"/></w:rPr></w:style >'
+                )
+                styles = self.part(self.built(), "word/styles.xml")
+                self.assertIn('<w:spacing w:val="20"/>', styles)
+
     def test_a_style_id_written_with_a_reference(self):
         for written in ("A&amp;B", "A&#38;B"):
             with self.subTest(written=written):

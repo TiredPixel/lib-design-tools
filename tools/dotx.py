@@ -43,8 +43,13 @@ _TOKEN = re.compile(r"\{(--[a-z0-9-]+)\}")
 # In any white space and either quote XML allows, so laying a part out again changes
 # nothing.
 _SPACING = re.compile(r"""<w:spacing\s+w:val\s*=\s*["']\{(--[a-z0-9-]+)\}["']\s*/>""")
-# A style id holds no "<", which keeps what this captures parseable as an attribute.
-_STYLE = re.compile(r'<w:style [^>]*w:styleId="([^"<]+)"[^>]*>.*?</w:style>', re.DOTALL)
+# A style with content, its id in either quote: one closed in its own tag holds no
+# spacing, and would otherwise run on into the next style. A style id holds no "<",
+# which keeps what this captures parseable as an attribute.
+_STYLE = re.compile(
+    r"""<w:style\s[^>]*?w:styleId\s*=\s*(["'])([^<]+?)\1[^>]*(?<!/)>.*?</w:style\s*>""",
+    re.DOTALL,
+)
 _ROOT = re.compile(r":root\s*\{(.*?)\}", re.DOTALL)
 _COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _DECLARATION = re.compile(r"(--[a-z0-9-]+)\s*:\s*([^;]+);")
@@ -201,10 +206,11 @@ def resolve_tracking(styles: str, declared: dict[str, str]) -> str:
         # as the parser resolved them for the ids style_size looks it up among. One the
         # parser refuses alone, as a DTD's entity or text in a comment is, stays as
         # written.
+        quote, written = match.group(1, 2)
         try:
-            style_id = ET.fromstring(f'<a v="{match.group(1)}"/>').get("v")
+            style_id = ET.fromstring(f"<a v={quote}{written}{quote}/>").get("v")
         except ET.ParseError:
-            style_id = match.group(1)
+            style_id = written
 
         def spacing(token: re.Match) -> str:
             half_points = style_size(root, style_id)
