@@ -4,13 +4,14 @@
 Word refuses a package with a part it has no content type for or a relationship to a
 part that is not there, and quietly drops a reference to a missing style, list or font,
 so each such reference is checked against the part it names: every part has a content
-type, and one that only the generic XML default types has an Override; each internal
-relationship's target is a part; each relationship id a part uses is in its .rels; each
-style, list and font a part names is defined in its scope, the glossary's own parts for
-the glossary, the template's for the rest. ``--pandoc`` checks that the template
-carries each style id pandoc's docx writer looks up. ``--fonts DIR`` checks that each
-style's face, as Word resolves it for each script and table condition, is one a TrueType
-file in DIR names.
+type, one that only the generic XML default types has an Override, and a relationships
+part has the relationships type; each internal relationship's target is a part; each
+relationship id a part uses is in its .rels; each style, list and font a part names is
+defined in its scope, the glossary's own parts for the glossary, the template's for the
+rest. ``--pandoc`` checks that the template carries each style id pandoc's docx writer
+looks up. ``--fonts DIR`` checks that each style's face, in the template's styles and
+the glossary's, as Word resolves it for each script and table condition, is one a
+TrueType file in DIR names.
 
 Exit status: 0 when every template passes, 1 when any check fails, and 2 on a usage
 error.
@@ -54,8 +55,18 @@ STYLE_REFERENCES = {
 LINKED = {"paragraph": "character", "character": "paragraph"}
 FONT_SLOTS = ("ascii", "hAnsi", "cs", "eastAsia")
 # Word sets basic Latin in the ascii font, accented Latin, Greek and Cyrillic in hAnsi,
-# and complex scripts in cs, whose bold and italic are bCs and iCs.
-SCRIPTS = (("ascii", "b", "i"), ("hAnsi", "b", "i"), ("cs", "bCs", "iCs"))
+# complex scripts in cs, whose bold and italic are bCs and iCs, and East Asian text in
+# eastAsia.
+SCRIPTS = (
+    ("ascii", "b", "i"),
+    ("hAnsi", "b", "i"),
+    ("cs", "bCs", "iCs"),
+    ("eastAsia", "b", "i"),
+)
+# The slot a style may leave unnamed, since a template need not carry East Asian text.
+# The check reads only the slot's own attribute, never a theme attribute such as
+# w:eastAsiaTheme, so a style setting only that names no face here.
+OPTIONAL_SLOTS = frozenset({"eastAsia"})
 
 # The style ids pandoc's docx writer looks up.
 PANDOC = {
@@ -229,6 +240,8 @@ def content_type_problems(template):
             yield path, "has no content type"
         elif default == GENERIC:
             yield path, f"has no Override, only the {GENERIC} Default"
+        elif path.endswith(".rels") and default != RELS_TYPE:
+            yield CONTENT_TYPES, f"Default types {path} as no relationships part"
 
 
 def relationship_problems(template):
@@ -390,7 +403,14 @@ def shipped_faces(directory):
 
 
 def face_problems(template, faces):
-    root = template.definitions("word/styles.xml")
+    for directory in SCOPES:
+        path = directory + "styles.xml"
+        if path in template.data:
+            yield from styles_face_problems(path, template.root(path), faces)
+
+
+def styles_face_problems(path, root, faces):
+    """Each face the styles part ROOT, at PATH, sets that is not among FACES."""
     defaults = root.find(f"{W}docDefaults/{W}rPrDefault/{W}rPr")
     by_id = {s.get(W + "styleId"): s for s in root.iter(W + "style")}
 
@@ -439,17 +459,17 @@ def face_problems(template, faces):
         for condition in (None, *sorted(conditions)):
             for attribute, bold, italic in SCRIPTS:
                 fonts = setting(style, "rFonts", condition, attribute)
+                family = None if fonts is None else fonts.get(W + attribute)
+                if family is None and attribute in OPTIONAL_SLOTS:
+                    continue
                 face = (
-                    None if fonts is None else fonts.get(W + attribute),
+                    family,
                     on(setting(style, bold, condition)),
                     on(setting(style, italic, condition)),
                 )
                 if face not in faces:
                     where = style_id if condition is None else f"{style_id} {condition}"
-                    yield (
-                        "word/styles.xml",
-                        f"{where}: {attribute} face {face} is not shipped",
-                    )
+                    yield path, f"{where}: {attribute} face {face} is not shipped"
 
 
 def main(argv=None):
