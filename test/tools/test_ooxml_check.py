@@ -98,8 +98,8 @@ def font(family, subfamily):
 
 class OoxmlCheckTest(temp_tree.TempTreeTestCase):
     def package(self, **changes):
-        """The template, its parts changed by CHANGES, a part to its text each."""
-        parts = {**PARTS, **changes}
+        """The template, each part in CHANGES set to its text, or left out for None."""
+        parts = {k: v for k, v in {**PARTS, **changes}.items() if v is not None}
         path = self.root / "a.dotx"
         with zipfile.ZipFile(path, "w") as archive:
             for name, text in parts.items():
@@ -123,6 +123,10 @@ class OoxmlCheckTest(temp_tree.TempTreeTestCase):
 
     def test_a_consistent_template_passes(self):
         self.assertProblems(self.package())
+
+    def test_a_template_without_a_glossary_passes(self):
+        glossary = {part: None for part in PARTS if part.startswith("word/glossary/")}
+        self.assertProblems(self.package(**glossary))
 
     def test_a_part_without_a_content_type(self):
         self.assertProblems(

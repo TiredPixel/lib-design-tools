@@ -112,6 +112,10 @@ class Template:
             and next((s for s in SCOPES if p.startswith(s)), None) == directory
         ]
 
+    def scopes(self):
+        """Each scope the template holds, the glossary only where it has one."""
+        return [d for d in SCOPES if d + "document.xml" in self.data]
+
     def styles(self, directory):
         """Each style id in DIRECTORY's styles part, with its type."""
         return {
@@ -178,7 +182,7 @@ def style_problems(template):
             return f"{style_id} is no {kind} style"
         return None
 
-    for directory in SCOPES:
+    for directory in template.scopes():
         known = template.styles(directory)
         for path in template.scoped(directory):
             root = template.root(path)
@@ -209,7 +213,7 @@ def pandoc_problems(template):
 
 
 def numbering_problems(template):
-    for directory in SCOPES:
+    for directory in template.scopes():
         path = directory + "numbering.xml"
         numbering = template.root(path)
         nums = {n.get(f"{W}numId") for n in numbering.iter(f"{W}num")}
@@ -229,7 +233,7 @@ def numbering_problems(template):
 
 
 def font_problems(template):
-    for directory in SCOPES:
+    for directory in template.scopes():
         table = template.root(directory + "fontTable.xml")
         declared = {f.get(f"{W}name") for f in table.iter(f"{W}font")}
         for path in template.scoped(directory):
