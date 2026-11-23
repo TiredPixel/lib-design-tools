@@ -17,8 +17,11 @@ error.
 """
 
 import argparse
+import io
+import os
 import pathlib
 import posixpath
+import struct
 import sys
 import xml.etree.ElementTree as ET
 import zipfile
@@ -89,18 +92,71 @@ def val(element):
     return element.get(f"{W}val")
 
 
+def style_type(style):
+    """STYLE's type, ECMA-376 making a style without a w:type a paragraph style."""
+    return style.get(f"{W}type", "paragraph")
+
+
+def missing(element, attribute):
+    """A problem where ELEMENT lacks ATTRIBUTE, else None.
+
+    The check reading ATTRIBUTE reports this and passes over ELEMENT.
+    """
+    if element.get(attribute) is not None:
+        return None
+    return f"{element.tag.rpartition('}')[2]} has no {attribute.replace(W, 'w:')}"
+
+
+def based_chain(style, by_id):
+    """STYLE and each style its basedOn chain reaches, by BY_ID.
+
+    The chain stops at a basedOn naming no style or one already reached, which
+    style_problems reports, so a later check following it neither fails nor loops.
+    """
+    found = []
+    while style is not None and style not in found:
+        found.append(style)
+        based = style.find(f"{W}basedOn")
+        style = None if based is None else by_id.get(val(based))
+    return found
+
+
+class Unreadable(Exception):
+    """A template that is no zip, or one with a part that is not XML."""
+
+
 class Template:
-    """A template's parts, each parsed once."""
+    """A template's parts, each XML part parsed once, up front.
+
+    A part that is not XML stops the template before any check runs, not partway
+    through them.
+    """
 
     def __init__(self, path):
-        with zipfile.ZipFile(path) as archive:
-            self.data = {name: archive.read(name) for name in archive.namelist()}
+        # Read whole, so only a regular file is: a device or a pipe may never end.
+        if path.exists() and not path.is_file():
+            raise Unreadable("not a regular file")
+        try:
+            data = path.read_bytes()
+        except OSError as error:
+            raise Unreadable(error.strerror or str(error)) from error
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                self.data = {name: archive.read(name) for name in archive.namelist()}
+        # Whatever zipfile and its decompressors raise for an archive they cannot read,
+        # which differs by damage and by Python release, is this template's one report.
+        except Exception as error:
+            raise Unreadable(f"not a zip: {str(error) or repr(error)}") from error
         self.parts = sorted(set(self.data) - {CONTENT_TYPES})
         self.roots = {}
+        for name, data in self.data.items():
+            if name.endswith((".xml", ".rels")):
+                try:
+                    self.roots[name] = ET.fromstring(data)
+                except (ET.ParseError, LookupError) as error:
+                    raise Unreadable(f"{name}: not XML: {error}") from error
 
     def root(self, path):
-        if path not in self.roots:
-            self.roots[path] = ET.fromstring(self.data[path])
         return self.roots[path]
 
     def definitions(self, path):
@@ -126,18 +182,28 @@ class Template:
     def styles(self, directory):
         """Each style id in DIRECTORY's styles part, with its type."""
         return {
-            s.get(f"{W}styleId"): s.get(f"{W}type")
+            s.get(f"{W}styleId"): style_type(s)
             for s in self.definitions(directory + "styles.xml").iter(f"{W}style")
         }
 
 
 def content_type_problems(template):
+    if CONTENT_TYPES not in template.data:
+        yield CONTENT_TYPES, "is missing, so no part has a content type"
+        return
     types = template.root(CONTENT_TYPES)
-    defaults = {
-        d.get("Extension").lower(): d.get("ContentType")
-        for d in types.iter(f"{CT}Default")
-    }
-    overrides = {o.get("PartName").lstrip("/") for o in types.iter(f"{CT}Override")}
+    defaults = {}
+    for default in types.iter(f"{CT}Default"):
+        if problem := missing(default, "Extension"):
+            yield CONTENT_TYPES, problem
+        else:
+            defaults[default.get("Extension").lower()] = default.get("ContentType")
+    overrides = set()
+    for override in types.iter(f"{CT}Override"):
+        if problem := missing(override, "PartName"):
+            yield CONTENT_TYPES, problem
+        else:
+            overrides.add(override.get("PartName").lstrip("/"))
     for path in template.parts:
         _, dot, extension = posixpath.basename(path).rpartition(".")
         default = defaults.get(extension.lower()) if dot else None
@@ -154,6 +220,9 @@ def relationship_problems(template):
         source = posixpath.dirname(posixpath.dirname(rels))
         for rel in template.root(rels).iter(f"{PR}Relationship"):
             if rel.get("TargetMode") == "External":
+                continue
+            if problem := missing(rel, "Target"):
+                yield rels, problem
                 continue
             target = rel.get("Target")
             resolved = (
@@ -185,6 +254,8 @@ def relationship_problems(template):
 
 def style_problems(template):
     def wrong(known, style_id, kind):
+        if style_id is None:
+            return "has no w:val"
         if known.get(style_id) != kind:
             return f"{style_id} is no {kind} style"
         return None
@@ -202,14 +273,22 @@ def style_problems(template):
                     if problem := wrong(known, val(style), "paragraph"):
                         yield path, f"docPart: {problem}"
         styles = directory + "styles.xml"
-        for style in template.definitions(styles).iter(f"{W}style"):
-            kind = style.get(f"{W}type")
-            expected = {"basedOn": kind, "next": "paragraph", "link": LINKED.get(kind)}
+        definitions = template.definitions(styles)
+        by_id = {s.get(f"{W}styleId"): s for s in definitions.iter(f"{W}style")}
+        for style in definitions.iter(f"{W}style"):
+            name = style.get(f"{W}styleId")
+            own = style_type(style)
+            expected = {"basedOn": own, "next": "paragraph", "link": LINKED.get(own)}
             for tag, target in expected.items():
                 for ref in style.iter(f"{W}{tag}"):
                     if problem := wrong(known, val(ref), target):
-                        name = style.get(f"{W}styleId")
                         yield styles, f"{name}: {tag}: {problem}"
+            based = style.find(f"{W}basedOn")
+            if based is not None and style in based_chain(by_id.get(val(based)), by_id):
+                yield styles, f"{name}: basedOn: loops back to {name}"
+            for conditional in style.iterfind(f"{W}tblStylePr"):
+                if problem := missing(conditional, f"{W}type"):
+                    yield styles, f"{name}: {problem}"
 
 
 def pandoc_problems(template):
@@ -230,13 +309,21 @@ def numbering_problems(template):
         for part in template.scoped(directory):
             for num_pr in template.root(part).iter(f"{W}numPr"):
                 num_id = num_pr.find(f"{W}numId")
-                if num_id is not None and val(num_id) not in nums | {"0"}:
+                if num_id is None:
+                    continue
+                if problem := missing(num_id, f"{W}val"):
+                    yield part, problem
+                elif val(num_id) not in nums | {"0"}:
                     yield part, f"numId {val(num_id)} is not defined"
         for num in numbering.iter(f"{W}num"):
-            abstract = val(num.find(f"{W}abstractNumId"))
-            if abstract not in abstracts:
-                num_id = num.get(f"{W}numId")
-                yield path, f"num {num_id}: abstractNum {abstract} is not defined"
+            num_id = num.get(f"{W}numId")
+            abstract = num.find(f"{W}abstractNumId")
+            if abstract is None:
+                yield path, f"num {num_id}: has no abstractNumId"
+            elif problem := missing(abstract, f"{W}val"):
+                yield path, f"num {num_id}: {problem}"
+            elif val(abstract) not in abstracts:
+                yield path, f"num {num_id}: abstractNum {val(abstract)} is not defined"
 
 
 def font_problems(template):
@@ -256,9 +343,22 @@ def font_problems(template):
 
 def shipped_faces(directory):
     """Every (family, bold, italic) the TrueType files in DIRECTORY give Word."""
+    # A glob of a directory that cannot be listed finds no file, which would report
+    # every face as not shipped, so the directory is listed first for the reason.
+    try:
+        os.listdir(directory)
+    except OSError as error:
+        raise Unreadable(f"{directory}: {error.strerror or error}") from error
     found = set()
     for path in sorted(directory.glob("*.ttf")):
-        names = design_ttf.names(path.read_bytes())
+        if not path.is_file():
+            raise Unreadable(f"{path}: not a regular file")
+        try:
+            names = design_ttf.names(path.read_bytes())
+        except (OSError, KeyError, struct.error, UnicodeDecodeError) as error:
+            raise Unreadable(f"{path}: not a TrueType font: {error!r}") from error
+        if not {design_ttf.FAMILY, design_ttf.SUBFAMILY} <= names.keys():
+            raise Unreadable(f"{path}: names no family and subfamily Word reads")
         subfamily = names[design_ttf.SUBFAMILY]
         found.add(
             (names[design_ttf.FAMILY], "Bold" in subfamily, "Italic" in subfamily)
@@ -272,12 +372,7 @@ def face_problems(template, faces):
     by_id = {s.get(W + "styleId"): s for s in root.iter(W + "style")}
 
     def chain(style):
-        found = []
-        while style is not None:
-            found.append(style)
-            based = style.find(W + "basedOn")
-            style = by_id[val(based)] if based is not None else None
-        return found
+        return based_chain(style, by_id)
 
     # A table style's conditional formatting, such as its first row's, from wherever
     # along the basedOn chain sets it, then the style's own. Given an attribute, only
@@ -289,7 +384,7 @@ def face_problems(template, faces):
             conditional.find(W + "rPr")
             for ancestor in ancestors
             for conditional in ancestor.iterfind(W + "tblStylePr")
-            if conditional.get(W + "type") == condition
+            if condition is not None and conditional.get(W + "type") == condition
         ]
         run_properties += [ancestor.find(W + "rPr") for ancestor in ancestors]
         for properties in run_properties:
@@ -304,11 +399,12 @@ def face_problems(template, faces):
         return element is not None and val(element) not in ("0", "false")
 
     for style_id, style in by_id.items():
+        # A tblStylePr without a type, which style_problems reports, sets no condition.
         conditions = {
             c.get(W + "type")
             for ancestor in chain(style)
             for c in ancestor.iterfind(W + "tblStylePr")
-        }
+        } - {None}
         for condition in (None, *sorted(conditions)):
             for attribute, bold, italic in SCRIPTS:
                 fonts = setting(style, "rFonts", condition, attribute)
@@ -333,10 +429,22 @@ def main(argv=None):
     parser.add_argument("--pandoc", action="store_true")
     parser.add_argument("templates", nargs="+", type=pathlib.Path, metavar="TEMPLATE")
     arguments = parser.parse_args(argv)
-    faces = None if arguments.fonts is None else shipped_faces(arguments.fonts)
     failures = 0
+    try:
+        faces = None if arguments.fonts is None else shipped_faces(arguments.fonts)
+    except Unreadable as error:
+        # Reported, and the faces left unchecked rather than checked against a set
+        # missing this font's.
+        print(f"ooxml-check: {error}", file=sys.stderr)
+        failures += 1
+        faces = None
     for path in arguments.templates:
-        template = Template(path)
+        try:
+            template = Template(path)
+        except Unreadable as error:
+            print(f"ooxml-check: {path}: {error}", file=sys.stderr)
+            failures += 1
+            continue
         checks = [
             content_type_problems,
             relationship_problems,

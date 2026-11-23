@@ -14,6 +14,7 @@ with a PNG fallback rendered from it for a Word that cannot draw SVG.
 import argparse
 import datetime
 import io
+import math
 import pathlib
 import re
 import sys
@@ -40,7 +41,8 @@ W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 _TOKEN = re.compile(r"\{(--[a-z0-9-]+)\}")
 _SPACING = re.compile(r'<w:spacing w:val="\{(--[a-z0-9-]+)\}"/>')
-_STYLE = re.compile(r'<w:style [^>]*w:styleId="([^"]+)"[^>]*>.*?</w:style>', re.DOTALL)
+# A style id holds no "<", which keeps what this captures parseable as an attribute.
+_STYLE = re.compile(r'<w:style [^>]*w:styleId="([^"<]+)"[^>]*>.*?</w:style>', re.DOTALL)
 _ROOT = re.compile(r":root\s*\{(.*?)\}", re.DOTALL)
 _COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _DECLARATION = re.compile(r"(--[a-z0-9-]+)\s*:\s*([^;]+);")
@@ -89,29 +91,50 @@ def tokens(token_files: list[pathlib.Path]) -> dict[str, str]:
     """Every token the template may name, by name, a later file's winning."""
     found = {}
     for path in token_files:
-        found.update(custom_properties(path.read_text(encoding="utf-8")))
+        found.update(custom_properties(read_text(path)))
     return found
 
 
 def colour(name: str, declared: dict[str, str]) -> str:
-    """Token ``name`` as an opaque RRGGBB, as Word writes a colour."""
-    if name not in declared:
-        raise BuildError(f"{name} is not a design-system token")
-    value = declared[name]
-    if value.startswith("#"):
+    """Token ``name`` as an opaque RRGGBB, as Word writes a colour.
+
+    The tokens a var() or color-mix() names are followed in a loop rather than by
+    recursion, so a chain of any length resolves, and one that comes back to a token
+    it has passed is refused rather than followed for ever. Each color-mix() along it
+    is then applied from the innermost out.
+    """
+    # Each token passed, in order, as a dict's keys keep it while testing in one step.
+    through = {}
+    mixes = []
+    while True:
+        if name in through:
+            loop = " -> ".join((*through, name))
+            raise BuildError(f"{name} is defined through itself: {loop}")
+        if name not in declared:
+            raise BuildError(f"{name} is not a design-system token")
+        through[name] = None
+        value = declared[name]
+        if value.startswith("#"):
+            try:
+                ink = "#" + design_colour.flatten(value, "#" + PAGE)[1:].upper()
+            except ValueError as error:
+                raise BuildError(f"{name}: {error}") from error
+            break
+        if alias := _VAR.fullmatch(value):
+            name = alias.group(1)
+        elif mix := _MIX.fullmatch(value):
+            mixes.append((name, mix.group(2)))
+            name = mix.group(1)
+        else:
+            raise BuildError(
+                f"{name} is {value!r}, which is not a colour Word can take"
+            )
+    for mixed, percentage in reversed(mixes):
         try:
-            return design_colour.flatten(value, "#" + PAGE)[1:].upper()
+            ink = design_colour.composite(ink, float(percentage), "#" + PAGE)
         except ValueError as error:
-            raise BuildError(f"{name}: {error}") from error
-    if alias := _VAR.fullmatch(value):
-        return colour(alias.group(1), declared)
-    if mix := _MIX.fullmatch(value):
-        ink = "#" + colour(mix.group(1), declared)
-        try:
-            return design_colour.composite(ink, float(mix.group(2)), "#" + PAGE)[1:]
-        except ValueError as error:
-            raise BuildError(f"{name}: {error}") from error
-    raise BuildError(f"{name} is {value!r}, which is not a colour Word can take")
+            raise BuildError(f"{mixed}: {error}") from error
+    return ink[1:]
 
 
 def tracking_em(name: str, declared: dict[str, str]) -> float:
@@ -124,44 +147,76 @@ def tracking_em(name: str, declared: dict[str, str]) -> float:
     return float(em.group(1) or 0)
 
 
-def style_sizes(styles: str) -> dict[str, int]:
-    """Each style's font size in half-points.
+def style_size(styles: ET.Element, style_id: str) -> int:
+    """Style ``style_id``'s font size in half-points.
 
     A style without its own size takes it through its basedOn chain, ending at the
-    document defaults.
+    document defaults. A chain that names no style, loops back or ends with no size is
+    refused, since no size can be worked out from it.
     """
-    root = ET.fromstring(styles.encode())
-    default = root.find(f"{W}docDefaults/{W}rPrDefault/{W}rPr/{W}sz")
-    by_id = {s.get(W + "styleId"): s for s in root.iter(W + "style")}
-
-    def size(style_id: str) -> int:
-        style = by_id[style_id]
-        own = style.find(f"{W}rPr/{W}sz")
-        if own is not None:
-            return int(own.get(W + "val"))
+    by_id = {s.get(W + "styleId"): s for s in styles.iter(W + "style")}
+    reached = []
+    name = style_id
+    while True:
+        if name is None:
+            raise BuildError("its basedOn chain reaches a basedOn with no w:val")
+        style = by_id.get(name)
+        if style is None:
+            raise BuildError(f"its basedOn chain reaches {name}, which is no style")
+        if name in reached:
+            raise BuildError(f"its basedOn chain loops back to {name}")
+        reached.append(name)
+        size = style.find(f"{W}rPr/{W}sz")
         based = style.find(W + "basedOn")
-        if based is None:
-            return int(default.get(W + "val"))
-        return size(based.get(W + "val"))
-
-    return {style_id: size(style_id) for style_id in by_id}
+        if size is None and based is None:
+            size = styles.find(f"{W}docDefaults/{W}rPrDefault/{W}rPr/{W}sz")
+            if size is None:
+                raise BuildError(
+                    "no size is set by it, a style it is based on or the document "
+                    "defaults"
+                )
+        if size is not None:
+            break
+        name = based.get(W + "val")
+    try:
+        return int(size.get(W + "val"))
+    except (TypeError, ValueError) as error:
+        raise BuildError(
+            f"w:sz {size.get(W + 'val')!r} is not a size in half-points"
+        ) from error
 
 
 def resolve_tracking(styles: str, declared: dict[str, str]) -> str:
     """styles.xml with each ``{--name}`` character spacing in twips.
 
-    Each is worked out from the token and the size of the style it sits in.
+    Each is worked out from the token and the size of the style it sits in, a size
+    looked up only for a style that names such a token.
     """
-    sizes = style_sizes(styles)
+    root = ET.fromstring(styles.encode())
 
     def style(match: re.Match) -> str:
-        half_points = sizes[match.group(1)]
+        # The pattern matches the attribute as written, so its references are resolved
+        # as the parser resolved them for the ids style_size looks it up among. One the
+        # parser refuses alone, as a DTD's entity or text in a comment is, stays as
+        # written.
+        try:
+            style_id = ET.fromstring(f'<a v="{match.group(1)}"/>').get("v")
+        except ET.ParseError:
+            style_id = match.group(1)
 
         def spacing(token: re.Match) -> str:
-            twips = round(tracking_em(token.group(1), declared) * half_points * 10)
+            half_points = style_size(root, style_id)
+            em = tracking_em(token.group(1), declared)
+            try:
+                twips = round(em * half_points * 10)
+            except (OverflowError, ValueError) as error:
+                raise BuildError(f"{token.group(1)}: {error}") from error
             return f'<w:spacing w:val="{twips}"/>'
 
-        return _SPACING.sub(spacing, match.group(0))
+        try:
+            return _SPACING.sub(spacing, match.group(0))
+        except BuildError as error:
+            raise BuildError(f"{style_id}: {error}") from error
 
     return _STYLE.sub(style, styles)
 
@@ -191,9 +246,12 @@ def resolve(
     refused = [c for c in literal_colours(part) if c.upper() not in literals]
     if refused:
         raise BuildError(f"{path} writes colour literals {refused}; name tokens")
-    if path == "word/styles.xml":
-        part = resolve_tracking(part, declared)
-    return _TOKEN.sub(lambda token: colour(token.group(1), declared), part)
+    try:
+        if path == "word/styles.xml":
+            part = resolve_tracking(part, declared)
+        return _TOKEN.sub(lambda token: colour(token.group(1), declared), part)
+    except BuildError as error:
+        raise BuildError(f"{path}: {error}") from error
 
 
 def view_box(svg: str) -> tuple[float, float]:
@@ -201,13 +259,26 @@ def view_box(svg: str) -> tuple[float, float]:
     match = _VIEW_BOX.search(svg)
     if match is None:
         raise BuildError("the logo has no viewBox")
-    return float(match.group(1)), float(match.group(2))
+    try:
+        width, height = float(match.group(1)), float(match.group(2))
+    except ValueError as error:
+        raise BuildError(f"the logo's viewBox: {error}") from error
+    if width == 0:
+        raise BuildError("the logo's viewBox has no width to scale its height by")
+    if math.isinf(width) or math.isinf(height):
+        raise BuildError("the logo's viewBox is too large to scale")
+    return width, height
 
 
 def render_png(svg: pathlib.Path, width: int) -> bytes:
     """The SVG at ``width`` pixels, on a transparent ground, by headless Chromium."""
-    view_width, view_height = view_box(svg.read_text(encoding="utf-8"))
-    height = round(width * view_height / view_width)
+    view_width, view_height = view_box(read_text(svg))
+    # A finite viewBox can still scale past a float, as a vast height or a subnormal
+    # width does.
+    try:
+        height = round(width * view_height / view_width)
+    except OverflowError as error:
+        raise BuildError("the logo's viewBox is too large to scale") from error
     with tempfile.TemporaryDirectory() as scratch:
         page = pathlib.Path(scratch) / "logo.html"
         page.write_text(
@@ -224,32 +295,50 @@ def release_date(custom: str) -> datetime.date:
     if match is None:
         raise BuildError("docProps/custom.xml sets no TemplateVersion")
     try:
-        return datetime.date.fromisoformat(match.group(1))
+        date = datetime.date.fromisoformat(match.group(1))
     except ValueError as error:
         raise BuildError(f"TemplateVersion: {error}") from error
+    # Each zip entry is dated the release, and a zip dates only these years.
+    if not 1980 <= date.year <= 2107:
+        raise BuildError(f"TemplateVersion: {date} is not from 1980 to 2107")
+    return date
 
 
 def check_modified(core: str, date: datetime.date) -> None:
     """Refuse a docProps/core.xml modified other than at the release's midnight."""
     match = _MODIFIED.search(core)
-    value = match.group(1) if match else ""
+    value = match.group(1) if match else "missing"
     if value != f"{date.isoformat()}T00:00:00Z":
         raise BuildError(
             f"docProps/core.xml: dcterms:modified is {value}, not RELEASET00:00:00Z"
         )
 
 
-def read_part(file: pathlib.Path) -> str:
-    """A src/ file as text, refused unless it is UTF-8 and parses as XML."""
+def read_text(file: pathlib.Path) -> str:
+    """A file as text, refused unless it can be read and is UTF-8."""
     try:
-        text = file.read_bytes().decode("utf-8")
+        return file.read_bytes().decode("utf-8")
+    except OSError as error:
+        raise BuildError(f"{file}: {error.strerror or error}") from error
     except UnicodeDecodeError as error:
         raise BuildError(f"{file}: not UTF-8: {error}") from error
+
+
+def read_part(file: pathlib.Path) -> str:
+    """A src/ file as text, refused unless it is UTF-8 and parses as XML."""
+    text = read_text(file)
     try:
         ET.fromstring(text.encode())
-    except ET.ParseError as error:
+    except (ET.ParseError, LookupError) as error:
         raise BuildError(f"{file}: not XML: {error}") from error
     return text
+
+
+def built_part(built: dict[str, bytes], path: str) -> bytes:
+    """Part ``path`` of ``built``, refused where src/ has none."""
+    if path not in built:
+        raise BuildError(f"{path} is missing from src/")
+    return built[path]
 
 
 def parts(
@@ -263,7 +352,11 @@ def parts(
     ``logo`` is the SVG and the PNG rendered from it.
     """
     built = {}
-    for file in sorted(source.iterdir()):
+    try:
+        files = sorted(source.iterdir())
+    except OSError as error:
+        raise BuildError(f"{source}: {error.strerror or error}") from error
+    for file in files:
         path = part_name(file.name)
         for twin in GLOSSARY_TWINS:
             if path == f"word/glossary/{twin}":
@@ -271,7 +364,7 @@ def parts(
         allowed = literals.get(path, frozenset())
         built[path] = resolve(path, read_part(file), declared, allowed).encode()
     for twin in GLOSSARY_TWINS:
-        built[f"word/glossary/{twin}"] = built[f"word/{twin}"]
+        built[f"word/glossary/{twin}"] = built_part(built, f"word/{twin}")
     if logo is not None:
         built[LOGO_SVG], built[LOGO_PNG] = logo
     return dict(sorted(built.items(), key=lambda item: part_order(item[0])))
@@ -331,10 +424,10 @@ def build(options: argparse.Namespace) -> bytes:
     logo = None
     if options.logo is not None:
         svg = options.design_system / options.logo
-        logo = svg.read_bytes(), render_png(svg, LOGO_PNG_WIDTH)
+        logo = read_text(svg).encode(), render_png(svg, LOGO_PNG_WIDTH)
     built = parts(SOURCE, declared, literals, logo)
-    date = release_date(built["docProps/custom.xml"].decode())
-    check_modified(built["docProps/core.xml"].decode(), date)
+    date = release_date(built_part(built, "docProps/custom.xml").decode())
+    check_modified(built_part(built, "docProps/core.xml").decode(), date)
     return package(built, date)
 
 

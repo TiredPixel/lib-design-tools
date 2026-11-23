@@ -219,6 +219,222 @@ class RefusalTest(Template):
         self.assertIn(b"is not PART=RRGGBB", result.stderr)
 
 
+class HardeningTest(Template):
+    """Input that once ended the build in a traceback, refused or built instead."""
+
+    def styles(self, *styles):
+        """styles.xml holding STYLES and no document defaults."""
+        self.write(
+            "src/word__styles.xml", f"<w:styles {W}>{''.join(styles)}</w:styles>"
+        )
+
+    def test_a_style_without_a_size_but_no_tracking_builds(self):
+        self.styles(
+            '<w:style w:type="paragraph" w:styleId="Normal"><w:rPr>'
+            '<w:color w:val="{--ink}"/></w:rPr></w:style>'
+        )
+        archive = self.built()
+        self.assertIn('w:val="112233"', self.part(archive, "word/styles.xml"))
+
+    def test_tracking_in_a_style_without_a_size(self):
+        def style(style_id, based="", size=""):
+            return (
+                f'<w:style w:type="paragraph" w:styleId="{style_id}">{based}'
+                f'<w:rPr><w:spacing w:val="{{--wide}}"/>{size}</w:rPr></w:style>'
+            )
+
+        no_size = (
+            "no size is set by it, a style it is based on or the document defaults"
+        )
+        for styles, message in (
+            ((style("Normal"),), f"Normal: {no_size}"),
+            (
+                (style("Normal", '<w:basedOn w:val="Gone"/>'),),
+                "Normal: its basedOn chain reaches Gone, which is no style",
+            ),
+            (
+                (style("Normal", "<w:basedOn/>"),),
+                "Normal: its basedOn chain reaches a basedOn with no w:val",
+            ),
+            (
+                (style("Normal", '<w:basedOn w:val="Normal"/>'),),
+                "Normal: its basedOn chain loops back to Normal",
+            ),
+            (
+                (
+                    style("A", '<w:basedOn w:val="B"/>'),
+                    style("B", '<w:basedOn w:val="A"/>'),
+                ),
+                "A: its basedOn chain loops back to A",
+            ),
+            (
+                (style("Normal", size='<w:sz w:val="big"/>'),),
+                "Normal: w:sz 'big' is not a size in half-points",
+            ),
+            (
+                (style("Normal", size="<w:sz/>"),),
+                "Normal: w:sz None is not a size in half-points",
+            ),
+        ):
+            with self.subTest(message=message):
+                self.styles(*styles)
+                self.assertRefused(f"word/styles.xml: {message}")
+
+    def test_a_token_that_is_missing_looping_or_of_the_wrong_kind(self):
+        self.write(
+            "design/tokens.css",
+            TOKENS.replace(
+                "}",
+                "--self: var(--self);\n--ping: var(--pong);\n--pong: color-mix(in "
+                "srgb, var(--ping) 50%, transparent);\n}",
+            ),
+        )
+        for token, message in (
+            ("--gone", "--gone is not a design-system token"),
+            ("--self", "--self is defined through itself: --self -> --self"),
+            ("--ping", "--ping is defined through itself: --ping -> --pong -> --ping"),
+            ("--wide", "--wide is '0.05em', which is not a colour Word can take"),
+        ):
+            with self.subTest(token=token):
+                self.write(
+                    "src/word__document.xml",
+                    f'<w:document {W}><w:color w:val="{{{token}}}"/></w:document>',
+                )
+                self.assertRefused(f"word/document.xml: {message}")
+        self.write("src/word__document.xml", PARTS["word__document.xml"])
+        self.write(
+            "src/word__styles.xml",
+            PARTS["word__styles.xml"].replace(
+                '<w:spacing w:val="{--wide}"/><w:sz',
+                '<w:spacing w:val="{--ink}"/><w:sz',
+            ),
+        )
+        self.assertRefused(
+            "word/styles.xml: Title: --ink is '#112233', not a length in em"
+        )
+        self.write("design/tokens.css", TOKENS.replace("0.05em", "1" * 400 + "em"))
+        self.write("src/word__styles.xml", PARTS["word__styles.xml"])
+        self.assertRefused(
+            "word/styles.xml: Title: --wide: cannot convert float infinity to integer"
+        )
+
+    def test_a_long_chain_of_tokens(self):
+        # Longer than Python's default recursion limit, through var() and color-mix().
+        links = 1200
+        tokens = "".join(
+            f"--a{i}: var(--a{i + 1});\n"
+            f"--m{i}: color-mix(in srgb, var(--m{i + 1}) 100%, transparent);\n"
+            for i in range(links)
+        )
+        self.write(
+            "design/tokens.css",
+            TOKENS.replace(
+                "}", f"{tokens}--a{links}: var(--ink);\n--m{links}: var(--ink);\n}}"
+            ),
+        )
+        self.write(
+            "src/word__document.xml",
+            f'<w:document {W}><w:color w:val="{{--a0}}"/><w:shd w:fill="{{--m0}}"/>'
+            "</w:document>",
+        )
+        mixed = "#112233"
+        for _ in range(links):
+            mixed = dotx.design_colour.composite(mixed, 100, "#FFFFFF")
+        document = self.part(self.built(), "word/document.xml")
+        self.assertIn('w:val="112233"', document)
+        self.assertIn(f'w:fill="{mixed[1:]}"', document)
+
+    def test_a_style_id_written_with_a_reference(self):
+        for written in ("A&amp;B", "A&#38;B"):
+            with self.subTest(written=written):
+                self.styles(
+                    f'<w:style w:type="paragraph" w:styleId="{written}"><w:rPr>'
+                    '<w:spacing w:val="{--wide}"/><w:sz w:val="40"/></w:rPr></w:style>'
+                )
+                styles = self.part(self.built(), "word/styles.xml")
+                self.assertIn('<w:spacing w:val="20"/>', styles)
+
+    def test_a_style_written_in_a_comment(self):
+        self.styles('<!-- <w:style w:styleId="a&b"></w:style> -->')
+        self.assertIn("<!--", self.part(self.built(), "word/styles.xml"))
+
+    def test_a_part_missing_from_src(self):
+        for name, path in (
+            ("word__numbering.xml", "word/numbering.xml"),
+            ("docProps__custom.xml", "docProps/custom.xml"),
+            ("docProps__core.xml", "docProps/core.xml"),
+        ):
+            with self.subTest(path=path):
+                (self.root / "src" / name).rename(self.root / name)
+                self.assertRefused(f"{path} is missing from src/")
+                (self.root / name).rename(self.root / "src" / name)
+
+    def test_a_modified_date_missing(self):
+        core = PARTS["docProps__core.xml"].replace(
+            "dcterms:modified", "dcterms:created"
+        )
+        self.write("src/docProps__core.xml", core)
+        self.assertRefused(
+            "docProps/core.xml: dcterms:modified is missing, not RELEASET00:00:00Z"
+        )
+
+    def test_a_release_a_zip_cannot_date(self):
+        for date in ("1979-12-31", "2108-01-01"):
+            with self.subTest(date=date):
+                for name in ("docProps__core.xml", "docProps__custom.xml"):
+                    self.write(f"src/{name}", PARTS[name].replace("2026-01-02", date))
+                self.assertRefused(f"TemplateVersion: {date} is not from 1980 to 2107")
+
+    def test_a_file_that_cannot_be_read(self):
+        self.write("src/word__media/image3.png", "png")
+        self.assertRefused("src/word__media: Is a directory")
+
+    def test_a_part_in_an_unknown_encoding(self):
+        self.write(
+            "src/word__footer1.xml", '<?xml version="1.0" encoding="bogus"?><a/>'
+        )
+        self.assertRefused("src/word__footer1.xml: not XML: unknown encoding")
+
+    def test_no_src(self):
+        (self.root / "src").rename(self.root / "elsewhere")
+        self.assertRefused("src: No such file or directory")
+
+    def test_a_tokens_file_or_logo_missing(self):
+        self.assertRefused(
+            "design/gone.css: No such file or directory",
+            "--design-system",
+            "design",
+            "--tokens",
+            "gone.css",
+        )
+        self.assertRefused(
+            "design/gone.svg: No such file or directory",
+            *ARGUMENTS,
+            "--logo",
+            "gone.svg",
+        )
+
+    def test_a_logo_without_a_usable_view_box(self):
+        for view_box, message in (
+            (None, "the logo has no viewBox"),
+            ("0 0 0 2", "the logo's viewBox has no width to scale its height by"),
+            (
+                "0 0 1.2.3 2",
+                "the logo's viewBox: could not convert string to float: '1.2.3'",
+            ),
+            (f"0 0 8 {'2' * 400}", "the logo's viewBox is too large to scale"),
+            # Finite, but scaled past a float, by a vast height or a subnormal width.
+            (f"0 0 8 1{'0' * 308}", "the logo's viewBox is too large to scale"),
+            (f"0 0 0.{'0' * 323}5 2", "the logo's viewBox is too large to scale"),
+        ):
+            with self.subTest(message=message):
+                logo = LOGO.replace(' viewBox="0 0 8 2"', "")
+                if view_box is not None:
+                    logo = LOGO.replace("0 0 8 2", view_box)
+                self.write("design/logo.svg", logo)
+                self.assertRefused(message, *ARGUMENTS, "--logo", "logo.svg")
+
+
 class RunnerTest(Template):
     def setUp(self):
         super().setUp()

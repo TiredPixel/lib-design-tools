@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+import pathlib
 import struct
 import zipfile
 
@@ -106,6 +107,14 @@ class OoxmlCheckTest(temp_tree.TempTreeTestCase):
                 archive.writestr(name, text)
         return path
 
+    def fonts(self):
+        """A directory of the regular and bold faces of A, as STYLES needs."""
+        fonts = self.root / "fonts"
+        fonts.mkdir()
+        for subfamily in ("Regular", "Bold"):
+            (fonts / f"A-{subfamily}.ttf").write_bytes(font("A", subfamily))
+        return fonts
+
     def check(self, *arguments):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
@@ -123,6 +132,11 @@ class OoxmlCheckTest(temp_tree.TempTreeTestCase):
 
     def test_a_consistent_template_passes(self):
         self.assertProblems(self.package())
+
+    def test_a_template_that_is_no_regular_file(self):
+        status, lines = self.check(pathlib.Path("/dev/zero"))
+        self.assertEqual(status, 1)
+        self.assertEqual(lines[0], "ooxml-check: /dev/zero: not a regular file")
 
     def test_a_template_without_a_glossary_passes(self):
         glossary = {part: None for part in PARTS if part.startswith("word/glossary/")}
@@ -226,3 +240,229 @@ class OoxmlCheckTest(temp_tree.TempTreeTestCase):
         )
         (fonts / "A-Bold.ttf").write_bytes(font("A", "Bold"))
         self.assertProblems(path, arguments=("--fonts", fonts))
+
+    def test_a_based_on_naming_no_style_is_reported_once(self):
+        styles = STYLES.replace(
+            '<w:basedOn w:val="Normal"/>', '<w:basedOn w:val="Gone"/>'
+        )
+        self.assertProblems(
+            self.package(**{"word/styles.xml": styles}),
+            "word/styles.xml: Heading1: basedOn: Gone is no paragraph style",
+            arguments=("--fonts", self.fonts()),
+        )
+
+    def test_a_based_on_cycle(self):
+        fonts = self.fonts()
+        for styles, problems in (
+            (
+                STYLES.replace(
+                    '<w:basedOn w:val="Normal"/>', '<w:basedOn w:val="Heading1"/>'
+                ),
+                ["Heading1"],
+            ),
+            (
+                STYLES.replace(
+                    'w:styleId="Normal"/>',
+                    'w:styleId="Normal"><w:basedOn w:val="Heading1"/></w:style>',
+                ),
+                ["Normal", "Heading1"],
+            ),
+        ):
+            with self.subTest(problems=problems):
+                self.assertProblems(
+                    self.package(**{"word/styles.xml": styles}),
+                    *(
+                        f"word/styles.xml: {name}: basedOn: loops back to {name}"
+                        for name in problems
+                    ),
+                    arguments=("--fonts", fonts),
+                )
+
+    def test_a_reference_without_a_value(self):
+        document = DOCUMENT.replace('<w:pStyle w:val="Heading1"/>', "<w:pStyle/>")
+        self.assertProblems(
+            self.package(**{"word/document.xml": document}),
+            "word/document.xml: pStyle: has no w:val",
+        )
+        styles = STYLES.replace('<w:basedOn w:val="Normal"/>', "<w:basedOn/>")
+        self.assertProblems(
+            self.package(**{"word/styles.xml": styles}),
+            "word/styles.xml: Heading1: basedOn: has no w:val",
+            arguments=("--fonts", self.fonts()),
+        )
+
+    def test_a_style_without_a_type_is_a_paragraph_style(self):
+        styles = STYLES.replace(
+            'w:type="paragraph" w:styleId="Normal"', 'w:styleId="Normal"'
+        )
+        self.assertProblems(self.package(**{"word/styles.xml": styles}))
+
+    def test_a_table_condition_without_a_type(self):
+        # Beside a typed one, so the face check passes over the untyped one rather than
+        # sorting it with the types.
+        styles = STYLES.replace(
+            "</w:styles>",
+            '<w:style w:type="table" w:styleId="Grid"><w:tblStylePr w:type="firstRow">'
+            "<w:rPr><w:b/></w:rPr></w:tblStylePr><w:tblStylePr><w:rPr><w:i/>"
+            "</w:rPr></w:tblStylePr></w:style></w:styles>",
+        )
+        self.assertProblems(
+            self.package(**{"word/styles.xml": styles}),
+            "word/styles.xml: Grid: tblStylePr has no w:type",
+            arguments=("--fonts", self.fonts()),
+        )
+
+    def test_a_list_without_an_abstract_or_a_value(self):
+        for numbering, problem in (
+            (
+                NUMBERING.replace('<w:abstractNumId w:val="1"/>', ""),
+                "num 1: has no abstractNumId",
+            ),
+            (
+                NUMBERING.replace('<w:abstractNumId w:val="1"/>', "<w:abstractNumId/>"),
+                "num 1: abstractNumId has no w:val",
+            ),
+        ):
+            with self.subTest(problem=problem):
+                self.assertProblems(
+                    self.package(**{"word/numbering.xml": numbering}),
+                    f"word/numbering.xml: {problem}",
+                )
+        document = DOCUMENT.replace('<w:numId w:val="1"/>', "<w:numId/>")
+        self.assertProblems(
+            self.package(**{"word/document.xml": document}),
+            "word/document.xml: numId has no w:val",
+        )
+
+    def test_content_types_missing_or_without_their_attributes(self):
+        self.assertProblems(
+            self.package(**{"[Content_Types].xml": None}),
+            "[Content_Types].xml: is missing, so no part has a content type",
+        )
+        types = PARTS["[Content_Types].xml"].replace(
+            "</Types>",
+            '<Default ContentType="image/gif"/><Override ContentType="x"/></Types>',
+        )
+        self.assertProblems(
+            self.package(**{"[Content_Types].xml": types}),
+            "[Content_Types].xml: Default has no Extension",
+            "[Content_Types].xml: Override has no PartName",
+        )
+
+    def test_a_relationship_without_a_target_or_outside_the_package(self):
+        rels = DOCUMENT_RELS.replace('Target="styles.xml" ', "")
+        self.assertProblems(
+            self.package(**{"word/_rels/document.xml.rels": rels}),
+            "word/_rels/document.xml.rels: Relationship has no Target",
+        )
+        rels = DOCUMENT_RELS.replace('Target="styles.xml"', 'Target="../../out.xml"')
+        self.assertProblems(
+            self.package(**{"word/_rels/document.xml.rels": rels}),
+            "word/_rels/document.xml.rels: rId1 targets ../../out.xml, which is no "
+            "part",
+        )
+
+    def test_a_part_without_its_rels(self):
+        self.assertProblems(
+            self.package(**{"word/_rels/document.xml.rels": None}),
+            "word/document.xml: names rId1, which word/_rels/document.xml.rels does "
+            "not hold",
+        )
+
+    def test_a_template_that_is_not_a_zip_or_not_xml(self):
+        good = self.package()
+        bad = self.root / "b.dotx"
+        gone = self.root / "gone.dotx"
+        for data, message in (
+            (b"not a zip", f"ooxml-check: {bad}: not a zip: File is not a zip file"),
+            (None, f"ooxml-check: {gone}: No such file or directory"),
+        ):
+            with self.subTest(message=message):
+                if data is not None:
+                    bad.write_bytes(data)
+                status, lines = self.check(bad if data else gone, good)
+                self.assertEqual(
+                    (status, lines),
+                    (1, [message, "ooxml-check: checked 2 template(s): 1 problem(s)"]),
+                )
+        for text, error in (
+            ("<w:styles", "unclosed token"),
+            ('<?xml version="1.0" encoding="bogus"?><a/>', "unknown encoding"),
+        ):
+            with self.subTest(error=error):
+                path = self.package(**{"word/styles.xml": text})
+                status, lines = self.check(path)
+                self.assertEqual(status, 1)
+                self.assertEqual(len(lines), 2)
+                self.assertTrue(
+                    lines[0].startswith(
+                        f"ooxml-check: {path}: word/styles.xml: not XML: {error}"
+                    ),
+                    lines[0],
+                )
+
+    def test_a_zip_whose_member_cannot_be_read(self):
+        good = self.package()
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("a.xml", "<a>" + "x" * 300 + "</a>")
+        whole = buffer.getvalue()
+        # The central directory's flags and compression method, and the member's data.
+        central = whole.rindex(b"PK\x01\x02")
+        start = 30 + len("a.xml")
+
+        def patched(at, data):
+            return whole[:at] + data + whole[at + len(data) :]
+
+        bad = self.root / "b.dotx"
+        for kind, data in (
+            ("encrypted", patched(central + 8, struct.pack("<H", 1))),
+            ("compressed by no method zipfile has", patched(central + 10, b"\x63\x00")),
+            ("damaged", patched(start, b"\xff\xff\xff\xff")),
+            ("truncated", whole[1:]),
+        ):
+            with self.subTest(kind=kind):
+                bad.write_bytes(data)
+                status, lines = self.check(bad, good)
+                self.assertEqual(status, 1)
+                self.assertEqual(
+                    lines[1:], ["ooxml-check: checked 2 template(s): 1 problem(s)"]
+                )
+                self.assertTrue(
+                    lines[0].startswith(f"ooxml-check: {bad}: not a zip: "), lines[0]
+                )
+
+    def test_a_fonts_directory_that_is_missing_or_no_directory(self):
+        path = self.package(**{"word/media/x.svg": "svg"})
+        gone = self.root / "gone"
+        file = self.root / "file"
+        file.write_bytes(b"")
+        for fonts, error in (
+            (gone, "No such file or directory"),
+            (file, "Not a directory"),
+        ):
+            with self.subTest(error=error):
+                status, lines = self.check("--fonts", fonts, path)
+                self.assertEqual(
+                    (status, lines),
+                    (
+                        1,
+                        [
+                            f"ooxml-check: {fonts}: {error}",
+                            f"{path}: word/media/x.svg: has no content type",
+                            "ooxml-check: checked 1 template(s): 2 problem(s)",
+                        ],
+                    ),
+                )
+
+    def test_a_font_that_is_not_truetype(self):
+        fonts = self.fonts()
+        (fonts / "B.ttf").write_bytes(b"junk")
+        path = self.package()
+        status, lines = self.check("--fonts", fonts, path)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(lines), 2, lines)
+        self.assertTrue(
+            lines[0].startswith(f"ooxml-check: {fonts / 'B.ttf'}: not a TrueType font"),
+            lines[0],
+        )

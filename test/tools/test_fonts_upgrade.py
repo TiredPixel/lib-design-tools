@@ -388,6 +388,27 @@ class RefusalTest(Fonts):
     def commit(self, name, text):
         (self.directory / name).write_text(text)
 
+    def test_name_outside_the_directory(self):
+        sums = (self.directory / "SHA256SUMS").read_text()
+        for name in ("../SerifOne-LICENSE.md", "/tmp/SerifOne-x", "SHA256SUMS"):
+            with self.subTest(name=name):
+                self.commit("SHA256SUMS", sums + f"{'0' * 64}  {name}\n")
+                self.assert_refused(f"SHA256SUMS: {name!r} is not a file of")
+
+    def test_name_that_is_a_symbolic_link(self):
+        outside = self.directory.parent / "outside"
+        outside.write_text("kept")
+        licence = self.directory / "SerifOne-LICENSE.md"
+        licence.unlink()
+        licence.symlink_to(outside)
+        self.assert_refused("SerifOne-LICENSE.md: is a symbolic link")
+        self.assertEqual(outside.read_text(), "kept")
+
+    def test_name_of_no_family(self):
+        sums = (self.directory / "SHA256SUMS").read_text()
+        self.commit("SHA256SUMS", sums + f"{'0' * 64}  Other-Regular.ttf\n")
+        self.assert_refused("Other-Regular.ttf is of no family in families.toml")
+
     def test_releases_missing_a_publisher(self):
         self.commit("RELEASES", f"{SANS} v1.006\n{SERIF} 4.004R\n")
         self.assert_refused("RELEASES: lists")

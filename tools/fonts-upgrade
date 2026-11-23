@@ -122,10 +122,21 @@ def read_releases(directory, families):
 
 
 def read_names(directory):
-    """The names SHA256SUMS lists."""
-    return [
+    """The names SHA256SUMS lists, each a file of DIRECTORY's own.
+
+    A name with a directory in it, or one that is a symbolic link, would carry the write
+    out of DIRECTORY, and SHA256SUMS and RELEASES are written through as well.
+    """
+    names = [
         line.partition("  ")[2] for line in (directory / SUMS).read_text().splitlines()
     ]
+    for name in names:
+        if name in ("", ".", "..", SUMS, RELEASES, FAMILIES) or "/" in name:
+            raise Refusal(f"{directory / SUMS}: {name!r} is not a file of {directory}")
+    for name in (*names, SUMS, RELEASES):
+        if (directory / name).is_symlink():
+            raise Refusal(f"{directory / name}: is a symbolic link")
+    return names
 
 
 def latest(fetch, repository):
@@ -194,7 +205,9 @@ def upgrade(directory, fetch):
     held = read_releases(directory, families)
     by_family = {family: [] for family in families}
     for name in read_names(directory):
-        family = next(f for f in families if name.startswith(f.prefix + "-"))
+        family = next((f for f in families if name.startswith(f.prefix + "-")), None)
+        if family is None:
+            raise Refusal(f"{directory / SUMS}: {name} is of no family in {FAMILIES}")
         by_family[family].append(name)
 
     contents = {}
