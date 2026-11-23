@@ -201,6 +201,11 @@ def repository_file(fetch, repository, tag, name):
 
 def upgrade(directory, fetch):
     """Writes the latest releases' files into DIRECTORY; returns the moves."""
+    # A link at DIRECTORY, or on the way to it from here, would carry every write to
+    # wherever it points.
+    for path in (directory, *(() if directory.is_absolute() else directory.parents)):
+        if path.is_symlink():
+            raise Refusal(f"{path}: is a symbolic link")
     families = read_families(directory)
     held = read_releases(directory, families)
     by_family = {family: [] for family in families}

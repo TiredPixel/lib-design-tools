@@ -404,6 +404,15 @@ class RefusalTest(Fonts):
         self.assert_refused("SerifOne-LICENSE.md: is a symbolic link")
         self.assertEqual(outside.read_text(), "kept")
 
+    def test_directory_that_is_a_symbolic_link(self):
+        link = self.directory.parent / "link"
+        link.symlink_to(self.directory, target_is_directory=True)
+        before = self.contents()
+        status, stdout, stderr = self.run_main(str(link))
+        self.assertEqual((status, stdout), (1, ""))
+        self.assertEqual(stderr, f"fonts-upgrade: {link}: is a symbolic link\n")
+        self.assertEqual(self.contents(), before)
+
     def test_name_of_no_family(self):
         sums = (self.directory / "SHA256SUMS").read_text()
         self.commit("SHA256SUMS", sums + f"{'0' * 64}  Other-Regular.ttf\n")
