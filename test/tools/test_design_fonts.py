@@ -191,6 +191,15 @@ class FaceProblemsTest(unittest.TestCase):
     def test_pass(self):
         self.assertEqual(self.problems(), [])
 
+    def test_a_last_descriptor_without_a_semicolon(self):
+        stylesheet = FACES.replace("  font-weight: 400;\n", "", 1).replace(
+            'A-Regular.ttf") format("truetype");\n',
+            'A-Regular.ttf") format("truetype");\n  font-weight: 400\n',
+            1,
+        )
+        self.assertNotEqual(stylesheet, FACES)
+        self.assertEqual(self.problems(stylesheet), [])
+
     def test_urls_resolve_against_the_stylesheet(self):
         stylesheet = FACES.replace('url("fonts/', 'url("../fonts/')
         self.assertEqual(self.problems(stylesheet, name="tokens/fonts.css"), [])

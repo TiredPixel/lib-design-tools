@@ -18,7 +18,10 @@ FONT_SUFFIXES = (".ttf", ".woff2")
 
 COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 FACE_RULE = re.compile(r"@font-face\s*\{([^}]*)\}")
-FACE_DESCRIPTOR = re.compile(r"(font-family|font-style|font-weight)\s*:\s*([^;]+);")
+# CSS leaves the semicolon after a rule's last descriptor optional.
+FACE_DESCRIPTOR = re.compile(
+    r"(font-family|font-style|font-weight)\s*:\s*([^;]+)(?:;|\Z)"
+)
 FACE_URL = re.compile(r"""url\(["']([^"']+)["']\)\s*format\(["']([^"']+)["']\)""")
 # The tags a WOFF2 table directory names by index: the spec's Known Table Tags, in
 # order (W3C, WOFF File Format 2.0, §5.1).
