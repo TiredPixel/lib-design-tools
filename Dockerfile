@@ -63,6 +63,7 @@ RUN apt-get update \
         python3-pytest-cov \
         python3-pytest-subtests \
         python3-pytest-xdist \
+        python3-tinycss2 \
         python3-venv \
         shellcheck \
         shfmt \

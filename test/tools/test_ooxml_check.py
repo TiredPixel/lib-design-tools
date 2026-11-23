@@ -247,9 +247,55 @@ class OoxmlCheckTest(temp_tree.TempTreeTestCase):
             with self.subTest(value=value):
                 styles = STYLES.replace("<w:b/>", f'<w:b w:val="{value}"/>')
                 self.assertProblems(
-                    self.package(**{"word/styles.xml": styles}),
+                    self.package(
+                        **{
+                            "word/styles.xml": styles,
+                            "word/glossary/styles.xml": styles,
+                        }
+                    ),
                     arguments=("--fonts", fonts),
                 )
+
+    def test_the_nearest_toggle_along_a_chain_wins(self):
+        def style(style_id, based=None, toggles="<w:b/><w:i/><w:bCs/><w:iCs/>"):
+            based_on = f'<w:basedOn w:val="{based}"/>' if based else ""
+            return (
+                f'<w:style w:type="paragraph" w:styleId="{style_id}">{based_on}'
+                f"<w:rPr>{toggles}</w:rPr></w:style>"
+            )
+
+        def package(*chain):
+            head = STYLES[: STYLES.index("<w:style ")]
+            return self.package(
+                **{
+                    "word/document.xml": f"<w:document {W}/>",
+                    "word/styles.xml": f"{head}{''.join(chain)}</w:styles>",
+                    "word/glossary/styles.xml": None,
+                }
+            )
+
+        # Only bold italic is shipped, so a repeat that cancelled would be reported.
+        bold_italic = self.root / "bold-italic"
+        bold_italic.mkdir()
+        (bold_italic / "A.ttf").write_bytes(font("A", "Bold Italic"))
+        self.assertProblems(
+            package(style("One"), style("Two", "One"), style("Three", "Two")),
+            arguments=("--fonts", bold_italic),
+        )
+        # Only regular is shipped, so the parent alone is reported, and a child turning
+        # the toggles off is not.
+        regular = self.root / "regular"
+        regular.mkdir()
+        (regular / "A.ttf").write_bytes(font("A", "Regular"))
+        off = '<w:b w:val="0"/><w:i w:val="0"/><w:bCs w:val="0"/><w:iCs w:val="0"/>'
+        self.assertProblems(
+            package(style("One"), style("Off", "One", off)),
+            *(
+                f"word/styles.xml: One: {script} face ('A', True, True) is not shipped"
+                for script in ("ascii", "hAnsi", "cs")
+            ),
+            arguments=("--fonts", regular),
+        )
 
     def test_an_override_for_no_part_or_retyping_relationships(self):
         types = PARTS["[Content_Types].xml"].replace(
@@ -261,6 +307,24 @@ class OoxmlCheckTest(temp_tree.TempTreeTestCase):
             self.package(**{"[Content_Types].xml": types}),
             "[Content_Types].xml: Override names word/gone.xml, which is no part",
             "[Content_Types].xml: Override types _rels/.rels as no relationships part",
+        )
+
+    def test_a_rels_default_of_another_type(self):
+        types = PARTS[TYPES].replace(ooxml_check.RELS_TYPE, "text/plain")
+        self.assertNotEqual(types, PARTS[TYPES])
+        self.assertProblems(
+            self.package(**{TYPES: types}),
+            "[Content_Types].xml: Default types _rels/.rels as no relationships part",
+            "[Content_Types].xml: Default types word/_rels/document.xml.rels as no "
+            "relationships part",
+        )
+        # A Default every relationships part overrides types none of them.
+        overrides = "".join(
+            f'<Override PartName="/{part}" ContentType="{ooxml_check.RELS_TYPE}"/>'
+            for part in ("_rels/.rels", "word/_rels/document.xml.rels")
+        )
+        self.assertProblems(
+            self.package(**{TYPES: types.replace("</Types>", f"{overrides}</Types>")})
         )
 
     def test_an_override_without_a_content_type(self):
@@ -285,8 +349,8 @@ class OoxmlCheckTest(temp_tree.TempTreeTestCase):
         self.assertProblems(
             path,
             *(
-                f"word/styles.xml: {style}: {script} face ('A', True, False) is not "
-                "shipped"
+                f"{styles}: {style}: {script} face ('A', True, False) is not shipped"
+                for styles in ("word/glossary/styles.xml", "word/styles.xml")
                 for style in ("Heading1", "Heading1Char")
                 for script in ("ascii", "hAnsi")
             ),
@@ -294,6 +358,55 @@ class OoxmlCheckTest(temp_tree.TempTreeTestCase):
         )
         (fonts / "A-Bold.ttf").write_bytes(font("A", "Bold"))
         self.assertProblems(path, arguments=("--fonts", fonts))
+
+    def test_an_east_asian_face_is_checked_only_where_named(self):
+        fonts = self.fonts()
+        (fonts / "B-Bold.ttf").write_bytes(font("B", "Bold"))
+        table = FONTS.replace(
+            "</w:fonts>", '<w:font w:name="B"/><w:font w:name="C"/></w:fonts>'
+        )
+
+        def package(attributes):
+            styles = STYLES.replace(
+                "<w:rPr><w:b/>", f"<w:rPr><w:rFonts {attributes}/><w:b/>", 1
+            )
+            return self.package(
+                **{"word/styles.xml": styles, "word/fontTable.xml": table}
+            )
+
+        self.assertProblems(package('w:eastAsia="B"'), arguments=("--fonts", fonts))
+        self.assertProblems(
+            package('w:eastAsiaTheme="minorEastAsia"'), arguments=("--fonts", fonts)
+        )
+        self.assertProblems(
+            package('w:eastAsia="C"'),
+            "word/styles.xml: Heading1: eastAsia face ('C', True, False) is not "
+            "shipped",
+            arguments=("--fonts", fonts),
+        )
+
+    def test_a_glossary_style_face_is_checked_on_its_own(self):
+        styles = STYLES.replace('w:cs="A"', 'w:cs="A" w:eastAsia="C"')
+        self.assertProblems(
+            self.package(
+                **{
+                    "word/glossary/styles.xml": styles,
+                    "word/glossary/fontTable.xml": FONTS.replace(
+                        "</w:fonts>", '<w:font w:name="C"/></w:fonts>'
+                    ),
+                }
+            ),
+            *(
+                f"word/glossary/styles.xml: {style}: eastAsia face ('C', {bold}, "
+                "False) is not shipped"
+                for style, bold in (
+                    ("Normal", False),
+                    ("Heading1", True),
+                    ("Heading1Char", True),
+                )
+            ),
+            arguments=("--fonts", self.fonts()),
+        )
 
     def test_a_based_on_naming_no_style_is_reported_once(self):
         styles = STYLES.replace(
