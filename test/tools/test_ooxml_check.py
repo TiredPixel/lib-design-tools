@@ -180,6 +180,19 @@ class OoxmlCheckTest(temp_tree.TempTreeTestCase):
             "word/numbering.xml: num 1: abstractNum 3 is not defined",
         )
 
+    def test_a_template_without_lists_needs_no_numbering(self):
+        document = DOCUMENT.replace('<w:numPr><w:numId w:val="1"/></w:numPr>', "")
+        self.assertProblems(
+            self.package(**{"word/document.xml": document, "word/numbering.xml": None})
+        )
+
+    def test_a_reference_into_an_absent_part(self):
+        self.assertProblems(
+            self.package(**{"word/numbering.xml": None, "word/fontTable.xml": None}),
+            "word/document.xml: numId 1 is not defined",
+            "word/styles.xml: names font A, which fontTable.xml does not declare",
+        )
+
     def test_a_font_not_declared(self):
         styles = STYLES.replace('w:cs="A"', 'w:cs="B"')
         self.assertProblems(

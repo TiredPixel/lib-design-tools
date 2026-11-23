@@ -103,6 +103,13 @@ class Template:
             self.roots[path] = ET.fromstring(self.data[path])
         return self.roots[path]
 
+    def definitions(self, path):
+        """The styles, numbering or font table part at PATH, or an empty one.
+
+        A template with no lists, for one, has no numbering part.
+        """
+        return self.root(path) if path in self.data else ET.Element("none")
+
     def scoped(self, directory):
         """The XML parts whose references name DIRECTORY's styles, lists and fonts."""
         return [
@@ -120,7 +127,7 @@ class Template:
         """Each style id in DIRECTORY's styles part, with its type."""
         return {
             s.get(f"{W}styleId"): s.get(f"{W}type")
-            for s in self.root(directory + "styles.xml").iter(f"{W}style")
+            for s in self.definitions(directory + "styles.xml").iter(f"{W}style")
         }
 
 
@@ -195,7 +202,7 @@ def style_problems(template):
                     if problem := wrong(known, val(style), "paragraph"):
                         yield path, f"docPart: {problem}"
         styles = directory + "styles.xml"
-        for style in template.root(styles).iter(f"{W}style"):
+        for style in template.definitions(styles).iter(f"{W}style"):
             kind = style.get(f"{W}type")
             expected = {"basedOn": kind, "next": "paragraph", "link": LINKED.get(kind)}
             for tag, target in expected.items():
@@ -215,7 +222,7 @@ def pandoc_problems(template):
 def numbering_problems(template):
     for directory in template.scopes():
         path = directory + "numbering.xml"
-        numbering = template.root(path)
+        numbering = template.definitions(path)
         nums = {n.get(f"{W}numId") for n in numbering.iter(f"{W}num")}
         abstracts = {
             a.get(f"{W}abstractNumId") for a in numbering.iter(f"{W}abstractNum")
@@ -234,7 +241,7 @@ def numbering_problems(template):
 
 def font_problems(template):
     for directory in template.scopes():
-        table = template.root(directory + "fontTable.xml")
+        table = template.definitions(directory + "fontTable.xml")
         declared = {f.get(f"{W}name") for f in table.iter(f"{W}font")}
         for path in template.scoped(directory):
             named = {
@@ -260,7 +267,7 @@ def shipped_faces(directory):
 
 
 def face_problems(template, faces):
-    root = template.root("word/styles.xml")
+    root = template.definitions("word/styles.xml")
     defaults = root.find(f"{W}docDefaults/{W}rPrDefault/{W}rPr")
     by_id = {s.get(W + "styleId"): s for s in root.iter(W + "style")}
 
