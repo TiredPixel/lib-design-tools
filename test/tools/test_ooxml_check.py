@@ -251,6 +251,47 @@ class OoxmlCheckTest(temp_tree.TempTreeTestCase):
                     arguments=("--fonts", fonts),
                 )
 
+    def test_the_nearest_toggle_along_a_chain_wins(self):
+        def style(style_id, based=None, toggles="<w:b/><w:i/><w:bCs/><w:iCs/>"):
+            based_on = f'<w:basedOn w:val="{based}"/>' if based else ""
+            return (
+                f'<w:style w:type="paragraph" w:styleId="{style_id}">{based_on}'
+                f"<w:rPr>{toggles}</w:rPr></w:style>"
+            )
+
+        def package(*chain):
+            head = STYLES[: STYLES.index("<w:style ")]
+            return self.package(
+                **{
+                    "word/document.xml": f"<w:document {W}/>",
+                    "word/styles.xml": f"{head}{''.join(chain)}</w:styles>",
+                    "word/glossary/styles.xml": None,
+                }
+            )
+
+        # Only bold italic is shipped, so a repeat that cancelled would be reported.
+        bold_italic = self.root / "bold-italic"
+        bold_italic.mkdir()
+        (bold_italic / "A.ttf").write_bytes(font("A", "Bold Italic"))
+        self.assertProblems(
+            package(style("One"), style("Two", "One"), style("Three", "Two")),
+            arguments=("--fonts", bold_italic),
+        )
+        # Only regular is shipped, so the parent alone is reported, and a child turning
+        # the toggles off is not.
+        regular = self.root / "regular"
+        regular.mkdir()
+        (regular / "A.ttf").write_bytes(font("A", "Regular"))
+        off = '<w:b w:val="0"/><w:i w:val="0"/><w:bCs w:val="0"/><w:iCs w:val="0"/>'
+        self.assertProblems(
+            package(style("One"), style("Off", "One", off)),
+            *(
+                f"word/styles.xml: One: {script} face ('A', True, True) is not shipped"
+                for script in ("ascii", "hAnsi", "cs")
+            ),
+            arguments=("--fonts", regular),
+        )
+
     def test_an_override_for_no_part_or_retyping_relationships(self):
         types = PARTS["[Content_Types].xml"].replace(
             "</Types>",

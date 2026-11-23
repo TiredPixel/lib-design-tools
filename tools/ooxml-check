@@ -401,6 +401,13 @@ def face_problems(template, faces):
     # along the basedOn chain sets it, then the style's own. Given an attribute, only
     # an element carrying it counts, as each of rFonts' attributes is inherited on its
     # own.
+    #
+    # The nearest setting wins, a toggle such as w:b included. Word for Mac, tested on
+    # 2026-11-23 with styles written by hand in XML, kept two and three chained
+    # paragraph styles that each set bold and italic as bold italic, and showed a child
+    # setting both to w:val="0" under a bold italic parent as plain. Toggles combine
+    # only across style types, a bold italic character style on a run of a bold italic
+    # paragraph style showing plain, so a style read on its own never combines them.
     def setting(style, tag, condition, attribute=None):
         ancestors = chain(style)
         run_properties = [
