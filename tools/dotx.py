@@ -52,7 +52,8 @@ _STYLE = re.compile(
 )
 _ROOT = re.compile(r":root\s*\{(.*?)\}", re.DOTALL)
 _COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
-_DECLARATION = re.compile(r"(--[a-z0-9-]+)\s*:\s*([^;]+);")
+# CSS leaves the semicolon after a block's last declaration optional.
+_DECLARATION = re.compile(r"(--[a-z0-9-]+)\s*:\s*([^;]+)(?:;|\Z)")
 _VAR = re.compile(r"var\((--[a-z0-9-]+)\)")
 _MIX = re.compile(
     r"color-mix\(in srgb, var\((--[a-z0-9-]+)\) ([0-9.]+)%, transparent\)"

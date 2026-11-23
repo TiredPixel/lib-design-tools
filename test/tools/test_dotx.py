@@ -116,6 +116,11 @@ class BuildTest(Template):
         archive = self.built(*ARGUMENTS, "--tokens", "more.css")
         self.assertIn('w:val="445566"', self.part(archive, "word/document.xml"))
 
+    def test_a_last_declaration_without_a_semicolon(self):
+        self.write("design/more.css", ":root { --ink: #445566 }\n")
+        archive = self.built(*ARGUMENTS, "--tokens", "more.css")
+        self.assertIn('w:val="445566"', self.part(archive, "word/document.xml"))
+
     def test_a_colour_mix_is_composited_over_the_page(self):
         self.write(
             "src/word__document.xml",
