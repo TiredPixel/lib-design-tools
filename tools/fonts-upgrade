@@ -24,6 +24,7 @@ or in one alone, and where they lack it, from the repository's root at the relea
 tag.
 
 A family with path, a folder's path from the repository's root such as ofl/spectral,
+its words joined by single spaces and none of them ->, as the move it prints must be,
 follows the newest commit on the repository's default branch that touches that folder,
 one commit for every family following the folder. A font, a .ttf or .woff2, is the file
 carrying its name, and any other file is a licence, each taken from the folder itself at
@@ -164,6 +165,13 @@ def read_families(directory):
                     f"{where}: path {folder!r} is not a folder's from the repository's"
                     " root"
                 )
+            # Each move names the folder, in a line docker/upgrade-record takes only
+            # where its words are joined by single spaces and none is an arrow.
+            if folder.split() != folder.split(" ") or "->" in folder.split():
+                raise Refusal(
+                    f"{where}: path {folder!r} is not words joined by single spaces,"
+                    " none of them ->"
+                )
         families.append(
             Family(
                 family["prefix"],
@@ -181,6 +189,11 @@ def read_releases(directory, families):
     path = directory / RELEASES
     # At the last space, since a path may hold one and a tag or commit never does.
     releases = dict(line.rsplit(" ", 1) for line in read(path).splitlines())
+    # Each held tag or commit is the OLD of a move, which docker/upgrade-record takes
+    # only as one word that is not an arrow.
+    for key, held in releases.items():
+        if held.split() != [held] or held == "->":
+            raise Refusal(f"{path}: {key}: {held!r} is not a tag or commit")
     expected = {family.key for family in families}
     if set(releases) != expected:
         raise Refusal(f"{path}: lists {sorted(releases)}, not {sorted(expected)}")
