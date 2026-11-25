@@ -1,14 +1,12 @@
-# Docker reads no global excludes, so every top-level dot path is kept out and
-# the project's own are let back in by name; **/.git also reaches a nested
-# repository's .git, which /.* does not. A Compose override holds a checkout's
-# settings, not the tree's.
-/.*
-**/.git
+# Docker reads no global excludes, so every dot path at any depth is kept out,
+# a nested repository's .git with it, and the project's own are let back in by
+# name. Letting .github in lets in all it holds, so a dot path below it is kept
+# out again last. A Compose override holds a checkout's settings, not the tree's.
+**/.*
 /docker-compose.*.yml
 /tmp/
 # A submodule under lib/ is a checkout too, with settings of its own, so its
-# dot files are left out.
-/lib/*/.*
+# Compose overrides and tmp/ are left out.
 /lib/*/docker-compose.*.yml
 /lib/*/tmp/
 
@@ -19,3 +17,4 @@
 !/.mdformat.toml
 !/.shellcheckrc
 !/.yamllint.yaml
+/.github/**/.*
