@@ -2,22 +2,36 @@
 """Usage: fonts-upgrade DIRECTORY
 
 Replaces each font and licence file DIRECTORY/SHA256SUMS lists with its counterpart from
-its publisher's latest release on GitHub, then rewrites SHA256SUMS from the files
-written and DIRECTORY/RELEASES, which holds the release each publisher's files come
-from, as a line "OWNER/REPO TAG" for each. Prints a line "OWNER/REPO OLD -> NEW" on
-stdout for each publisher whose release moved.
+its publisher on GitHub, then rewrites SHA256SUMS from the files written and
+DIRECTORY/RELEASES, which holds where the files come from: a line "OWNER/REPO TAG" for
+each repository families follow by release, and a line "OWNER/REPO/PATH COMMIT" for each
+folder families follow by commit. Prints a line "OWNER/REPO OLD -> NEW" or
+"OWNER/REPO/PATH OLD -> NEW" on stdout for each line whose tag or commit moved.
 
-DIRECTORY/families.toml names the publishers, one [[family]] table each: the prefix
-its files' names start with, then a hyphen; its GitHub repository; in
-[family.directories], the directory holding each kind of font in the release's .zip
-assets, by suffix; and licences-from-repository, true where its licence is taken from
-the repository's root at the release's tag. A font, a .ttf or .woff2, is the one file
-carrying its name in such a directory, at any depth; a licence is named the prefix, a
-hyphen and the publisher's own name for it, taken from the top of the release's assets,
-where a file sits in no directory or in one alone, and where they lack it, from the
-repository's root at the release's tag. Everything is downloaded and checked before
-anything is written, so a release lacking a font, or a licence its repository also
-lacks at the tag, or holding either twice, writes nothing.
+DIRECTORY/families.toml names the families, one [[family]] table each: the prefix its
+files' names start with, then a hyphen; its GitHub repository; and either
+[family.directories], to follow the repository's latest release, or path, to follow a
+folder in it. A licence is named the prefix, a hyphen and the publisher's own name for
+it, such as Spectral-OFL.txt for the publisher's OFL.txt.
+
+A family with [family.directories] follows its publisher's latest release, its table
+naming the directory holding each kind of font in the release's .zip assets, by suffix;
+licences-from-repository is true where its licence is taken from the repository's root
+at the release's tag. A font, a file whose name ends in one of those suffixes, is the
+one file carrying its name in such a directory, at any depth; any other file is a
+licence, taken from the top of the release's assets, where a file sits in no directory
+or in one alone, and where they lack it, from the repository's root at the release's
+tag.
+
+A family with path, a folder's path from the repository's root such as ofl/spectral,
+follows the newest commit on the repository's default branch that touches that folder,
+one commit for every family following the folder. A font, a .ttf or .woff2, is the file
+carrying its name, and any other file is a licence, each taken from the folder itself at
+that full commit, not from a folder below it.
+
+Everything is downloaded and checked before anything is written, so a release lacking a
+font, or a licence its repository also lacks at the tag, or holding either twice, a
+folder lacking a file at its commit, or a folder no commit touches, writes nothing.
 
 Requests to GitHub's API carry the token in GH_TOKEN, else GITHUB_TOKEN, where either is
 set.
@@ -39,7 +53,8 @@ import zipfile
 
 PROGRAM = "fonts-upgrade"
 API = "https://api.github.com"
-# Files at a tag, served outside the API, so they count against none of its limits.
+# Files at a tag or commit, served outside the API, so they count against none of its
+# limits.
 RAW = "https://raw.githubusercontent.com"
 # Bounded, so a stalled server fails the run rather than hanging it.
 TIMEOUT_S = 60
@@ -48,6 +63,7 @@ RELEASES = "RELEASES"
 FAMILIES = "families.toml"
 # A macOS archiver's resource forks, which carry a file's name but not the file.
 RESOURCE_FORKS = "__MACOSX/"
+FONTS = (".ttf", ".woff2")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -58,6 +74,19 @@ class Family:
     # publisher's static fonts, which another directory may hold under the same name.
     directories: tuple[tuple[str, str], ...]
     licences_from_repository: bool
+    # The folder from the repository's root followed by commit, or None where the
+    # family follows releases.
+    path: str | None
+
+    @property
+    def key(self):
+        """What RELEASES keys the family by: OWNER/REPO, or OWNER/REPO/PATH.
+
+        A repository's name has exactly two segments, so the two forms never meet.
+        """
+        if self.path is None:
+            return self.repository
+        return f"{self.repository}/{self.path}"
 
     def directory(self, name):
         for suffix, directory in self.directories:
@@ -96,26 +125,63 @@ def fetch(url, accept="application/vnd.github+json"):
         raise Refusal(f"{url}: {error}") from error
 
 
+def read(path, binary=False):
+    """PATH's bytes, or its text, refusing where it is missing."""
+    try:
+        return path.read_bytes() if binary else path.read_text()
+    except FileNotFoundError as error:
+        raise Refusal(f"{path}: no such file") from error
+
+
 def read_families(directory):
-    """The publishers families.toml names, in its order."""
-    with (directory / FAMILIES).open("rb") as file:
-        table = tomllib.load(file)
-    return tuple(
-        Family(
-            family["prefix"],
-            family["repository"],
-            tuple(family["directories"].items()),
-            family.get("licences-from-repository", False),
+    """The families families.toml names, in its order."""
+    path = directory / FAMILIES
+    # TOML is UTF-8 whatever the locale.
+    table = tomllib.loads(read(path, binary=True).decode())
+    if not table.get("family"):
+        raise Refusal(f"{path}: no [[family]] table")
+    # A [family] table, written without the second brackets, is a table, not a list.
+    if not isinstance(table["family"], list):
+        raise Refusal(f"{path}: family is not an array of [[family]] tables")
+    families = []
+    for number, family in enumerate(table["family"], 1):
+        for key in ("prefix", "repository"):
+            if key not in family:
+                raise Refusal(f"{path}: [[family]] {number}: no {key}")
+        where = f"{path}: {family['prefix']}"
+        folder = family.get("path")
+        if folder is None and "directories" not in family:
+            raise Refusal(f"{where}: neither path nor directories")
+        if folder is not None:
+            if "directories" in family:
+                raise Refusal(f"{where}: both path and directories")
+            if "licences-from-repository" in family:
+                raise Refusal(f"{where}: both path and licences-from-repository")
+            # An empty segment would put an empty one in each URL, and a dot segment
+            # names the folder by another path, or one outside the repository.
+            if any(segment in ("", ".", "..") for segment in folder.split("/")):
+                raise Refusal(
+                    f"{where}: path {folder!r} is not a folder's from the repository's"
+                    " root"
+                )
+        families.append(
+            Family(
+                family["prefix"],
+                family["repository"],
+                tuple(family.get("directories", {}).items()),
+                family.get("licences-from-repository", False),
+                folder,
+            )
         )
-        for family in table["family"]
-    )
+    return tuple(families)
 
 
 def read_releases(directory, families):
-    """Each publisher's repository and the tag its files come from."""
+    """Each family's key and the tag or commit its files come from."""
     path = directory / RELEASES
-    releases = dict(line.split(" ") for line in path.read_text().splitlines())
-    expected = {family.repository for family in families}
+    # At the last space, since a path may hold one and a tag or commit never does.
+    releases = dict(line.rsplit(" ", 1) for line in read(path).splitlines())
+    expected = {family.key for family in families}
     if set(releases) != expected:
         raise Refusal(f"{path}: lists {sorted(releases)}, not {sorted(expected)}")
     return releases
@@ -127,9 +193,7 @@ def read_names(directory):
     A name with a directory in it, or one that is a symbolic link, would carry the write
     out of DIRECTORY, and SHA256SUMS and RELEASES are written through as well.
     """
-    names = [
-        line.partition("  ")[2] for line in (directory / SUMS).read_text().splitlines()
-    ]
+    names = [line.partition("  ")[2] for line in read(directory / SUMS).splitlines()]
     for name in names:
         if name in ("", ".", "..", SUMS, RELEASES, FAMILIES) or "/" in name:
             raise Refusal(f"{directory / SUMS}: {name!r} is not a file of {directory}")
@@ -199,8 +263,67 @@ def repository_file(fetch, repository, tag, name):
     return fetch(url, "application/octet-stream")
 
 
+def release_files(fetch, family, names):
+    """The latest release's tag, and the content of each of NAMES it gives."""
+    tag, archives = latest(fetch, family.repository)
+    release = f"{family.repository} {tag}"
+    print(f"{PROGRAM}: {release}: the latest release", file=sys.stderr)
+    contents = {}
+    for name in names:
+        directory_in_archive = family.directory(name)
+        if directory_in_archive is not None:
+            contents[name] = member(archives, name, release, directory_in_archive)
+            continue
+        own = name[len(family.prefix) + 1 :]
+        if family.licences_from_repository:
+            contents[name] = repository_file(fetch, family.repository, tag, own)
+            continue
+        try:
+            contents[name] = member(archives, own, release, None)
+        except Missing as missing:
+            try:
+                contents[name] = repository_file(fetch, family.repository, tag, own)
+            except Refusal as refusal:
+                raise Refusal(f"{missing}, and {refusal}") from refusal
+    return tag, contents
+
+
+def newest_commit(fetch, repository, path):
+    """The newest commit on the repository's default branch that touches PATH."""
+    url = f"{API}/repos/{repository}/commits?path={urllib.parse.quote(path)}&per_page=1"
+    commits = json.loads(fetch(url))
+    if not commits:
+        raise Refusal(
+            f"{repository}/{path}: no commit on the default branch touches it"
+        )
+    return commits[0]["sha"]
+
+
+def folder_files(fetch, family, names, commit):
+    """The content of each of NAMES in the family's folder at COMMIT.
+
+    A font is taken by its own name and a licence by the publisher's, at the full
+    commit, so the files are the ones RELEASES names.
+    """
+    pinned = f"{family.key} {commit}"
+    folder = f"{RAW}/{family.repository}/{commit}/{urllib.parse.quote(family.path)}"
+    contents = {}
+    for name in names:
+        own = name if name.endswith(FONTS) else name[len(family.prefix) + 1 :]
+        try:
+            contents[name] = fetch(
+                f"{folder}/{urllib.parse.quote(own)}", "application/octet-stream"
+            )
+        except Refusal as refusal:
+            raise Refusal(f"{pinned}: {own}: {refusal}") from refusal
+    return contents
+
+
 def upgrade(directory, fetch):
-    """Writes the latest releases' files into DIRECTORY; returns the moves."""
+    """Writes the latest releases' and commits' files into DIRECTORY.
+
+    Returns the moves.
+    """
     # A link at DIRECTORY, or on the way to it from here, would carry every write to
     # wherever it points.
     for path in (directory, *(() if directory.is_absolute() else directory.parents)):
@@ -216,28 +339,25 @@ def upgrade(directory, fetch):
         by_family[family].append(name)
 
     contents = {}
-    tags = {}
+    pins = {}
     for family, family_names in by_family.items():
-        tag, archives = latest(fetch, family.repository)
-        tags[family.repository] = tag
-        release = f"{family.repository} {tag}"
-        print(f"{PROGRAM}: {release}: the latest release", file=sys.stderr)
-        for name in family_names:
-            directory_in_archive = family.directory(name)
-            if directory_in_archive is not None:
-                contents[name] = member(archives, name, release, directory_in_archive)
-                continue
-            own = name[len(family.prefix) + 1 :]
-            if family.licences_from_repository:
-                contents[name] = repository_file(fetch, family.repository, tag, own)
-                continue
-            try:
-                contents[name] = member(archives, own, release, None)
-            except Missing as missing:
-                try:
-                    contents[name] = repository_file(fetch, family.repository, tag, own)
-                except Refusal as refusal:
-                    raise Refusal(f"{missing}, and {refusal}") from refusal
+        if family.path is None:
+            pins[family.key], family_contents = release_files(
+                fetch, family, family_names
+            )
+        else:
+            # Once for each folder, so families sharing it take one commit's files.
+            if family.key not in pins:
+                pins[family.key] = newest_commit(fetch, family.repository, family.path)
+                print(
+                    f"{PROGRAM}: {family.key} {pins[family.key]}: the newest commit"
+                    " touching it",
+                    file=sys.stderr,
+                )
+            family_contents = folder_files(
+                fetch, family, family_names, pins[family.key]
+            )
+        contents.update(family_contents)
 
     for name, content in contents.items():
         (directory / name).write_bytes(content)
@@ -248,12 +368,12 @@ def upgrade(directory, fetch):
         )
     )
     (directory / RELEASES).write_text(
-        "".join(f"{repository} {tags[repository]}\n" for repository in sorted(tags))
+        "".join(f"{key} {pins[key]}\n" for key in sorted(pins))
     )
     return [
-        f"{repository} {held[repository]} -> {tags[repository]}"
-        for repository in sorted(tags)
-        if tags[repository] != held[repository]
+        f"{key} {held[key]} -> {pins[key]}"
+        for key in sorted(pins)
+        if pins[key] != held[key]
     ]
 
 
