@@ -26,7 +26,7 @@
 # TRACK LOCK js npm:@prettier/plugin-xml npm:c8 npm:prettier npm:semistandard
 # TRACK LOCK mdformat pypi:mdformat pypi:mdformat-frontmatter pypi:mdformat-gfm
 #===============================================================================
-FROM docker.io/library/debian@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 AS wheels
+FROM docker.io/library/debian@sha256:3cda3ca472ce45507a5109c6a3907093e24d9ae67d55954c9a07a45665dafba2 AS wheels
 
 SHELL ["/bin/bash", "-Eeuo", "pipefail", "-O", "inherit_errexit", "-O", "failglob", "-c"]
 
@@ -40,7 +40,7 @@ RUN --mount=type=bind,source=Dockerfile.lock,target=/lock \
     --no-deps --only-binary=:all: -d /wheels \
     -r /lock/mdformat/requirements.txt
 #===============================================================================
-FROM docker.io/library/debian@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 AS dev
+FROM docker.io/library/debian@sha256:3cda3ca472ce45507a5109c6a3907093e24d9ae67d55954c9a07a45665dafba2 AS dev
 
 SHELL ["/bin/bash", "-Eeuo", "pipefail", "-O", "inherit_errexit", "-O", "failglob", "-c"]
 
@@ -141,9 +141,9 @@ RUN case $(uname -m) in \
         && install -m 755 /tmp/hadolint /usr/local/bin/hadolint \
         && rm /tmp/hadolint
 
-ARG RUFF_SHA256_AMD64=7d261fc981a784668e19e9fa6ad437bfd95b67f2dc263fc1eab87d54d72fcc90
-ARG RUFF_SHA256_ARM64=4d959d4322a8cd3effe11e9fc6743da1dbb41cd0b2476e433b6e6bfd9a69b626
-ARG RUFF_VERSION=0.17.5
+ARG RUFF_SHA256_AMD64=94b33791f48cd54ab35ad673a443a5c001d3e6d87effeaba9899070b700d45f3
+ARG RUFF_SHA256_ARM64=d4eea36ee6228f6c6bbcf0aea4ebf66fe0e595eedc6cffe628d7b8ba3623390f
+ARG RUFF_VERSION=0.17.6
 RUN case $(uname -m) in \
         aarch64) arch=aarch64 sha256=${RUFF_SHA256_ARM64} ;; \
         x86_64) arch=x86_64 sha256=${RUFF_SHA256_AMD64} ;; \
