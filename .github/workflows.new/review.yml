@@ -2,10 +2,14 @@
 # TRACK USES actions/create-github-app-token@v3
 # TRACK USES TiredPixel/lib-shell-common@latest
 # One run at a time per pull request, none cancelled once running: each reads
-# the pull request afresh, so the last posts its current state.
+# the pull request afresh, so the last posts its current state. Waiting runs
+# queue rather than the newest cancelling the one waiting, since only a
+# pull_request_target run puts the review check on the head, and only a
+# synchronize run gives the head the push moved the pull request from.
 concurrency:
   cancel-in-progress: false
   group: review-${{ github.event.number || github.event.issue.number }}
+  queue: max
 jobs:
   review:
     # A comment on a plain issue has no checks to post, and the gate fails on a
