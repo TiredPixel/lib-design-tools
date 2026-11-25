@@ -55,7 +55,7 @@ class Family:
     prefix: str
     repository: str
     # The directory holding each kind of font in the release's archives, by suffix: the
-    # publisher's static cuts, which another directory may hold under the same name.
+    # publisher's static fonts, which another directory may hold under the same name.
     directories: tuple[tuple[str, str], ...]
     licences_from_repository: bool
 

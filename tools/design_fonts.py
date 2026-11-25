@@ -165,7 +165,7 @@ def woff2_face(data):
     return {"flavour": flavour, "revision": major << 16 | minor, "lengths": lengths}
 
 
-def same_cut(ttf, woff2):
+def same_font(ttf, woff2):
     """Whether a WOFF2 compresses the font a TrueType file holds.
 
     It is told by what the WOFF2's header and directory say, without decompressing it.
@@ -186,7 +186,7 @@ def face_problems(stylesheet, directory, formats):
     Each url() is read against the stylesheet's own directory. A problem is a src that
     is not one file of each of FORMATS, such as ("woff2", "truetype"), a TrueType file
     whose family, weight class or italic bit is not the rule's, and a woff2 that is not
-    the same cut as the TrueType file; then each font file in DIRECTORY that no rule
+    the same font as the TrueType file; then each font file in DIRECTORY that no rule
     names.
     """
     rules = FACE_RULE.findall(COMMENT.sub("", stylesheet.read_text()))
@@ -217,8 +217,8 @@ def face_problems(stylesheet, directory, formats):
         if ttf["italic"] != (style == "italic"):
             shape = "italic" if ttf["italic"] else "upright"
             found.append(f"{name}: {shape}, not font-style {style}")
-        if "woff2" in data and not same_cut(ttf, woff2_face(data["woff2"])):
-            found.append(f"{files['woff2'].name}: not the same cut as {name}")
+        if "woff2" in data and not same_font(ttf, woff2_face(data["woff2"])):
+            found.append(f"{files['woff2'].name}: not the same font as {name}")
     found += [
         f"{path.name}: named by no @font-face"
         for path in sorted(directory.iterdir())

@@ -175,10 +175,10 @@ class FaceProblemsTest(unittest.TestCase):
         self.root = pathlib.Path(temporary.name)
         self.directory = self.root / "fonts"
         self.directory.mkdir()
-        self.write_cut("A-Regular", build_ttf("A", 400, False, 0x10189))
-        self.write_cut("A-Bold", build_ttf("A", 700, False, 0x10189, 12))
+        self.write_font("A-Regular", build_ttf("A", 400, False, 0x10189))
+        self.write_font("A-Bold", build_ttf("A", 700, False, 0x10189, 12))
 
-    def write_cut(self, stem, ttf, **changes):
+    def write_font(self, stem, ttf, **changes):
         (self.directory / f"{stem}.ttf").write_bytes(ttf)
         (self.directory / f"{stem}.woff2").write_bytes(woff2_of(ttf, **changes))
 
@@ -220,7 +220,7 @@ class FaceProblemsTest(unittest.TestCase):
         )
 
     def test_a_font_file_no_rule_names(self):
-        self.write_cut("A-Light", build_ttf("A", 300, False, 0x10189))
+        self.write_font("A-Light", build_ttf("A", 300, False, 0x10189))
         self.assertEqual(
             self.problems(),
             [
@@ -245,66 +245,66 @@ class FaceProblemsTest(unittest.TestCase):
         )
 
     def test_file_is_italic(self):
-        self.write_cut("A-Regular", build_ttf("A", 400, True, 0x10189))
+        self.write_font("A-Regular", build_ttf("A", 400, True, 0x10189))
         self.assertEqual(
             self.problems(), ["A-Regular.ttf: italic, not font-style normal"]
         )
 
     def test_family(self):
-        self.write_cut("A-Bold", build_ttf("B", 700, False, 0x10189))
+        self.write_font("A-Bold", build_ttf("B", 700, False, 0x10189))
         self.assertEqual(self.problems(), ["A-Bold.ttf: family B, not A"])
 
     def test_family_prefers_the_typographic_family(self):
-        self.write_cut(
+        self.write_font(
             "A-Bold", build_ttf("A", 700, False, 0x10189, names={1: "A Bold", 16: "A"})
         )
         self.assertEqual(self.problems(), [])
-        self.write_cut(
+        self.write_font(
             "A-Bold", build_ttf("A", 700, False, 0x10189, names={1: "A Bold"})
         )
         self.assertEqual(self.problems(), ["A-Bold.ttf: family A Bold, not A"])
 
-    def test_woff2_of_another_cut(self):
+    def test_woff2_of_another_font(self):
         self.assertEqual(
             self.problems(FACES.replace("A-Regular.woff2", "A-Bold.woff2")),
             [
-                "A-Bold.woff2: not the same cut as A-Regular.ttf",
+                "A-Bold.woff2: not the same font as A-Regular.ttf",
                 "A-Regular.woff2: named by no @font-face",
             ],
         )
 
     def test_woff2_of_another_revision(self):
-        self.write_cut("A-Bold", build_ttf("A", 700, False, 0x10189), revision=0x10190)
+        self.write_font("A-Bold", build_ttf("A", 700, False, 0x10189), revision=0x10190)
         self.assertEqual(
-            self.problems(), ["A-Bold.woff2: not the same cut as A-Bold.ttf"]
+            self.problems(), ["A-Bold.woff2: not the same font as A-Bold.ttf"]
         )
 
     def test_woff2_with_another_table_length(self):
         ttf = build_ttf("A", 700, False, 0x10189)
-        self.write_cut("A-Bold", ttf, lengths={b"name": 99})
+        self.write_font("A-Bold", ttf, lengths={b"name": 99})
         self.assertEqual(
-            self.problems(), ["A-Bold.woff2: not the same cut as A-Bold.ttf"]
+            self.problems(), ["A-Bold.woff2: not the same font as A-Bold.ttf"]
         )
 
     def test_woff2_of_another_flavour(self):
         ttf = build_ttf("A", 700, False, 0x10189)
-        self.write_cut("A-Bold", ttf, flavour=b"OTTO")
+        self.write_font("A-Bold", ttf, flavour=b"OTTO")
         self.assertEqual(
-            self.problems(), ["A-Bold.woff2: not the same cut as A-Bold.ttf"]
+            self.problems(), ["A-Bold.woff2: not the same font as A-Bold.ttf"]
         )
 
     def test_woff2_may_drop_dsig_and_resize_glyf(self):
         ttf = build_ttf("A", 700, False, 0x10189, dsig=True)
-        self.write_cut("A-Bold", ttf, lengths={b"DSIG": None, b"glyf": 14})
+        self.write_font("A-Bold", ttf, lengths={b"DSIG": None, b"glyf": 14})
         self.assertEqual(self.problems(), [])
 
     def test_woff2_keeps_an_unknown_tag(self):
         ttf = build_ttf("A", 700, False, 0x10189, dsig=True)
-        self.write_cut("A-Bold", ttf)
+        self.write_font("A-Bold", ttf)
         self.assertEqual(self.problems(), [])
-        self.write_cut("A-Bold", ttf, lengths={b"DSIG": 9})
+        self.write_font("A-Bold", ttf, lengths={b"DSIG": 9})
         self.assertEqual(
-            self.problems(), ["A-Bold.woff2: not the same cut as A-Bold.ttf"]
+            self.problems(), ["A-Bold.woff2: not the same font as A-Bold.ttf"]
         )
 
     def test_not_a_woff2(self):
