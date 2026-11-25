@@ -905,6 +905,24 @@ class FolderRefusalTest(Folders):
                     " repository's root",
                 )
 
+    def test_path_not_a_move_records_take(self):
+        paths = (
+            "ofl/serif  one",
+            "ofl/serif ",
+            " ofl/serif",
+            "ofl/serif\tone",
+            "ofl/serif\none",
+            "ofl/a -> b",
+            "ofl/a ->",
+        )
+        for path in paths:
+            with self.subTest(path=path):
+                self.assert_table_refused(
+                    {**SERIF_FOLDER, "path": path},
+                    f"families.toml: Serif: path {path!r} is not words joined by"
+                    " single spaces, none of them ->",
+                )
+
     def test_releases_keying_a_folder_by_its_repository(self):
         self.pins = {FOLDERS: SERIF_OLD, f"{FOLDERS}/ofl/mono": MONO_OLD}
         self.write_directory()

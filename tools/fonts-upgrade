@@ -24,6 +24,7 @@ or in one alone, and where they lack it, from the repository's root at the relea
 tag.
 
 A family with path, a folder's path from the repository's root such as ofl/spectral,
+its words joined by single spaces and none of them ->, as the move it prints must be,
 follows the newest commit on the repository's default branch that touches that folder,
 one commit for every family following the folder. A font, a .ttf or .woff2, is the file
 carrying its name, and any other file is a licence, each taken from the folder itself at
@@ -163,6 +164,13 @@ def read_families(directory):
                 raise Refusal(
                     f"{where}: path {folder!r} is not a folder's from the repository's"
                     " root"
+                )
+            # Each move names the folder, in a line docker/upgrade-record takes only
+            # where its words are joined by single spaces and none is an arrow.
+            if folder.split() != folder.split(" ") or "->" in folder.split():
+                raise Refusal(
+                    f"{where}: path {folder!r} is not words joined by single spaces,"
+                    " none of them ->"
                 )
         families.append(
             Family(
