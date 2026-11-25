@@ -2,10 +2,14 @@
 # TRACK USES actions/create-github-app-token@v3
 # TRACK USES TiredPixel/lib-shell-common@latest
 # One run at a time per pull request, none cancelled once running: each reads
-# the pull request afresh, so the last posts its current state.
+# the pull request afresh, so the last posts its current state. Waiting runs
+# queue rather than the newest cancelling the one waiting, since only a
+# pull_request_target run puts the review check on the head, and only a
+# synchronize run gives the head the push moved the pull request from.
 concurrency:
   cancel-in-progress: false
   group: review-${{ github.event.number || github.event.issue.number }}
+  queue: max
 jobs:
   review:
     # A comment on a plain issue has no checks to post, and the gate fails on a
@@ -23,7 +27,7 @@ jobs:
         name: Mint review app token
         # A full commit SHA cannot be wrapped.
         # yamllint disable-line rule:line-length
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc
         with:
           client-id: ${{ vars.REVIEW_APP_CLIENT_ID }}
           permission-checks: write
@@ -34,7 +38,7 @@ jobs:
       - name: Post review checks
         # A full commit SHA cannot be wrapped.
         # yamllint disable-line rule:line-length
-        uses: TiredPixel/lib-shell-common/github/review@e637f44adb2f2b3e4eaf4e00bb465314ce7c66be
+        uses: TiredPixel/lib-shell-common/github/review@862f7240e1d96b368355db7f218897ce3e5591e1
         with:
           app: ${{ steps.token.outputs.app-slug }}
           checks: ${{ vars.REVIEW_GATE_CHECKS }}
