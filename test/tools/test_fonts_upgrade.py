@@ -104,6 +104,24 @@ class GitHub:
         """NAME at the repository's root at TAG, TAG as it appears in the URL."""
         self.bodies[file_url(repository, tag, name)] = content
 
+    def commits(self, repository, path, *shas):
+        """SHAS as the newest commits touching PATH, PATH as it appears in the URL."""
+        self.bodies[commits_url(repository, path)] = json.dumps(
+            [{"sha": sha} for sha in shas]
+        ).encode()
+
+    def folder_file(self, repository, sha, path, name, content):
+        """NAME in PATH at commit SHA, PATH and NAME as they appear in the URL."""
+        self.bodies[folder_url(repository, sha, path, name)] = content
+
+
+def commits_url(repository, path):
+    return f"{API}/repos/{repository}/commits?path={path}&per_page=1"
+
+
+def folder_url(repository, sha, path, name):
+    return f"{fonts_upgrade.RAW}/{repository}/{sha}/{path}/{name}"
+
 
 def file_url(repository, tag, name):
     return f"{fonts_upgrade.RAW}/{repository}/refs/tags/{tag}/{name}"
@@ -539,6 +557,369 @@ class RefusalTest(Fonts):
     def test_release_lookup_failing(self):
         del self.github.bodies[f"{API}/repos/{SANS}/releases/latest"]
         self.assert_refused(f"{API}/repos/{SANS}/releases/latest: HTTP Error 404")
+
+
+FOLDERS = "example-type/fonts"
+SERIF_OLD = "1" * 40
+SERIF_NEW = "2" * 40
+MONO_OLD = "3" * 40
+MONO_NEW = "4" * 40
+SERIF_FOLDER = {"prefix": "Serif", "repository": FOLDERS, "path": "ofl/serif"}
+MONO_FOLDER = {"prefix": "Mono", "repository": FOLDERS, "path": "ofl/mono"}
+
+
+def families_toml(*tables):
+    """A families.toml holding TABLES, each a [[family]] table's keys in order."""
+    written = []
+    for table in tables:
+        lines = ["[[family]]"]
+        lines += [
+            f"{key} = {json.dumps(value)}"
+            for key, value in table.items()
+            if key != "directories"
+        ]
+        if "directories" in table:
+            lines += ["", "[family.directories]"]
+            lines += [f'"{s}" = "{d}"' for s, d in table["directories"].items()]
+        written.append("\n".join(lines) + "\n")
+    return "\n".join(written)
+
+
+class Folders(Fonts):
+    """A fonts directory of two families following folders of one repository.
+
+    In the fabricated GitHub, each folder's newest commit has moved.
+    """
+
+    def setUp(self):
+        super().setUp()
+        for path in self.directory.iterdir():
+            path.unlink()
+        self.families = families_toml(SERIF_FOLDER, MONO_FOLDER)
+        self.held = {
+            "Mono-Bold.ttf": b"\x00\x01\x00\x00mono old",
+            "Mono-OFL.txt": b"OFL, Mono\n",
+            "Serif-Italic.woff2": b"wOF2serif old",
+            "Serif-OFL.txt": b"OFL, 2021\n",
+            "Serif-Regular.ttf": b"\x00\x01\x00\x00serif old",
+        }
+        self.pins = {f"{FOLDERS}/ofl/mono": MONO_OLD, f"{FOLDERS}/ofl/serif": SERIF_OLD}
+        self.write_directory()
+
+        self.new = {
+            "Mono-Bold.ttf": b"\x00\x01\x00\x00mono new",
+            "Mono-OFL.txt": b"OFL, Mono\n",
+            "Serif-Italic.woff2": b"wOF2serif new",
+            "Serif-OFL.txt": b"OFL, 2023\n",
+            "Serif-Regular.ttf": b"\x00\x01\x00\x00serif new",
+        }
+        self.github.commits(FOLDERS, "ofl/serif", SERIF_NEW, SERIF_OLD)
+        self.github.commits(FOLDERS, "ofl/mono", MONO_NEW)
+        self.serve("ofl/serif", SERIF_NEW, "Serif", self.new)
+        self.serve("ofl/mono", MONO_NEW, "Mono", self.new)
+
+    def write_directory(self):
+        for name, content in self.held.items():
+            (self.directory / name).write_bytes(content)
+        (self.directory / "SHA256SUMS").write_text(sums(self.held))
+        (self.directory / "RELEASES").write_text(self.releases(self.pins))
+        (self.directory / "families.toml").write_text(self.families)
+
+    def serve(self, path, sha, prefix, files):
+        """PREFIX's FILES in PATH at SHA, each licence under the publisher's name."""
+        for name, content in files.items():
+            if not name.startswith(f"{prefix}-"):
+                continue
+            if name.endswith("-OFL.txt"):
+                name = "OFL.txt"
+            self.github.folder_file(FOLDERS, sha, path, name, content)
+
+    def expected(self, files, pins):
+        return {
+            **files,
+            "RELEASES": self.releases(pins).encode(),
+            "SHA256SUMS": sums(files).encode(),
+            "families.toml": self.families.encode(),
+        }
+
+
+class FolderUpgradeTest(Folders):
+    def test_moves_each_file_to_its_folders_newest_commit(self):
+        status, stdout, stderr = self.run_main()
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(
+            stdout.splitlines(),
+            [
+                f"{FOLDERS}/ofl/mono {MONO_OLD} -> {MONO_NEW}",
+                f"{FOLDERS}/ofl/serif {SERIF_OLD} -> {SERIF_NEW}",
+            ],
+        )
+        pins = {f"{FOLDERS}/ofl/mono": MONO_NEW, f"{FOLDERS}/ofl/serif": SERIF_NEW}
+        self.assertEqual(self.contents(), self.expected(self.new, pins))
+
+    def test_names_each_newest_commit(self):
+        _, _, stderr = self.run_main()
+        for path, sha in (("ofl/mono", MONO_NEW), ("ofl/serif", SERIF_NEW)):
+            self.assertIn(
+                f"fonts-upgrade: {FOLDERS}/{path} {sha}: the newest commit touching it",
+                stderr,
+            )
+
+    def test_moves_one_family_of_a_repository_alone(self):
+        self.github.commits(FOLDERS, "ofl/mono", MONO_OLD)
+        self.serve("ofl/mono", MONO_OLD, "Mono", self.held)
+        status, stdout, stderr = self.run_main()
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(
+            stdout.splitlines(), [f"{FOLDERS}/ofl/serif {SERIF_OLD} -> {SERIF_NEW}"]
+        )
+        files = {
+            **self.new,
+            "Mono-Bold.ttf": self.held["Mono-Bold.ttf"],
+            "Mono-OFL.txt": self.held["Mono-OFL.txt"],
+        }
+        pins = {f"{FOLDERS}/ofl/mono": MONO_OLD, f"{FOLDERS}/ofl/serif": SERIF_NEW}
+        self.assertEqual(self.contents(), self.expected(files, pins))
+
+    def test_reproduces_the_files_where_no_commit_moved(self):
+        self.held = self.new
+        self.pins = {f"{FOLDERS}/ofl/mono": MONO_NEW, f"{FOLDERS}/ofl/serif": SERIF_NEW}
+        self.write_directory()
+        before = self.contents()
+        status, stdout, stderr = self.run_main()
+        self.assertEqual((status, stdout), (0, ""), stderr)
+        self.assertEqual(self.contents(), before)
+
+    def test_takes_one_commit_for_families_sharing_a_folder(self):
+        self.held = {k: v for k, v in self.held.items() if k != "Mono-OFL.txt"}
+        self.families = families_toml(
+            SERIF_FOLDER, {**MONO_FOLDER, "path": "ofl/serif"}
+        )
+        self.pins = {f"{FOLDERS}/ofl/serif": SERIF_OLD}
+        for path in self.directory.iterdir():
+            path.unlink()
+        self.write_directory()
+        self.github.folder_file(
+            FOLDERS, SERIF_NEW, "ofl/serif", "Mono-Bold.ttf", self.new["Mono-Bold.ttf"]
+        )
+        status, stdout, stderr = self.run_main()
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(
+            stdout.splitlines(), [f"{FOLDERS}/ofl/serif {SERIF_OLD} -> {SERIF_NEW}"]
+        )
+        asked = [url for url, _ in self.github.asked]
+        self.assertEqual(asked.count(commits_url(FOLDERS, "ofl/serif")), 1)
+
+    def test_prints_a_move_where_no_file_changed(self):
+        self.serve("ofl/mono", MONO_NEW, "Mono", self.held)
+        _, stdout, _ = self.run_main()
+        self.assertIn(
+            f"{FOLDERS}/ofl/mono {MONO_OLD} -> {MONO_NEW}", stdout.splitlines()
+        )
+
+    def test_asks_for_one_commit_and_each_file_at_it(self):
+        self.run_main()
+        api = "application/vnd.github+json"
+        raw = "application/octet-stream"
+        self.assertEqual(
+            sorted(self.github.asked),
+            [
+                (f"{API}/repos/{FOLDERS}/commits?path=ofl/mono&per_page=1", api),
+                (f"{API}/repos/{FOLDERS}/commits?path=ofl/serif&per_page=1", api),
+                *(
+                    (f"https://raw.githubusercontent.com/{FOLDERS}/{at}", raw)
+                    for at in (
+                        f"{SERIF_NEW}/ofl/serif/OFL.txt",
+                        f"{SERIF_NEW}/ofl/serif/Serif-Italic.woff2",
+                        f"{SERIF_NEW}/ofl/serif/Serif-Regular.ttf",
+                        f"{MONO_NEW}/ofl/mono/Mono-Bold.ttf",
+                        f"{MONO_NEW}/ofl/mono/OFL.txt",
+                    )
+                ),
+            ],
+        )
+
+    def test_takes_a_licence_by_the_publishers_name(self):
+        self.github.folder_file(
+            FOLDERS, SERIF_NEW, "ofl/serif", "Serif-OFL.txt", b"not this one"
+        )
+        status, _, stderr = self.run_main()
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(
+            (self.directory / "Serif-OFL.txt").read_bytes(), self.new["Serif-OFL.txt"]
+        )
+
+    def test_quotes_the_path_and_each_name(self):
+        self.families = families_toml(
+            {**SERIF_FOLDER, "path": "ofl/serif one"}, MONO_FOLDER
+        )
+        self.pins = {
+            f"{FOLDERS}/ofl/mono": MONO_OLD,
+            f"{FOLDERS}/ofl/serif one": SERIF_OLD,
+        }
+        self.held = {"Mono-Bold.ttf": b"old", "Serif-Book Italic.ttf": b"old"}
+        for path in self.directory.iterdir():
+            path.unlink()
+        self.write_directory()
+        self.github.commits(FOLDERS, "ofl/serif%20one", SERIF_NEW)
+        self.github.folder_file(
+            FOLDERS, SERIF_NEW, "ofl/serif%20one", "Serif-Book%20Italic.ttf", b"new"
+        )
+        status, stdout, stderr = self.run_main()
+        self.assertEqual(status, 0, stderr)
+        self.assertIn(
+            f"{FOLDERS}/ofl/serif one {SERIF_OLD} -> {SERIF_NEW}", stdout.splitlines()
+        )
+        self.assertEqual(
+            (self.directory / "Serif-Book Italic.ttf").read_bytes(), b"new"
+        )
+
+
+class MixedTest(Fonts):
+    """The release families' fonts directory, with a family following a folder."""
+
+    def setUp(self):
+        super().setUp()
+        self.families = FAMILIES + "\n" + families_toml(SERIF_FOLDER)
+        (self.directory / "families.toml").write_text(self.families)
+        (self.directory / "Serif-Regular.ttf").write_bytes(b"serif old")
+        held = {**self.held, "Serif-Regular.ttf": b"serif old"}
+        (self.directory / "SHA256SUMS").write_text(sums(held))
+        pins = {**HELD, f"{FOLDERS}/ofl/serif": SERIF_OLD}
+        (self.directory / "RELEASES").write_text(self.releases(pins))
+        self.github.commits(FOLDERS, "ofl/serif", SERIF_NEW)
+        self.github.folder_file(
+            FOLDERS, SERIF_NEW, "ofl/serif", "Serif-Regular.ttf", b"serif new"
+        )
+
+    def test_moves_release_and_folder_families_together(self):
+        status, stdout, stderr = self.run_main()
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(
+            stdout.splitlines(),
+            [
+                f"{FOLDERS}/ofl/serif {SERIF_OLD} -> {SERIF_NEW}",
+                f"{MONO} v1.006 -> v1.100",
+                f"{SERIF} 4.004R -> 4.005R",
+            ],
+        )
+        files = {**self.new, "Serif-Regular.ttf": b"serif new"}
+        pins = {**NEW, f"{FOLDERS}/ofl/serif": SERIF_NEW}
+        expected = {
+            **files,
+            "README.md": b"# Fonts\n",
+            "RELEASES": self.releases(pins).encode(),
+            "SHA256SUMS": sums(files).encode(),
+            "families.toml": self.families.encode(),
+        }
+        self.assertEqual(self.contents(), expected)
+
+    def test_release_refused(self):
+        self.github.release(MONO, "v1.100", {"a.zip": (archive({"x": b"x"}), None)})
+        self.assert_refused(f"{MONO} v1.100: no ExampleSansMono-Bold.woff2")
+
+    def test_folder_refused(self):
+        self.github.commits(FOLDERS, "ofl/serif")
+        self.assert_refused(f"{FOLDERS}/ofl/serif: no commit")
+
+
+class FolderRefusalTest(Folders):
+    def test_font_missing_at_the_commit(self):
+        url = folder_url(FOLDERS, SERIF_NEW, "ofl/serif", "Serif-Regular.ttf")
+        del self.github.bodies[url]
+        self.assert_refused(
+            f"{FOLDERS}/ofl/serif {SERIF_NEW}: Serif-Regular.ttf: {url}: HTTP Error 404"
+        )
+
+    def test_font_only_in_a_folder_below(self):
+        url = folder_url(FOLDERS, MONO_NEW, "ofl/mono", "Mono-Bold.ttf")
+        del self.github.bodies[url]
+        self.github.folder_file(
+            FOLDERS, MONO_NEW, "ofl/mono/static", "Mono-Bold.ttf", b"static"
+        )
+        self.assert_refused(
+            f"{FOLDERS}/ofl/mono {MONO_NEW}: Mono-Bold.ttf: {url}: HTTP Error 404"
+        )
+
+    def test_licence_missing_at_the_commit(self):
+        url = folder_url(FOLDERS, MONO_NEW, "ofl/mono", "OFL.txt")
+        del self.github.bodies[url]
+        self.assert_refused(
+            f"{FOLDERS}/ofl/mono {MONO_NEW}: OFL.txt: {url}: HTTP Error 404"
+        )
+
+    def test_folder_no_commit_touches(self):
+        self.github.commits(FOLDERS, "ofl/mono")
+        self.assert_refused(
+            f"{FOLDERS}/ofl/mono: no commit on the default branch touches it"
+        )
+
+    def test_commit_lookup_failing(self):
+        url = commits_url(FOLDERS, "ofl/mono")
+        del self.github.bodies[url]
+        self.assert_refused(f"{url}: HTTP Error 404")
+
+    def assert_table_refused(self, table, message):
+        """main refuses families.toml holding TABLE, asking GitHub nothing."""
+        self.families = families_toml(table, MONO_FOLDER)
+        self.write_directory()
+        self.assert_refused(message)
+        self.assertEqual(self.github.asked, [])
+
+    def test_table_with_path_and_directories(self):
+        self.assert_table_refused(
+            {**SERIF_FOLDER, "directories": {".ttf": "ttf"}},
+            "families.toml: Serif: both path and directories",
+        )
+
+    def test_table_with_neither_path_nor_directories(self):
+        self.assert_table_refused(
+            {"prefix": "Serif", "repository": FOLDERS},
+            "families.toml: Serif: neither path nor directories",
+        )
+
+    def test_table_with_path_and_licences_from_repository(self):
+        for value in (True, False):
+            with self.subTest(value=value):
+                self.assert_table_refused(
+                    {**SERIF_FOLDER, "licences-from-repository": value},
+                    "families.toml: Serif: both path and licences-from-repository",
+                )
+
+    def test_path_not_a_folders_from_the_root(self):
+        paths = (
+            "",
+            "/ofl/serif",
+            "ofl/serif/",
+            "ofl//serif",
+            "./ofl/serif",
+            "ofl/./serif",
+            "ofl/../ofl/serif",
+            "..",
+        )
+        for path in paths:
+            with self.subTest(path=path):
+                self.assert_table_refused(
+                    {**SERIF_FOLDER, "path": path},
+                    f"families.toml: Serif: path {path!r} is not a folder's from the"
+                    " repository's root",
+                )
+
+    def test_releases_keying_a_folder_by_its_repository(self):
+        self.pins = {FOLDERS: SERIF_OLD, f"{FOLDERS}/ofl/mono": MONO_OLD}
+        self.write_directory()
+        self.assert_refused(
+            f"RELEASES: lists {sorted(self.pins)}, not "
+            f"{[f'{FOLDERS}/ofl/mono', f'{FOLDERS}/ofl/serif']}"
+        )
+
+    def test_releases_missing_a_family(self):
+        self.pins = {f"{FOLDERS}/ofl/mono": MONO_OLD}
+        self.write_directory()
+        self.assert_refused(
+            f"RELEASES: lists {[f'{FOLDERS}/ofl/mono']}, not "
+            f"{[f'{FOLDERS}/ofl/mono', f'{FOLDERS}/ofl/serif']}"
+        )
 
 
 class Handler(http.server.BaseHTTPRequestHandler):

@@ -1,6 +1,6 @@
 # lib-design-tools
 
-Tools for working on a design system, or on a design built on one: generating a palette's CSS and JSON, checking that pages load and render, colour maths and font checks for a design's own tests, a preview server, moving fonts to their latest releases, building and checking Word templates, and a container image to run them in. A repository takes the parts it wants as a submodule and calls them; nothing here checks, rewrites or tests a repository that has not asked for it.
+Tools for working on a design system, or on a design built on one: generating a palette's CSS and JSON, checking that pages load and render, colour maths and font checks for a design's own tests, a preview server, moving fonts to their latest releases or to the newest commit touching their folder, building and checking Word templates, and a container image to run them in. A repository takes the parts it wants as a submodule and calls them; nothing here checks, rewrites or tests a repository that has not asked for it.
 
 ## Using the tools
 
@@ -11,7 +11,7 @@ Each command prints its usage with `--help`.
 - `tools/render-check` – each page loaded in headless Chromium, failing on an uncaught error, an unhandled rejection, a `console.error`, a failed load the page or its stylesheets start, such as an image, script, stylesheet, `@import`, font or background image, or an element matching `--error-marker`, and on a page Chromium fails or times out on, or where the browser cannot report failed loads started from CSS. A request the page's own script makes, such as `fetch`, is left to the script; the page's icon is not checked, and a load from another origin that does not use CORS counts only where its element reports an error.
 - `tools/preview-serve` – the tree as it is on disk, for previewing while editing: nothing cached, dot paths and paths outside the tree refused and left out of listings, directories listed, and `/` redirected to `--start`, the page the preview opens on. For development only.
 - `tools/kcov-report` – a Cobertura report, such as kcov or c8 writes, printed as pytest-cov's term-missing report: a header, a line for each file, named relative to `ROOT` where it lies inside it, with its statements, misses, percentage covered and missing lines, and a `TOTAL` line. A statement is a line of a class's own, not the line a method is declared on, which c8's report also lists. A file it cannot read, that is not a Cobertura report it can read or that measures no file fails the run.
-- `tools/fonts-upgrade` – the font and licence files a fonts directory's `SHA256SUMS` lists, moved to each publisher's latest GitHub release, as its `families.toml` describes the publishers, with `SHA256SUMS` and `RELEASES` rewritten; it prints a line `OWNER/REPO OLD -> NEW` for each publisher that moved (*Laying out the repository*).
+- `tools/fonts-upgrade` – the font and licence files a fonts directory's `SHA256SUMS` lists, moved to each family's latest GitHub release, or to the newest commit touching its folder in a GitHub repository, as its `families.toml` describes the families, with `SHA256SUMS` and `RELEASES` rewritten once every file is downloaded and checked; it prints a line `OWNER/REPO OLD -> NEW` or `OWNER/REPO/PATH OLD -> NEW` for each release or commit that moved (*Laying out the repository*).
 - `tools/ooxml-check` – each Word template's parts checked against each other: content types, relationships, and the styles, lists and fonts each part names; `--pandoc` also checks the style ids pandoc's docx writer reads, and `--fonts DIR` that each style's face, in the template's styles and the glossary's, is one a TrueType file in `DIR` names, an East Asian face only where a style names one.
 
 Importable from a repository's own Python tests, with `tools/` on the path, as `bin/test` puts it:
@@ -45,7 +45,26 @@ Each part below is taken on its own. A tool needs nothing here outside `tools/` 
 
 A repository using the services keeps its designs in `src/` and the page the preview opens on in `preview/`, and everything a preview loads in one of the two, since the `preview` service mounts only those (*Previewing pages*). A file a pass generates, such as a palette's CSS and JSON, lives in a directory `make format` binds whole, such as `src/`, one holding no ignored path and no submodule: it binds only the paths that exist when it starts, and takes any other directory entry by entry (lib-shell-common's `runner/format-host`), so a new file written anywhere else stays in the container's copy and is lost without a word.
 
-A repository whose fonts `make upgrade-fonts` moves keeps them in `src/fonts`, with `SHA256SUMS`, `RELEASES` and `families.toml`, a `[[family]]` table for each publisher that `tools/fonts-upgrade` reads.
+A repository whose fonts `make upgrade-fonts` moves keeps them in `src/fonts`, with `SHA256SUMS`, `RELEASES` and `families.toml`, which `tools/fonts-upgrade` reads. Each file `SHA256SUMS` lists starts with its family's prefix and a hyphen: a font keeps the publisher's own name for it, such as `Spectral-Regular.ttf`, and a licence takes the publisher's own name for it after the hyphen, so the publisher's `OFL.txt` is `Spectral-OFL.txt`, sorting beside the family's fonts.
+
+`families.toml` holds a `[[family]]` table for each family, with its `prefix` and GitHub `repository`, and either `[family.directories]`, to follow the repository's latest release, or `path`, to follow a folder in it. A release's family maps each font suffix to the directory in the release's `.zip` assets holding that kind of font, and sets `licences-from-repository = true` where its licence is taken from the repository's root at the release's tag rather than from the assets. A folder's family names the folder's path from the repository's root, such as Google Fonts' build of a family in `google/fonts`, and follows the newest commit on the default branch that touches the folder, taking each file from the folder itself at that full commit: a font, a `.ttf` or `.woff2`, by its own name, and any other file, a licence, by the publisher's name after the prefix:
+
+```toml
+[[family]]
+prefix = "Spectral"
+repository = "google/fonts"
+path = "ofl/spectral"
+
+[[family]]
+prefix = "ExampleSans"
+repository = "example-type/sans-fonts"
+
+[family.directories]
+".ttf" = "ttf"
+".woff2" = "webfont"
+```
+
+`RELEASES` holds a line, sorted, for each repository families follow by release, `OWNER/REPO TAG`, and for each folder families follow by commit, `OWNER/REPO/PATH COMMIT` with the full commit, so two folders of one repository are pinned apart. Each needs its line before the first run. A folder's line moves whenever the newest commit touching the folder does, even where no file `SHA256SUMS` lists changed, as where that commit touched only the folder's metadata or the line was first written with a commit from elsewhere in the repository.
 
 ### Linking the image
 
@@ -232,7 +251,7 @@ Node writes a process's data as it exits, so one ended by a signal it does not h
 
 `make preview` serves the tree for a look while editing (*Previewing pages*).
 
-`make upgrade-fonts` runs `tools/fonts-upgrade src/fonts` in the `tooling_upgrade` service, with `GH_TOKEN` and `GITHUB_TOKEN` passed through, and records each publisher that moved for the `Upgrade pins` commit; `make upgrade` runs it where `UPGRADE_STEPS` names it.
+`make upgrade-fonts` runs `tools/fonts-upgrade src/fonts` in the `tooling_upgrade` service, with `GH_TOKEN` and `GITHUB_TOKEN` passed through, and records each release or commit that moved for the `Upgrade pins` commit; `make upgrade` runs it where `UPGRADE_STEPS` names it.
 
 `make upgrade` runs `upgrade-pre`, which moves the submodules and re-pins, then each of `UPGRADE_STEPS`, then `upgrade-post`, which builds, formats and tests, so a change that breaks the repository shows before the bump is committed, and commits the whole tree as `Upgrade pins`. It refuses to start on a tree with changes or untracked files, or while a record from an unfinished upgrade is left. Where the build or tests fail, fix them and run `make upgrade-post`; `make upgrade-discard` instead puts back what the upgrade moved.
 
