@@ -29,7 +29,7 @@ PARTS = {
     ),
     "docProps__custom.xml": (
         '<Properties xmlns="urn:p" xmlns:vt="urn:vt"><property pid="2" '
-        'name="TemplateVersion"><vt:lpwstr>2026-01-02</vt:lpwstr></property>'
+        'name="TemplateVersion"><vt:lpwstr>1.2</vt:lpwstr></property>'
         "</Properties>"
     ),
     "word__document.xml": (
@@ -307,13 +307,14 @@ class BuildTest(Template):
                 png = archive.read(dotx.LOGO_PNG)
                 self.assertEqual(png[16:24], (1600).to_bytes(4) + (400).to_bytes(4))
 
-    def test_release_properties_in_another_form(self):
-        self.write(
-            "src/docProps__custom.xml",
-            "<p:Properties xmlns:p='urn:p' xmlns:t='urn:vt'><p:property "
-            "name = 'TemplateVersion' pid='2'><t:lpwstr>2026-01-02</t:lpwstr>"
-            "</p:property></p:Properties>",
-        )
+    def test_dates_every_entry_at_the_modified_date(self):
+        core = PARTS["docProps__core.xml"].replace("2026-01-02", "2026-01-03")
+        self.write("src/docProps__core.xml", core)
+        for info in self.built().infolist():
+            with self.subTest(path=info.filename):
+                self.assertEqual(info.date_time, (2026, 1, 3, 0, 0, 0))
+
+    def test_a_modified_date_in_another_form(self):
         self.write(
             "src/docProps__core.xml",
             '<c:coreProperties xmlns:c="urn:cp" xmlns:t="http://purl.org/dc/terms/">'
@@ -330,7 +331,7 @@ class BuildTest(Template):
                     archive.read(f"word/glossary/{twin}"), archive.read(f"word/{twin}")
                 )
 
-    def test_parts_in_package_order_dated_at_the_release(self):
+    def test_parts_in_package_order_dated_at_the_modified_date(self):
         archive = self.built()
         names = archive.namelist()
         self.assertEqual(
@@ -387,20 +388,29 @@ class RefusalTest(Template):
             "word/styles.xml=ABCDEF",
         )
 
-    def test_a_template_version_missing_or_not_a_date(self):
-        custom = PARTS["docProps__custom.xml"]
-        self.write("src/docProps__custom.xml", custom.replace("TemplateVersion", "X"))
-        self.assertRefused("docProps/custom.xml sets no TemplateVersion")
-        self.write("src/docProps__custom.xml", custom.replace("2026-01-02", "soon"))
-        self.assertRefused("TemplateVersion: Invalid isoformat string: 'soon'")
+    def test_a_modified_date_not_at_midnight_utc(self):
+        for value in (
+            "2026-01-02T00:00:01Z",
+            "2026-01-02T00:00:00+01:00",
+            "2026-01-02",
+            "20260102T00:00:00Z",
+            "soon",
+        ):
+            with self.subTest(value=value):
+                core = PARTS["docProps__core.xml"].replace(
+                    "2026-01-02T00:00:00Z", value
+                )
+                self.write("src/docProps__core.xml", core)
+                self.assertRefused(
+                    f"docProps/core.xml: dcterms:modified is {value}, not "
+                    "DATET00:00:00Z"
+                )
 
-    def test_modified_other_than_the_release(self):
-        core = PARTS["docProps__core.xml"].replace("2026-01-02", "2026-01-03")
+    def test_a_modified_date_that_does_not_exist(self):
+        core = PARTS["docProps__core.xml"].replace("2026-01-02", "2026-02-30")
         self.write("src/docProps__core.xml", core)
-        self.assertRefused(
-            "docProps/core.xml: dcterms:modified is 2026-01-03T00:00:00Z, not "
-            "RELEASET00:00:00Z"
-        )
+        # Python words the range error differently from 3.14.
+        self.assertRefused("docProps/core.xml: dcterms:modified: day ")
 
     def test_a_file_that_is_not_xml(self):
         self.write("src/notes.txt", "not a part\n")
@@ -689,7 +699,6 @@ class HardeningTest(Template):
     def test_a_part_missing_from_src(self):
         for name, path in (
             ("word__numbering.xml", "word/numbering.xml"),
-            ("docProps__custom.xml", "docProps/custom.xml"),
             ("docProps__core.xml", "docProps/core.xml"),
         ):
             with self.subTest(path=path):
@@ -703,15 +712,18 @@ class HardeningTest(Template):
         )
         self.write("src/docProps__core.xml", core)
         self.assertRefused(
-            "docProps/core.xml: dcterms:modified is missing, not RELEASET00:00:00Z"
+            "docProps/core.xml: dcterms:modified is missing, not DATET00:00:00Z"
         )
 
-    def test_a_release_a_zip_cannot_date(self):
+    def test_a_modified_date_a_zip_cannot_date(self):
         for date in ("1979-12-31", "2108-01-01"):
             with self.subTest(date=date):
-                for name in ("docProps__core.xml", "docProps__custom.xml"):
-                    self.write(f"src/{name}", PARTS[name].replace("2026-01-02", date))
-                self.assertRefused(f"TemplateVersion: {date} is not from 1980 to 2107")
+                core = PARTS["docProps__core.xml"].replace("2026-01-02", date)
+                self.write("src/docProps__core.xml", core)
+                self.assertRefused(
+                    f"docProps/core.xml: dcterms:modified {date} is not from 1980 "
+                    "to 2107"
+                )
 
     def test_a_file_that_cannot_be_read(self):
         self.write("src/word__media/image3.png", "png")
