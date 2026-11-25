@@ -659,38 +659,28 @@ def render_png(svg: pathlib.Path, width: int) -> bytes:
         return design_render.screenshot(page.as_uri(), width, height)
 
 
-def release_date(custom: str) -> datetime.date:
-    """The TemplateVersion custom property, the release's ISO 8601 date."""
-    version = next(
-        (
-            child.text
-            for element in ET.fromstring(custom.encode()).iter()
-            if element.get("name") == "TemplateVersion"
-            for child in element
-            if child.tag.rsplit("}", 1)[-1] == "lpwstr" and child.text
-        ),
-        None,
-    )
-    if version is None:
-        raise BuildError("docProps/custom.xml sets no TemplateVersion")
-    try:
-        date = datetime.date.fromisoformat(version)
-    except ValueError as error:
-        raise BuildError(f"TemplateVersion: {error}") from error
-    # Each zip entry is dated the release, and a zip dates only these years.
-    if not 1980 <= date.year <= 2107:
-        raise BuildError(f"TemplateVersion: {date} is not from 1980 to 2107")
-    return date
+def modified_date(core: str) -> datetime.date:
+    """The date of docProps/core.xml's dcterms:modified, refused unless midnight UTC.
 
-
-def check_modified(core: str, date: datetime.date) -> None:
-    """Refuse a docProps/core.xml modified other than at the release's midnight."""
+    Every zip entry is dated it, so the same parts give the same bytes.
+    """
     modified = next(ET.fromstring(core.encode()).iter(DCTERMS_MODIFIED), None)
     value = "missing" if modified is None else modified.text or ""
-    if value != f"{date.isoformat()}T00:00:00Z":
+    match = re.fullmatch(r"(\d{4}-\d{2}-\d{2})T00:00:00Z", value)
+    if match is None:
         raise BuildError(
-            f"docProps/core.xml: dcterms:modified is {value}, not RELEASET00:00:00Z"
+            f"docProps/core.xml: dcterms:modified is {value}, not DATET00:00:00Z"
         )
+    try:
+        date = datetime.date.fromisoformat(match[1])
+    except ValueError as error:
+        raise BuildError(f"docProps/core.xml: dcterms:modified: {error}") from error
+    # A zip dates only these years.
+    if not 1980 <= date.year <= 2107:
+        raise BuildError(
+            f"docProps/core.xml: dcterms:modified {date} is not from 1980 to 2107"
+        )
+    return date
 
 
 def read_text(file: pathlib.Path) -> str:
@@ -805,8 +795,7 @@ def build(options: argparse.Namespace) -> bytes:
         svg = options.design_system / options.logo
         logo = read_text(svg).encode(), render_png(svg, LOGO_PNG_WIDTH)
     built = parts(SOURCE, declared, literals, logo)
-    date = release_date(built_part(built, "docProps/custom.xml").decode())
-    check_modified(built_part(built, "docProps/core.xml").decode(), date)
+    date = modified_date(built_part(built, "docProps/core.xml").decode())
     return package(built, date)
 
 
