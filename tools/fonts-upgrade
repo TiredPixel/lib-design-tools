@@ -189,6 +189,11 @@ def read_releases(directory, families):
     path = directory / RELEASES
     # At the last space, since a path may hold one and a tag or commit never does.
     releases = dict(line.rsplit(" ", 1) for line in read(path).splitlines())
+    # Each held tag or commit is the OLD of a move, which docker/upgrade-record takes
+    # only as one word that is not an arrow.
+    for key, held in releases.items():
+        if held.split() != [held] or held == "->":
+            raise Refusal(f"{path}: {key}: {held!r} is not a tag or commit")
     expected = {family.key for family in families}
     if set(releases) != expected:
         raise Refusal(f"{path}: lists {sorted(releases)}, not {sorted(expected)}")

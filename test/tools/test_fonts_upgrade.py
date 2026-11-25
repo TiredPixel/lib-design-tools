@@ -774,6 +774,18 @@ class FolderUpgradeTest(Folders):
             (self.directory / "Serif-Book Italic.ttf").read_bytes(), b"new"
         )
 
+    def test_path_with_an_arrow_inside_a_word(self):
+        self.families = families_toml({**SERIF_FOLDER, "path": "ofl/a->b"}, MONO_FOLDER)
+        self.pins = {f"{FOLDERS}/ofl/mono": MONO_OLD, f"{FOLDERS}/ofl/a->b": SERIF_OLD}
+        self.write_directory()
+        self.github.commits(FOLDERS, "ofl/a-%3Eb", SERIF_NEW)
+        self.serve("ofl/a-%3Eb", SERIF_NEW, "Serif", self.new)
+        status, stdout, stderr = self.run_main()
+        self.assertEqual(status, 0, stderr)
+        self.assertIn(
+            f"{FOLDERS}/ofl/a->b {SERIF_OLD} -> {SERIF_NEW}", stdout.splitlines()
+        )
+
 
 class MixedTest(Fonts):
     """The release families' fonts directory, with a family following a folder."""
@@ -922,6 +934,15 @@ class FolderRefusalTest(Folders):
                     f"families.toml: Serif: path {path!r} is not words joined by"
                     " single spaces, none of them ->",
                 )
+
+    def test_releases_holding_no_tag_or_commit(self):
+        key = f"{FOLDERS}/ofl/serif"
+        for held in (f"{SERIF_OLD}\t", "", "->"):
+            with self.subTest(held=held):
+                self.pins = {f"{FOLDERS}/ofl/mono": MONO_OLD, key: held}
+                self.write_directory()
+                self.assert_refused(f"RELEASES: {key}: {held!r} is not a tag or commit")
+                self.assertEqual(self.github.asked, [])
 
     def test_releases_keying_a_folder_by_its_repository(self):
         self.pins = {FOLDERS: SERIF_OLD, f"{FOLDERS}/ofl/mono": MONO_OLD}
