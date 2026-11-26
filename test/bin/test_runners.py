@@ -13,6 +13,7 @@ import tarfile
 import tempfile
 import textwrap
 import time
+import unittest.mock
 import urllib.error
 import urllib.request
 
@@ -516,6 +517,9 @@ class PreviewTest(Repository):
         )
 
     def test_serves_every_address_and_redirects_to_the_start(self):
+        # urlopen sends a request through the proxy http_proxy names unless no_proxy
+        # matches its host, as a string, and no proxy can reach this loopback server.
+        self.enterContext(unittest.mock.patch.dict(os.environ, {"no_proxy": "*"}))
         self.settings("# shellcheck disable=SC2034\npreview_start=/pages/\n")
         self.write("pages/index.html", "<p>page</p>")
         server = subprocess.Popen(

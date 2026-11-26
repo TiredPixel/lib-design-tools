@@ -988,6 +988,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 class FetchTest(unittest.TestCase):
     def setUp(self):
+        # urlopen sends a request through the proxy http_proxy names unless no_proxy
+        # matches its host, as a string, and no proxy can reach this loopback server.
+        self.enterContext(unittest.mock.patch.dict(os.environ, {"no_proxy": "*"}))
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         thread.start()
