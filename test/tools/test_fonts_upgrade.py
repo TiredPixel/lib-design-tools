@@ -1047,11 +1047,14 @@ class FetchTest(unittest.TestCase):
             fonts_upgrade.fetch(url)
 
     def test_no_server(self):
+        # Held bound but not listening for the whole fetch, so the port refuses the
+        # connection and no other socket can take it meanwhile.
         with socket.socket() as unused:
             unused.bind(("127.0.0.1", 0))
             url = f"http://127.0.0.1:{unused.getsockname()[1]}/"
-        with self.assertRaisesRegex(fonts_upgrade.Refusal, f"^{url}: "):
-            fonts_upgrade.fetch(url)
+            with self.assertRaisesRegex(fonts_upgrade.Refusal, f"^{url}: ") as raised:
+                fonts_upgrade.fetch(url)
+        self.assertIsInstance(raised.exception.__cause__.reason, ConnectionRefusedError)
 
     def test_server_never_answering(self):
         with socket.socket() as silent:
