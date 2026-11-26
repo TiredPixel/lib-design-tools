@@ -40,6 +40,9 @@ services:
     build: *preview_build
     environment:
       PYTEST_XDIST_AUTO_NUM_WORKERS: ${PYTEST_XDIST_AUTO_NUM_WORKERS:-}
+      # Unreachable, as no network is, so a test requesting a loopback server
+      # through urllib fails unless it exempts the server from the proxy.
+      http_proxy: http://proxy.invalid:9
     init: true
     network_mode: none
     profiles:

@@ -8,12 +8,13 @@ design layer, as a repository taking this one has them.
 import io
 import os
 import pathlib
+import socket
 import subprocess
 import tarfile
 import tempfile
 import textwrap
 import time
-import urllib.error
+import unittest.mock
 import urllib.request
 
 import temp_tree
@@ -516,6 +517,9 @@ class PreviewTest(Repository):
         )
 
     def test_serves_every_address_and_redirects_to_the_start(self):
+        # urlopen sends a request through the proxy http_proxy names unless no_proxy
+        # matches its host, as a string, and no proxy can reach this loopback server.
+        self.enterContext(unittest.mock.patch.dict(os.environ, {"no_proxy": "*"}))
         self.settings("# shellcheck disable=SC2034\npreview_start=/pages/\n")
         self.write("pages/index.html", "<p>page</p>")
         server = subprocess.Popen(
@@ -527,21 +531,22 @@ class PreviewTest(Repository):
         )
         self.addCleanup(server.wait, timeout=WAIT_S)
         self.addCleanup(server.terminate)
-        deadline = time.monotonic() + 30
+        # Only a refused connection is retried, as bin/preview not yet listening, so a
+        # slow start waits while a wrong answer fails at once.
+        deadline = time.monotonic() + WAIT_S
         while True:
             if server.poll() is not None:
                 self.fail(f"bin/preview exited {server.returncode}")
             try:
-                with urllib.request.urlopen(
-                    "http://127.0.0.1:8080/", timeout=10
-                ) as response:
-                    self.assertEqual(response.url, "http://127.0.0.1:8080/pages/")
-                    self.assertIn(b"page", response.read())
+                socket.create_connection(("127.0.0.1", 8080), timeout=10).close()
                 break
-            except (urllib.error.URLError, ConnectionError, TimeoutError):
+            except ConnectionRefusedError:
                 if time.monotonic() > deadline:
-                    raise
+                    self.fail(f"bin/preview did not listen within {WAIT_S}s")
                 time.sleep(0.1)
+        with urllib.request.urlopen("http://127.0.0.1:8080/", timeout=10) as response:
+            self.assertEqual(response.url, "http://127.0.0.1:8080/pages/")
+            self.assertIn(b"page", response.read())
         # The test container has no network but loopback, so the wildcard bind is read
         # from the kernel's socket table: 0.0.0.0:8080, listening.
         table = pathlib.Path("/proc/net/tcp").read_text().splitlines()[1:]

@@ -304,6 +304,12 @@ class FindMarkedTest(unittest.TestCase):
 
 
 class ServeTest(TempDirTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        # urlopen sends a request through the proxy http_proxy names unless no_proxy
+        # matches its host, as a string, and no proxy can reach this loopback server.
+        self.enterContext(unittest.mock.patch.dict(os.environ, {"no_proxy": "*"}))
+
     def fetch(self, url: str) -> tuple[bytes, str]:
         with urllib.request.urlopen(url, timeout=10) as response:
             return response.read(), response.headers["Content-Type"]
@@ -605,6 +611,13 @@ class SheetCountTest(unittest.TestCase):
 
 
 class RenderTest(TempDirTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        # The fake Chromium inherits this environment, and its urlopen sends a request
+        # through the proxy http_proxy names unless no_proxy matches its host, as a
+        # string, and no proxy can reach this loopback server.
+        self.enterContext(unittest.mock.patch.dict(os.environ, {"no_proxy": "*"}))
+
     def test_render_through_server(self) -> None:
         page = self.write("p.html", "<html><head></head><body><b>x</b></body></html>")
         chromium = self.fake_chromium(
